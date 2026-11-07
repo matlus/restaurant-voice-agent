@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voice-agent-restaurant"
+version = "0.1.0"
+description = "Restaurant domain for the voice agent: profile, hours, menu, allergens, diets and reservations."
+readme = "README.md"
+requires-python = ">=3.14"
+license = "MIT"
+authors = [{ name = "Shiv Kumar" }]
+dependencies = [
+    "tzdata>=2025.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["voice_agent_restaurant*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+"voice_agent_restaurant" = ["py.typed", "seed_data/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+addopts = "-ra --strict-config --strict-markers --import-mode=importlib"
+pythonpath = ["src"]

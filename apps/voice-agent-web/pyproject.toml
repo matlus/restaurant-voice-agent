@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voice-agent-web"
+version = "0.1.0"
+description = "Voice Agent Web application."
+readme = "README.md"
+requires-python = ">=3.14"
+license = "MIT"
+authors = [{ name = "Shiv Kumar" }]
+dependencies = [
+    "voice-agent-restaurant",
+]
+
+[tool.uv.sources]
+voice-agent-restaurant = { workspace = true }
+
+[project.scripts]
+voice_agent_web = "voice_agent_web.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["voice_agent_web*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+"voice_agent_web" = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+addopts = "-ra --strict-config --strict-markers --import-mode=importlib"
+pythonpath = ["src", "../../packages/voice-agent-restaurant/src"]

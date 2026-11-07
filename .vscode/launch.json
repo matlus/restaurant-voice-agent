@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Voice Agent Web",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/apps/voice-agent-web/src/voice_agent_web/entry_point.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env"
+    }
+  ]
+}

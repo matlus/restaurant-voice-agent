@@ -1,0 +1,17 @@
+{
+  "description": "Existing bookings created when the store is first set up. Each lands on the next occurrence of its weekday (today counts), so the store always starts with a busy Friday evening. Every 4-top is taken around 19:00 on Friday.",
+  "reservations": [
+    {"confirmation_code": "KX4TPA", "weekday": "friday", "starts_at": "19:00", "party_size": 4, "table_id": "T07", "guest_name": "Priya Raman", "phone_number": "5550101001", "notes": "Anniversary"},
+    {"confirmation_code": "MW7RHC", "weekday": "friday", "starts_at": "19:00", "party_size": 3, "table_id": "T08", "guest_name": "Marcus Bell", "phone_number": "5550101002", "notes": null},
+    {"confirmation_code": "PD3VNE", "weekday": "friday", "starts_at": "19:00", "party_size": 4, "table_id": "T09", "guest_name": "Elena Sokolova", "phone_number": "5550101003", "notes": "Shellfish allergy"},
+    {"confirmation_code": "QJ6YTF", "weekday": "friday", "starts_at": "18:45", "party_size": 4, "table_id": "T10", "guest_name": "Tom Okafor", "phone_number": "5550101004", "notes": null},
+    {"confirmation_code": "RH9CWG", "weekday": "friday", "starts_at": "18:30", "party_size": 3, "table_id": "T11", "guest_name": "Grace Lindqvist", "phone_number": "5550101005", "notes": null},
+    {"confirmation_code": "TK4MXH", "weekday": "friday", "starts_at": "19:15", "party_size": 4, "table_id": "T12", "guest_name": "Diego Alvarez", "phone_number": "5550101006", "notes": "High chair needed"},
+    {"confirmation_code": "VN7PDJ", "weekday": "friday", "starts_at": "18:45", "party_size": 6, "table_id": "T13", "guest_name": "Hannah Weiss", "phone_number": "5550101007", "notes": "Birthday"},
+    {"confirmation_code": "WP3QRK", "weekday": "friday", "starts_at": "19:00", "party_size": 5, "table_id": "T14", "guest_name": "Kenji Mori", "phone_number": "5550101008", "notes": null},
+    {"confirmation_code": "XR6TVM", "weekday": "friday", "starts_at": "19:30", "party_size": 8, "table_id": "T15", "guest_name": "Olivia Grant", "phone_number": "5550101009", "notes": "Team dinner"},
+    {"confirmation_code": "YT9WHN", "weekday": "saturday", "starts_at": "19:30", "party_size": 2, "table_id": "T01", "guest_name": "Sam Patel", "phone_number": "5550101010", "notes": "Window table if possible"},
+    {"confirmation_code": "AC4JKP", "weekday": "saturday", "starts_at": "20:00", "party_size": 6, "table_id": "T13", "guest_name": "Ava Nguyen", "phone_number": "5550101011", "notes": "Vegan guests"},
+    {"confirmation_code": "CF7MXQ", "weekday": "sunday", "starts_at": "11:30", "party_size": 4, "table_id": "T07", "guest_name": "Liam O'Connor", "phone_number": "5550101012", "notes": null}
+  ]
+}

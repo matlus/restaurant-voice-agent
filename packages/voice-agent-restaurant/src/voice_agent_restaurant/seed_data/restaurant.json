@@ -1,0 +1,42 @@
+{
+  "name": "Ember & Sprout",
+  "tagline": "A modern grill and garden kitchen",
+  "description": "Wood-fired steaks and seafood next to a plant-forward garden menu, with dishes for vegan, vegetarian, pescatarian, keto, carnivore and paleo diets.",
+  "street_address": "418 Juniper Street",
+  "city": "Riverton",
+  "state_or_region": "Illinois",
+  "postal_code": "60699",
+  "phone_number": "(555) 014-2290",
+  "time_zone": "America/Chicago",
+  "weekly_hours": [
+    {"weekday": "monday", "opens_at": null, "closes_at": null},
+    {"weekday": "tuesday", "opens_at": "17:00", "closes_at": "22:00"},
+    {"weekday": "wednesday", "opens_at": "17:00", "closes_at": "22:00"},
+    {"weekday": "thursday", "opens_at": "17:00", "closes_at": "22:00"},
+    {"weekday": "friday", "opens_at": "17:00", "closes_at": "23:00"},
+    {"weekday": "saturday", "opens_at": "12:00", "closes_at": "23:00"},
+    {"weekday": "sunday", "opens_at": "11:00", "closes_at": "21:00"}
+  ],
+  "closures": [
+    {"closed_on": "2026-11-26", "reason": "Thanksgiving Day"},
+    {"closed_on": "2026-12-24", "reason": "Christmas Eve"},
+    {"closed_on": "2026-12-25", "reason": "Christmas Day"},
+    {"closed_on": "2027-01-01", "reason": "New Year's Day"}
+  ],
+  "reservation_policy": {
+    "seating_duration_minutes": 90,
+    "slot_interval_minutes": 15,
+    "minimum_party_size": 1,
+    "maximum_party_size": 8,
+    "booking_window_days": 60,
+    "minimum_lead_time_minutes": 30,
+    "late_arrival_hold_minutes": 15,
+    "large_party_guidance": "Parties larger than 8 are welcome in our private dining room; please call the restaurant to arrange it."
+  },
+  "house_notes": [
+    "All allergy information comes from our recipes, but everything is prepared in a shared kitchen, so we cannot guarantee any dish is free of trace allergens. Please tell your server about any allergy.",
+    "Free parking is available in the lot behind the restaurant.",
+    "The dining room and restrooms are wheelchair accessible.",
+    "High chairs and a children's menu are available."
+  ]
+}

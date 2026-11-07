@@ -1,0 +1,991 @@
+{
+  "dishes": [
+    {
+      "dish_id": "charred-shishito-peppers",
+      "name": "Charred Shishito Peppers",
+      "category": "starters",
+      "description": "Blistered shishito peppers with lime and togarashi.",
+      "price_cents": 1100,
+      "ingredients": [
+        "shishito peppers",
+        "olive oil",
+        "flaky sea salt",
+        "lime",
+        "togarashi (chili, sesame seeds, orange peel)"
+      ],
+      "allergens": [
+        "sesame"
+      ],
+      "contains_gluten": false,
+      "diets": [
+        "vegan",
+        "vegetarian",
+        "pescatarian",
+        "keto",
+        "paleo"
+      ],
+      "nutrition": {
+        "calories": 140,
+        "protein_grams": 3,
+        "carbohydrate_grams": 8,
+        "fat_grams": 11
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "roasted-bone-marrow",
+      "name": "Roasted Bone Marrow",
+      "category": "starters",
+      "description": "Split beef marrow bones with parsley-shallot salad and grilled sourdough.",
+      "price_cents": 1600,
+      "ingredients": [
+        "beef marrow bones",
+        "parsley",
+        "shallot",
+        "lemon",
+        "capers",
+        "sourdough bread",
+        "sea salt"
+      ],
+      "allergens": [
+        "wheat"
+      ],
+      "contains_gluten": true,
+      "diets": [],
+      "nutrition": {
+        "calories": 530,
+        "protein_grams": 14,
+        "carbohydrate_grams": 34,
+        "fat_grams": 38
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "yellowfin-tuna-crudo",
+      "name": "Yellowfin Tuna Crudo",
+      "category": "starters",
+      "description": "Thin-sliced raw yellowfin tuna with citrus, chili and olive oil.",
+      "price_cents": 1800,
+      "ingredients": [
+        "yellowfin tuna",
+        "orange",
+        "lime",
+        "fresno chili",
+        "olive oil",
+        "sea salt",
+        "microgreens"
+      ],
+      "allergens": [
+        "fish"
+      ],
+      "contains_gluten": false,
+      "diets": [
+        "pescatarian",
+        "keto",
+        "paleo"
+      ],
+      "nutrition": {
+        "calories": 210,
+        "protein_grams": 24,
+        "carbohydrate_grams": 4,
+        "fat_grams": 11
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "crispy-cauliflower-bites",
+      "name": "Crispy Cauliflower Bites",
+      "category": "starters",
+      "description": "Battered cauliflower tossed in a sweet-spicy gochujang glaze.",
+      "price_cents": 1300,
+      "ingredients": [
+        "cauliflower",
+        "wheat flour batter",
+        "gochujang (chili, soybeans, wheat)",
+        "rice vinegar",
+        "sesame seeds",
+        "scallion",
+        "canola oil"
+      ],
+      "allergens": [
+        "wheat",
+        "soy",
+        "sesame"
+      ],
+      "contains_gluten": true,
+      "diets": [
+        "vegan",
+        "vegetarian",
+        "pescatarian"
+      ],
+      "nutrition": {
+        "calories": 380,
+        "protein_grams": 8,
+        "carbohydrate_grams": 46,
+        "fat_grams": 18
+      },
+      "cross_contact_note": "Fried in the shared fryer."
+    },
+    {
+      "dish_id": "burrata-and-heirloom-tomatoes",
+      "name": "Burrata and Heirloom Tomatoes",
+      "category": "starters",
+      "description": "Creamy burrata over heirloom tomatoes with basil and grilled bread.",
+      "price_cents": 1700,
+      "ingredients": [
+        "burrata cheese",
+        "heirloom tomatoes",
+        "basil",
+        "olive oil",
+        "aged balsamic vinegar",
+        "grilled ciabatta"
+      ],
+      "allergens": [
+        "milk",
+        "wheat"
+      ],
+      "contains_gluten": true,
+      "diets": [
+        "vegetarian",
+        "pescatarian"
+      ],
+      "nutrition": {
+        "calories": 480,
+        "protein_grams": 18,
+        "carbohydrate_grams": 30,
+        "fat_grams": 32
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "smoked-chicken-wings",
+      "name": "Smoked Chicken Wings",
+      "category": "starters",
+      "description": "Hickory-smoked wings finished in a buttery hot sauce.",
+      "price_cents": 1500,
+      "ingredients": [
+        "chicken wings",
+        "smoked salt rub",
+        "cayenne hot sauce",
+        "butter",
+        "celery"
+      ],
+      "allergens": [
+        "milk"
+      ],
+      "contains_gluten": false,
+      "diets": [
+        "keto"
+      ],
+      "nutrition": {
+        "calories": 430,
+        "protein_grams": 38,
+        "carbohydrate_grams": 2,
+        "fat_grams": 30
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "garlic-butter-prawns",
+      "name": "Garlic Butter Prawns",
+      "category": "starters",
+      "description": "Grilled prawns in garlic butter with lemon and parsley.",
+      "price_cents": 1900,
+      "ingredients": [
+        "prawns",
+        "butter",
+        "garlic",
+        "lemon",
+        "parsley",
+        "chili flakes"
+      ],
+      "allergens": [
+        "shellfish",
+        "milk"
+      ],
+      "contains_gluten": false,
+      "diets": [
+        "pescatarian",
+        "keto"
+      ],
+      "nutrition": {
+        "calories": 300,
+        "protein_grams": 26,
+        "carbohydrate_grams": 3,
+        "fat_grams": 20
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "ember-caesar",
+      "name": "Ember Caesar",
+      "category": "garden",
+      "description": "Grilled romaine, parmesan, anchovy dressing and sourdough croutons.",
+      "price_cents": 1400,
+      "ingredients": [
+        "romaine lettuce",
+        "parmesan cheese",
+        "anchovies",
+        "egg yolk",
+        "lemon",
+        "garlic",
+        "olive oil",
+        "sourdough croutons"
+      ],
+      "allergens": [
+        "milk",
+        "eggs",
+        "fish",
+        "wheat"
+      ],
+      "contains_gluten": true,
+      "diets": [
+        "pescatarian"
+      ],
+      "nutrition": {
+        "calories": 410,
+        "protein_grams": 14,
+        "carbohydrate_grams": 20,
+        "fat_grams": 30
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "harvest-grain-bowl",
+      "name": "Harvest Grain Bowl",
+      "category": "garden",
+      "description": "Farro, roasted sweet potato, kale and chickpeas with lemon-tahini dressing.",
+      "price_cents": 1700,
+      "ingredients": [
+        "farro",
+        "roasted sweet potato",
+        "kale",
+        "chickpeas",
+        "pickled red onion",
+        "tahini",
+        "lemon",
+        "olive oil"
+      ],
+      "allergens": [
+        "wheat",
+        "sesame"
+      ],
+      "contains_gluten": true,
+      "diets": [
+        "vegan",
+        "vegetarian",
+        "pescatarian"
+      ],
+      "nutrition": {
+        "calories": 610,
+        "protein_grams": 20,
+        "carbohydrate_grams": 82,
+        "fat_grams": 22
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "green-goddess-salad",
+      "name": "Green Goddess Salad",
+      "category": "garden",
+      "description": "Little gem lettuce, cucumber and avocado with a cashew green goddess dressing.",
+      "price_cents": 1500,
+      "ingredients": [
+        "little gem lettuce",
+        "cucumber",
+        "avocado",
+        "pumpkin seeds",
+        "cashews",
+        "basil",
+        "tarragon",
+        "lemon",
+        "olive oil"
+      ],
+      "allergens": [
+        "tree_nuts"
+      ],
+      "contains_gluten": false,
+      "diets": [
+        "vegan",
+        "vegetarian",
+        "pescatarian",
+        "keto",
+        "paleo"
+      ],
+      "nutrition": {
+        "calories": 390,
+        "protein_grams": 9,
+        "carbohydrate_grams": 12,
+        "fat_grams": 34
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "thai-peanut-noodle-salad",
+      "name": "Thai Peanut Noodle Salad",
+      "category": "garden",
+      "description": "Rice noodles, cabbage and carrot in a peanut-lime dressing.",
+      "price_cents": 1600,
+      "ingredients": [
+        "rice noodles",
+        "red cabbage",
+        "carrot",
+        "cilantro",
+        "peanuts",
+        "peanut butter",
+        "tamari (gluten-free soy sauce)",
+        "lime"
+      ],
+      "allergens": [
+        "peanuts",
+        "soy"
+      ],
+      "contains_gluten": false,
+      "diets": [
+        "vegan",
+        "vegetarian",
+        "pescatarian"
+      ],
+      "nutrition": {
+        "calories": 570,
+        "protein_grams": 18,
+        "carbohydrate_grams": 70,
+        "fat_grams": 24
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "dry-aged-ribeye",
+      "name": "Dry-Aged Ribeye",
+      "category": "mains",
+      "description": "Fourteen-ounce dry-aged ribeye seared in beef tallow and finished with cultured butter.",
+      "price_cents": 5400,
+      "ingredients": [
+        "dry-aged ribeye steak",
+        "beef tallow",
+        "sea salt",
+        "cultured butter"
+      ],
+      "allergens": [
+        "milk"
+      ],
+      "contains_gluten": false,
+      "diets": [
+        "keto",
+        "carnivore"
+      ],
+      "nutrition": {
+        "calories": 970,
+        "protein_grams": 72,
+        "carbohydrate_grams": 0,
+        "fat_grams": 76
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "grilled-lamb-chops",
+      "name": "Grilled Lamb Chops",
+      "category": "mains",
+      "description": "Rosemary-garlic lamb chops with mint chimichurri.",
+      "price_cents": 4200,
+      "ingredients": [
+        "lamb chops",
+        "rosemary",
+        "garlic",
+        "olive oil",
+        "mint",
+        "parsley",
+        "red wine vinegar"
+      ],
+      "allergens": [],
+      "contains_gluten": false,
+      "diets": [
+        "keto",
+        "paleo"
+      ],
+      "nutrition": {
+        "calories": 680,
+        "protein_grams": 48,
+        "carbohydrate_grams": 4,
+        "fat_grams": 52
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "butchers-board",
+      "name": "Butcher's Board",
+      "category": "mains",
+      "description": "Ribeye cap, smoked brisket, crispy pork belly and roasted marrow. Meat and salt only.",
+      "price_cents": 6200,
+      "ingredients": [
+        "ribeye cap",
+        "smoked beef brisket",
+        "pork belly",
+        "beef marrow",
+        "sea salt"
+      ],
+      "allergens": [],
+      "contains_gluten": false,
+      "diets": [
+        "carnivore",
+        "keto",
+        "paleo"
+      ],
+      "nutrition": {
+        "calories": 1320,
+        "protein_grams": 96,
+        "carbohydrate_grams": 0,
+        "fat_grams": 104
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "cedar-plank-salmon",
+      "name": "Cedar Plank Salmon",
+      "category": "mains",
+      "description": "Salmon roasted on cedar with lemon and dill, served with grilled asparagus.",
+      "price_cents": 3400,
+      "ingredients": [
+        "atlantic salmon",
+        "lemon",
+        "dill",
+        "olive oil",
+        "asparagus",
+        "sea salt"
+      ],
+      "allergens": [
+        "fish"
+      ],
+      "contains_gluten": false,
+      "diets": [
+        "pescatarian",
+        "keto",
+        "paleo"
+      ],
+      "nutrition": {
+        "calories": 450,
+        "protein_grams": 42,
+        "carbohydrate_grams": 8,
+        "fat_grams": 28
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "half-roast-chicken",
+      "name": "Half Roast Chicken",
+      "category": "mains",
+      "description": "Garlic-thyme half chicken over roasted carrots and parsnips.",
+      "price_cents": 2900,
+      "ingredients": [
+        "free-range chicken",
+        "garlic",
+        "thyme",
+        "lemon",
+        "carrots",
+        "parsnips",
+        "olive oil"
+      ],
+      "allergens": [],
+      "contains_gluten": false,
+      "diets": [
+        "paleo"
+      ],
+      "nutrition": {
+        "calories": 650,
+        "protein_grams": 58,
+        "carbohydrate_grams": 28,
+        "fat_grams": 34
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "ember-smash-burger",
+      "name": "Ember Smash Burger",
+      "category": "mains",
+      "description": "Two smashed beef patties, American cheese, pickles and house sauce on a seeded brioche bun.",
+      "price_cents": 2100,
+      "ingredients": [
+        "beef patties",
+        "American cheese",
+        "seeded brioche bun",
+        "pickles",
+        "white onion",
+        "house sauce (mayonnaise, mustard, relish)"
+      ],
+      "allergens": [
+        "milk",
+        "eggs",
+        "wheat",
+        "sesame"
+      ],
+      "contains_gluten": true,
+      "diets": [],
+      "nutrition": {
+        "calories": 920,
+        "protein_grams": 48,
+        "carbohydrate_grams": 52,
+        "fat_grams": 58
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "king-oyster-mushroom-steak",
+      "name": "King Oyster Mushroom Steak",
+      "category": "mains",
+      "description": "Miso-glazed king oyster mushrooms with chimichurri and crispy potatoes.",
+      "price_cents": 2600,
+      "ingredients": [
+        "king oyster mushrooms",
+        "white miso (gluten-free)",
+        "maple syrup",
+        "chimichurri",
+        "fingerling potatoes",
+        "olive oil"
+      ],
+      "allergens": [
+        "soy"
+      ],
+      "contains_gluten": false,
+      "diets": [
+        "vegan",
+        "vegetarian",
+        "pescatarian"
+      ],
+      "nutrition": {
+        "calories": 490,
+        "protein_grams": 14,
+        "carbohydrate_grams": 58,
+        "fat_grams": 22
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "smoky-jackfruit-tacos",
+      "name": "Smoky Jackfruit Tacos",
+      "category": "mains",
+      "description": "Three corn tortillas with chipotle jackfruit, cabbage slaw and cashew crema.",
+      "price_cents": 2200,
+      "ingredients": [
+        "corn tortillas",
+        "jackfruit",
+        "chipotle adobo",
+        "red cabbage",
+        "lime",
+        "cilantro",
+        "cashew crema"
+      ],
+      "allergens": [
+        "tree_nuts"
+      ],
+      "contains_gluten": false,
+      "diets": [
+        "vegan",
+        "vegetarian",
+        "pescatarian"
+      ],
+      "nutrition": {
+        "calories": 520,
+        "protein_grams": 12,
+        "carbohydrate_grams": 74,
+        "fat_grams": 20
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "seared-sea-scallops",
+      "name": "Seared Sea Scallops",
+      "category": "mains",
+      "description": "Scallops over cauliflower puree with brown butter and capers.",
+      "price_cents": 3800,
+      "ingredients": [
+        "sea scallops",
+        "cauliflower",
+        "butter",
+        "cream",
+        "capers",
+        "lemon"
+      ],
+      "allergens": [
+        "shellfish",
+        "milk"
+      ],
+      "contains_gluten": false,
+      "diets": [
+        "pescatarian",
+        "keto"
+      ],
+      "nutrition": {
+        "calories": 450,
+        "protein_grams": 34,
+        "carbohydrate_grams": 12,
+        "fat_grams": 30
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "wild-mushroom-risotto",
+      "name": "Wild Mushroom Risotto",
+      "category": "mains",
+      "description": "Arborio rice with wild mushrooms, parmesan and thyme.",
+      "price_cents": 2500,
+      "ingredients": [
+        "arborio rice",
+        "wild mushrooms",
+        "vegetable stock",
+        "white wine",
+        "parmesan cheese",
+        "butter",
+        "shallot",
+        "thyme"
+      ],
+      "allergens": [
+        "milk"
+      ],
+      "contains_gluten": false,
+      "diets": [
+        "vegetarian",
+        "pescatarian"
+      ],
+      "nutrition": {
+        "calories": 650,
+        "protein_grams": 18,
+        "carbohydrate_grams": 86,
+        "fat_grams": 26
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "truffle-fries",
+      "name": "Truffle Fries",
+      "category": "sides",
+      "description": "Hand-cut fries with truffle oil, parmesan and parsley.",
+      "price_cents": 900,
+      "ingredients": [
+        "potatoes",
+        "sunflower oil",
+        "truffle oil",
+        "parmesan cheese",
+        "parsley",
+        "sea salt"
+      ],
+      "allergens": [
+        "milk"
+      ],
+      "contains_gluten": false,
+      "diets": [
+        "vegetarian",
+        "pescatarian"
+      ],
+      "nutrition": {
+        "calories": 490,
+        "protein_grams": 8,
+        "carbohydrate_grams": 56,
+        "fat_grams": 26
+      },
+      "cross_contact_note": "Fried in the shared fryer with wheat-battered items."
+    },
+    {
+      "dish_id": "grilled-broccolini",
+      "name": "Grilled Broccolini",
+      "category": "sides",
+      "description": "Charred broccolini with garlic, chili and lemon.",
+      "price_cents": 800,
+      "ingredients": [
+        "broccolini",
+        "garlic",
+        "chili flakes",
+        "lemon",
+        "olive oil",
+        "sea salt"
+      ],
+      "allergens": [],
+      "contains_gluten": false,
+      "diets": [
+        "vegan",
+        "vegetarian",
+        "pescatarian",
+        "keto",
+        "paleo"
+      ],
+      "nutrition": {
+        "calories": 150,
+        "protein_grams": 5,
+        "carbohydrate_grams": 10,
+        "fat_grams": 10
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "three-cheese-mac",
+      "name": "Three-Cheese Mac",
+      "category": "sides",
+      "description": "Baked macaroni with cheddar, gruyere and a toasted crumb.",
+      "price_cents": 1000,
+      "ingredients": [
+        "macaroni",
+        "cheddar cheese",
+        "gruyere cheese",
+        "milk",
+        "butter",
+        "breadcrumbs"
+      ],
+      "allergens": [
+        "milk",
+        "wheat"
+      ],
+      "contains_gluten": true,
+      "diets": [
+        "vegetarian",
+        "pescatarian"
+      ],
+      "nutrition": {
+        "calories": 560,
+        "protein_grams": 22,
+        "carbohydrate_grams": 50,
+        "fat_grams": 30
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "creamed-spinach",
+      "name": "Creamed Spinach",
+      "category": "sides",
+      "description": "Spinach in a parmesan cream with nutmeg.",
+      "price_cents": 900,
+      "ingredients": [
+        "spinach",
+        "cream",
+        "parmesan cheese",
+        "garlic",
+        "nutmeg"
+      ],
+      "allergens": [
+        "milk"
+      ],
+      "contains_gluten": false,
+      "diets": [
+        "vegetarian",
+        "pescatarian",
+        "keto"
+      ],
+      "nutrition": {
+        "calories": 280,
+        "protein_grams": 9,
+        "carbohydrate_grams": 8,
+        "fat_grams": 24
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "flourless-chocolate-torte",
+      "name": "Flourless Chocolate Torte",
+      "category": "desserts",
+      "description": "Dense dark chocolate torte with an almond base and whipped cream.",
+      "price_cents": 1100,
+      "ingredients": [
+        "dark chocolate",
+        "eggs",
+        "butter",
+        "cane sugar",
+        "almond flour",
+        "whipped cream"
+      ],
+      "allergens": [
+        "eggs",
+        "milk",
+        "tree_nuts"
+      ],
+      "contains_gluten": false,
+      "diets": [
+        "vegetarian",
+        "pescatarian"
+      ],
+      "nutrition": {
+        "calories": 510,
+        "protein_grams": 8,
+        "carbohydrate_grams": 42,
+        "fat_grams": 34
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "coconut-panna-cotta",
+      "name": "Coconut Panna Cotta",
+      "category": "desserts",
+      "description": "Coconut milk panna cotta set with agar, topped with passion fruit.",
+      "price_cents": 1000,
+      "ingredients": [
+        "coconut milk",
+        "agar",
+        "maple syrup",
+        "vanilla",
+        "passion fruit"
+      ],
+      "allergens": [],
+      "contains_gluten": false,
+      "diets": [
+        "vegan",
+        "vegetarian",
+        "pescatarian",
+        "paleo"
+      ],
+      "nutrition": {
+        "calories": 330,
+        "protein_grams": 3,
+        "carbohydrate_grams": 30,
+        "fat_grams": 22
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "sticky-toffee-pudding",
+      "name": "Sticky Toffee Pudding",
+      "category": "desserts",
+      "description": "Warm date sponge with toffee sauce and vanilla ice cream.",
+      "price_cents": 1100,
+      "ingredients": [
+        "dates",
+        "wheat flour",
+        "butter",
+        "eggs",
+        "brown sugar",
+        "cream",
+        "vanilla ice cream"
+      ],
+      "allergens": [
+        "wheat",
+        "eggs",
+        "milk"
+      ],
+      "contains_gluten": true,
+      "diets": [
+        "vegetarian",
+        "pescatarian"
+      ],
+      "nutrition": {
+        "calories": 670,
+        "protein_grams": 8,
+        "carbohydrate_grams": 88,
+        "fat_grams": 32
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "vanilla-bean-cheesecake-cup",
+      "name": "Vanilla Bean Cheesecake Cup",
+      "category": "desserts",
+      "description": "No-sugar-added cheesecake cup on an almond crust.",
+      "price_cents": 1000,
+      "ingredients": [
+        "cream cheese",
+        "cream",
+        "eggs",
+        "erythritol",
+        "vanilla bean",
+        "almond flour",
+        "butter"
+      ],
+      "allergens": [
+        "milk",
+        "eggs",
+        "tree_nuts"
+      ],
+      "contains_gluten": false,
+      "diets": [
+        "vegetarian",
+        "pescatarian",
+        "keto"
+      ],
+      "nutrition": {
+        "calories": 380,
+        "protein_grams": 8,
+        "carbohydrate_grams": 7,
+        "fat_grams": 36
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "fresh-mint-lemonade",
+      "name": "Fresh Mint Lemonade",
+      "category": "drinks",
+      "description": "Fresh-squeezed lemonade with mint.",
+      "price_cents": 500,
+      "ingredients": [
+        "lemons",
+        "cane sugar",
+        "mint",
+        "water"
+      ],
+      "allergens": [],
+      "contains_gluten": false,
+      "diets": [
+        "vegan",
+        "vegetarian",
+        "pescatarian"
+      ],
+      "nutrition": {
+        "calories": 130,
+        "protein_grams": 0,
+        "carbohydrate_grams": 32,
+        "fat_grams": 0
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "beef-bone-broth",
+      "name": "Beef Bone Broth",
+      "category": "drinks",
+      "description": "Slow-simmered beef bone broth, salted and served hot.",
+      "price_cents": 600,
+      "ingredients": [
+        "beef bones",
+        "water",
+        "sea salt"
+      ],
+      "allergens": [],
+      "contains_gluten": false,
+      "diets": [
+        "carnivore",
+        "keto",
+        "paleo"
+      ],
+      "nutrition": {
+        "calories": 60,
+        "protein_grams": 10,
+        "carbohydrate_grams": 0,
+        "fat_grams": 2
+      },
+      "cross_contact_note": null
+    },
+    {
+      "dish_id": "peanut-butter-cup-shake",
+      "name": "Peanut Butter Cup Shake",
+      "category": "drinks",
+      "description": "Vanilla ice cream blended with peanut butter and chocolate.",
+      "price_cents": 900,
+      "ingredients": [
+        "vanilla ice cream",
+        "whole milk",
+        "peanut butter",
+        "chocolate sauce"
+      ],
+      "allergens": [
+        "milk",
+        "eggs",
+        "peanuts"
+      ],
+      "contains_gluten": false,
+      "diets": [
+        "vegetarian",
+        "pescatarian"
+      ],
+      "nutrition": {
+        "calories": 700,
+        "protein_grams": 18,
+        "carbohydrate_grams": 72,
+        "fat_grams": 38
+      },
+      "cross_contact_note": null
+    }
+  ]
+}

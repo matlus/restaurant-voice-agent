@@ -1,0 +1,19 @@
+{
+  "tables": [
+    {"table_id": "T01", "seats": 2, "area": "window"},
+    {"table_id": "T02", "seats": 2, "area": "window"},
+    {"table_id": "T03", "seats": 2, "area": "window"},
+    {"table_id": "T04", "seats": 2, "area": "main room"},
+    {"table_id": "T05", "seats": 2, "area": "main room"},
+    {"table_id": "T06", "seats": 2, "area": "main room"},
+    {"table_id": "T07", "seats": 4, "area": "main room"},
+    {"table_id": "T08", "seats": 4, "area": "main room"},
+    {"table_id": "T09", "seats": 4, "area": "main room"},
+    {"table_id": "T10", "seats": 4, "area": "main room"},
+    {"table_id": "T11", "seats": 4, "area": "garden room"},
+    {"table_id": "T12", "seats": 4, "area": "garden room"},
+    {"table_id": "T13", "seats": 6, "area": "garden room"},
+    {"table_id": "T14", "seats": 6, "area": "garden room"},
+    {"table_id": "T15", "seats": 8, "area": "garden room"}
+  ]
+}
