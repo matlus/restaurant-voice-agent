@@ -13,11 +13,16 @@ from voice_agent_restaurant.managers.data_managers.exception_translators.transla
 )
 from voice_agent_restaurant.managers.data_managers.store.restaurant_store_connector import RestaurantStoreConnector
 from voice_agent_restaurant.managers.data_managers.store.store_value_conversion import from_minutes_after_midnight, to_minutes_after_midnight
-from voice_agent_restaurant.managers.exceptions.reservation_exceptions import CandidateTablesTakenException, ReservationNotFoundException
+from voice_agent_restaurant.managers.exceptions.reservation_exceptions import (
+    CandidateTablesTakenException,
+    ReservationChangedConcurrentlyException,
+    ReservationNotFoundException,
+)
 from voice_agent_restaurant.managers.exceptions.restaurant_store_exceptions import RestaurantStoreContractViolationException
 from voice_agent_restaurant.managers.models.reservation_models import (
     CONFIRMATION_CODE_ALPHABET,
     CONFIRMATION_CODE_LENGTH,
+    BookedSchedule,
     NewReservation,
     Reservation,
     ReservationIdentity,
@@ -62,8 +67,8 @@ class DataManagerReservations:
     def __init__(self, database_path: Path, clock: ClockBase) -> None:
         self._restaurant_store_connector: RestaurantStoreConnector = RestaurantStoreConnector(database_path, clock)
 
-    async def get_seatings_on(self, reservation_date: date) -> list[Seating]:
-        return await asyncio.to_thread(self._get_seatings_on_synchronously, reservation_date)
+    async def find_seatings_on(self, reservation_date: date) -> list[Seating]:
+        return await asyncio.to_thread(self._find_seatings_on_synchronously, reservation_date)
 
     async def record_reservation(self, new_reservation: NewReservation, candidate_table_ids: Sequence[str], now_utc: datetime) -> Reservation:
         """Assigns a confirmation code, seats the booking at the first free candidate table and records it.
@@ -72,8 +77,8 @@ class DataManagerReservations:
         """
         return await asyncio.to_thread(self._record_reservation_synchronously, new_reservation, candidate_table_ids, now_utc)
 
-    async def get_booked_reservation(self, reservation_identity: ReservationIdentity) -> Reservation:
-        return await asyncio.to_thread(self._get_booked_reservation_synchronously, reservation_identity)
+    async def retrieve_booked_reservation(self, reservation_identity: ReservationIdentity) -> Reservation:
+        return await asyncio.to_thread(self._retrieve_booked_reservation_synchronously, reservation_identity)
 
     async def find_booked_reservations(self, phone_number: str, first_date: date) -> list[Reservation]:
         return await asyncio.to_thread(self._find_booked_reservations_synchronously, phone_number, first_date)
@@ -83,8 +88,9 @@ class DataManagerReservations:
     ) -> Reservation:
         """Moves a booked reservation to the first free candidate table at its new time.
 
-        Raises CandidateTablesTakenException when every candidate is taken, and ReservationNotFoundException when the
-        booking is no longer booked. Either way nothing is written.
+        Raises CandidateTablesTakenException when every candidate is taken, ReservationNotFoundException when the
+        booking is no longer booked, and ReservationChangedConcurrentlyException when it no longer holds the schedule
+        the change was decided from. In every case nothing is written.
         """
         return await asyncio.to_thread(self._reschedule_reservation_synchronously, reservation_reschedule, candidate_table_ids, now_utc)
 
@@ -92,7 +98,7 @@ class DataManagerReservations:
         """Cancels a booked reservation. Raises ReservationNotFoundException, writing nothing, when it is no longer booked."""
         return await asyncio.to_thread(self._cancel_reservation_synchronously, confirmation_code, now_utc)
 
-    def _get_seatings_on_synchronously(self, reservation_date: date) -> list[Seating]:
+    def _find_seatings_on_synchronously(self, reservation_date: date) -> list[Seating]:
         try:
             with self._restaurant_store_connector.open_connection() as connection:
                 seating_rows: list[sqlite3.Row] = connection.execute(
@@ -147,16 +153,16 @@ class DataManagerReservations:
     def _cancel_reservation_synchronously(self, confirmation_code: str, now_utc: datetime) -> Reservation:
         try:
             with self._restaurant_store_connector.open_connection() as connection:
-                cancelled_reservation: Reservation = self._run_in_immediate_transaction(
+                reservation: Reservation = self._run_in_immediate_transaction(
                     connection, lambda: self._cancel_booked_reservation(connection, confirmation_code, now_utc)
                 )
         except (sqlite3.Error, OSError) as store_error:
             raise TranslatorRestaurantStoreExceptions.translate(
                 store_error, "cancel the reservation", {self._CONFIRMATION_CODE_CONTEXT_KEY: confirmation_code}
             ) from store_error
-        return cancelled_reservation
+        return reservation
 
-    def _get_booked_reservation_synchronously(self, reservation_identity: ReservationIdentity) -> Reservation:
+    def _retrieve_booked_reservation_synchronously(self, reservation_identity: ReservationIdentity) -> Reservation:
         try:
             with self._restaurant_store_connector.open_connection() as connection:
                 reservation_row: sqlite3.Row | None = connection.execute(
@@ -283,11 +289,15 @@ class DataManagerReservations:
     def _update_reservation_schedule(
         self, connection: sqlite3.Connection, reservation_reschedule: ReservationReschedule, table_id: str, now_utc: datetime
     ) -> None:
+        # The manager decided the change from the booking it read on another connection. The row is rewritten only
+        # while it still holds that schedule, so a change committed in between is never silently overwritten.
+        current_schedule: BookedSchedule = reservation_reschedule.current_schedule
         update_cursor: sqlite3.Cursor = connection.execute(
             """
             UPDATE reservations
             SET party_size = ?, reservation_date = ?, starts_at_minutes = ?, ends_at_minutes = ?, table_id = ?, notes = ?, updated_at_utc = ?
             WHERE confirmation_code = ? AND status = ?
+              AND party_size = ? AND reservation_date = ? AND starts_at_minutes = ? AND ends_at_minutes = ? AND table_id = ? AND notes IS ?
             """,
             (
                 reservation_reschedule.party_size,
@@ -299,13 +309,27 @@ class DataManagerReservations:
                 now_utc.isoformat(),
                 reservation_reschedule.confirmation_code,
                 ReservationStatus.BOOKED.value,
+                current_schedule.party_size,
+                current_schedule.reservation_date.isoformat(),
+                to_minutes_after_midnight(current_schedule.starts_at),
+                to_minutes_after_midnight(current_schedule.ends_at),
+                current_schedule.table_id,
+                current_schedule.notes,
             ),
         )
-        # The manager read the booking on another connection; it may have been cancelled since.
         if update_cursor.rowcount != 1:
-            raise ReservationNotFoundException(
-                reservation_reschedule.confirmation_code, {self._CONFIRMATION_CODE_CONTEXT_KEY: reservation_reschedule.confirmation_code}
-            )
+            raise self._create_lost_reschedule_exception(connection, reservation_reschedule.confirmation_code)
+
+    def _create_lost_reschedule_exception(
+        self, connection: sqlite3.Connection, confirmation_code: str
+    ) -> ReservationNotFoundException | ReservationChangedConcurrentlyException:
+        """Why the conditional rewrite matched no row: the booking was cancelled since it was read, or it was changed."""
+        still_booked_row: sqlite3.Row | None = connection.execute(
+            "SELECT 1 FROM reservations WHERE confirmation_code = ? AND status = ?", (confirmation_code, ReservationStatus.BOOKED.value)
+        ).fetchone()
+        if still_booked_row is None:
+            return ReservationNotFoundException(confirmation_code, {self._CONFIRMATION_CODE_CONTEXT_KEY: confirmation_code})
+        return ReservationChangedConcurrentlyException(confirmation_code, {self._CONFIRMATION_CODE_CONTEXT_KEY: confirmation_code})
 
     def _read_reservation(self, connection: sqlite3.Connection, confirmation_code: str) -> Reservation:
         reservation_row: sqlite3.Row | None = connection.execute(

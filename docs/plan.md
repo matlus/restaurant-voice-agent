@@ -49,8 +49,8 @@ For Vapi, the same facade operations are exposed as HTTP endpoints, and Vapi cal
 | Scaffold the repo and adopt PWI | Done |
 | Seed data: restaurant, hours, closures, tables, menu, existing bookings | Done |
 | Restaurant domain with acceptance tests (46 tests), PWI review findings fixed | Done |
-| OpenAI Realtime adapter and browser audio, end to end | Next |
-| Connect the tools: menu questions and bookings by voice | |
+| OpenAI Realtime adapter and browser audio, end to end (conversation package, web host, microphone page) | Built; live call not yet tried |
+| Connect the tools: menu questions and bookings by voice | Next |
 | Gemini Live adapter and the voice catalog | |
 | Interruption polish, a latency check, README | |
 | Phase 2: HTTP tool endpoints and hosting on Vapi | |

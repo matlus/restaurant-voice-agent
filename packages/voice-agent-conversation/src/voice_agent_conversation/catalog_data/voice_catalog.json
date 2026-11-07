@@ -1,0 +1,32 @@
+{
+  "voices": [
+    {
+      "voice_key": "openai-marin",
+      "speech_provider": "openai",
+      "provider_voice_id": "marin",
+      "presented_gender": "female",
+      "description": "Warm and natural, with a relaxed pace."
+    },
+    {
+      "voice_key": "openai-coral",
+      "speech_provider": "openai",
+      "provider_voice_id": "coral",
+      "presented_gender": "female",
+      "description": "Bright and friendly."
+    },
+    {
+      "voice_key": "openai-cedar",
+      "speech_provider": "openai",
+      "provider_voice_id": "cedar",
+      "presented_gender": "male",
+      "description": "Calm and grounded, with a low register."
+    },
+    {
+      "voice_key": "openai-ash",
+      "speech_provider": "openai",
+      "provider_voice_id": "ash",
+      "presented_gender": "male",
+      "description": "Clear and upbeat."
+    }
+  ]
+}

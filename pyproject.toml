@@ -140,7 +140,7 @@ ignore = [
 "__init__.py" = ["F401"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["voice_agent_restaurant", "voice_agent_web", "acceptance_support"]
+known-first-party = ["voice_agent_restaurant", "voice_agent_conversation", "voice_agent_web", "acceptance_support"]
 force-single-line = false
 combine-as-imports = true
 
@@ -165,9 +165,10 @@ typeCheckingMode = "strict"
 venvPath = "."
 venv = ".venv"
 # Listed explicitly: pyright finds no sources through the "packages/*/src" wildcard on Windows.
-include = ["packages/voice-agent-restaurant/src", "apps/voice-agent-web/src"]
+include = ["packages/voice-agent-restaurant/src", "packages/voice-agent-conversation/src", "apps/voice-agent-web/src"]
 extraPaths = [
     "packages/voice-agent-restaurant/src",
+    "packages/voice-agent-conversation/src",
     "apps/voice-agent-web/src",
 ]
 exclude = ["**/tests", "**/__pycache__", "**/old/**", "build", "dist"]
@@ -245,7 +246,10 @@ norecursedirs = [
 pythonpath = [
     "packages/voice-agent-restaurant/src",
     "packages/voice-agent-restaurant/tests",
+    "packages/voice-agent-conversation/src",
+    "packages/voice-agent-conversation/tests",
     "apps/voice-agent-web/src",
+    "apps/voice-agent-web/tests",
 ]
 
 # ============================================================================

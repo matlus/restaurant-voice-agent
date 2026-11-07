@@ -1,6 +1,7 @@
 import json
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager
 from datetime import date, datetime, time, timedelta
 from typing import Final
 from zoneinfo import ZoneInfo
@@ -40,18 +41,31 @@ class RestaurantStoreInitializer:
     def ensure_initialized(cls, connection: sqlite3.Connection, now_utc: datetime) -> None:
         if cls._is_current(connection):
             return
+        with cls._immediate_transaction(connection):
+            cls._create_store(connection, now_utc)
+
+    @staticmethod
+    @contextmanager
+    def _immediate_transaction(connection: sqlite3.Connection) -> Generator[None]:
         connection.execute("BEGIN IMMEDIATE")
         try:
-            if not cls._is_current(connection):
-                cls._create_schema(connection)
-                cls._load_seed(connection, SeedDataReader.read_restaurant_seed(), now_utc)
-                connection.execute(f"PRAGMA user_version = {STORE_VERSION}")
+            yield
             connection.execute("COMMIT")
         except BaseException:
             # SQLite rolls some failed transactions back by itself; a second ROLLBACK would raise and hide the first error.
             if connection.in_transaction:
                 connection.execute("ROLLBACK")
             raise
+
+    @classmethod
+    def _create_store(cls, connection: sqlite3.Connection, now_utc: datetime) -> None:
+        # A racing first caller may have created the store between the unlocked check and this transaction.
+        if cls._is_current(connection):
+            return
+        cls._create_schema(connection)
+        cls._load_seed(connection, SeedDataReader.read_restaurant_seed(), now_utc)
+        # SQLite PRAGMA statements take no bound parameters, so the version is interpolated; STORE_VERSION is an int constant, never input.
+        connection.execute(f"PRAGMA user_version = {STORE_VERSION}")
 
     @staticmethod
     def _is_current(connection: sqlite3.Connection) -> bool:

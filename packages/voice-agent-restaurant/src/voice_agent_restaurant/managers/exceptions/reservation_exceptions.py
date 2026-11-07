@@ -20,7 +20,8 @@ def _format_time(time_of_day: time) -> str:
 
 @final
 class ReservationRequestValidationException(VoiceAgentRestaurantBusinessBaseException):
-    """Everything wrong with a reservation request itself, reported together."""
+    """Everything wrong with a reservation request itself, reported together: every missing or malformed value first,
+    and only for a well-formed request, every conflict with the booking policy and booking window."""
 
     def __init__(self, validation_problems: list[str], contextual_data_by_name: ContextualDataDict | None = None) -> None:
         super().__init__(
@@ -159,6 +160,33 @@ class ReservationAlreadyStartedException(VoiceAgentRestaurantBusinessBaseExcepti
     @override
     def reason(self) -> str:
         return "The reservation has already started"
+
+    @property
+    @override
+    def http_status_code(self) -> int:
+        return 409
+
+
+@final
+class ReservationChangedConcurrentlyException(VoiceAgentRestaurantBusinessBaseException):
+    """The booking changed after this change was decided from it, so applying the change would overwrite the other one.
+    Nothing was written."""
+
+    def __init__(self, confirmation_code: str, contextual_data_by_name: ContextualDataDict | None = None) -> None:
+        super().__init__(
+            message=(
+                f"Reservation '{confirmation_code}' was changed by another request while this change was being made, so nothing was changed. "
+                "Look the reservation up again and repeat the change."
+            ),
+            log_event=LogEventReservation.RESERVATION_SCHEDULING,
+            contextual_data_by_name=contextual_data_by_name,
+        )
+        self.confirmation_code: str = confirmation_code
+
+    @property
+    @override
+    def reason(self) -> str:
+        return "The reservation was changed by another request"
 
     @property
     @override

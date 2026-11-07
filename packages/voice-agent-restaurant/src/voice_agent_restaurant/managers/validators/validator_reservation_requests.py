@@ -21,11 +21,13 @@ from voice_agent_restaurant.managers.validators.value_parsing.reservation_value_
 
 
 class ValidatorReservationRequests:
-    """Front-door validation for every reservation request. Each request's problems are reported together.
+    """Front-door validation for every reservation request. Each stage reports all of its problems together.
 
     Values arrive as a voice model transcribed them. Each is trimmed and put into its stored form first (phone
     numbers to digits, confirmation codes to upper case) and then judged; a valid request comes back as typed
-    values. Whether the restaurant is open and whether a table is free are decided later, by the manager.
+    values. Each request is judged in two stages: first on its own, before anything is read from the store, then
+    by validate_requested_seating against the restaurant's booking policy and booking window. Whether the
+    restaurant is open and whether a table is free are decided later, by the manager.
     """
 
     MAXIMUM_GUEST_NAME_LENGTH: Final[int] = 100
@@ -33,13 +35,11 @@ class ValidatorReservationRequests:
     SECONDS_PER_MINUTE: Final[int] = 60
 
     @classmethod
-    def validate_availability_request(
-        cls, availability_request: AvailabilityRequest, reservation_policy: ReservationPolicy, booking_window: BookingWindow
-    ) -> RequestedSeating:
+    def validate_availability_request(cls, availability_request: AvailabilityRequest) -> RequestedSeating:
         reservation_date_text: str | None = ReservationValueParsing.as_provided(availability_request.reservation_date)
         reservation_time_text: str | None = ReservationValueParsing.as_provided(availability_request.reservation_time)
-        validation_problems: list[str] = cls._collect_seating_problems(
-            reservation_date_text, reservation_time_text, availability_request.party_size, reservation_policy, booking_window
+        validation_problems: list[str] = cls._collect_required_seating_problems(
+            reservation_date_text, reservation_time_text, availability_request.party_size
         )
         requested_seating: RequestedSeating | None = cls._to_requested_seating(
             reservation_date_text, reservation_time_text, availability_request.party_size
@@ -49,9 +49,7 @@ class ValidatorReservationRequests:
         return requested_seating
 
     @classmethod
-    def validate_reservation_request(
-        cls, reservation_request: ReservationRequest, reservation_policy: ReservationPolicy, booking_window: BookingWindow
-    ) -> ValidatedReservationRequest:
+    def validate_reservation_request(cls, reservation_request: ReservationRequest) -> ValidatedReservationRequest:
         guest_name: str | None = ReservationValueParsing.as_provided(reservation_request.guest_name)
         phone_number: str | None = cls._as_phone_number(reservation_request.phone_number)
         reservation_date_text: str | None = ReservationValueParsing.as_provided(reservation_request.reservation_date)
@@ -61,9 +59,7 @@ class ValidatorReservationRequests:
         validation_problems.extend(cls._collect_guest_name_problems(guest_name))
         validation_problems.extend(cls._collect_phone_number_problems(phone_number))
         validation_problems.extend(
-            cls._collect_seating_problems(
-                reservation_date_text, reservation_time_text, reservation_request.party_size, reservation_policy, booking_window
-            )
+            cls._collect_required_seating_problems(reservation_date_text, reservation_time_text, reservation_request.party_size)
         )
         validation_problems.extend(cls._collect_notes_problems(notes))
         requested_seating: RequestedSeating | None = cls._to_requested_seating(
@@ -95,7 +91,7 @@ class ValidatorReservationRequests:
 
     @classmethod
     def validate_change_request(cls, reservation_change_request: ReservationChangeRequest) -> ValidatedReservationChange:
-        """Judges the change request on its own. The changed seating is judged by validate_changed_seating once the
+        """Judges the change request on its own. The changed seating is judged by validate_requested_seating once the
         current booking supplies the values left unchanged."""
         confirmation_code: str | None = cls._as_confirmation_code(reservation_change_request.confirmation_code)
         phone_number: str | None = cls._as_phone_number(reservation_change_request.phone_number)
@@ -124,9 +120,10 @@ class ValidatorReservationRequests:
         )
 
     @classmethod
-    def validate_changed_seating(
+    def validate_requested_seating(
         cls, requested_seating: RequestedSeating, reservation_policy: ReservationPolicy, booking_window: BookingWindow
     ) -> None:
+        """Judges a seating that is already well formed against the restaurant's booking policy and booking window."""
         validation_problems: list[str] = []
         validation_problems.extend(cls._collect_slot_boundary_problems(requested_seating.starts_at, reservation_policy.slot_interval_minutes))
         validation_problems.extend(cls._collect_party_size_problems(requested_seating.party_size, reservation_policy))
@@ -137,22 +134,13 @@ class ValidatorReservationRequests:
             raise cls._create_validation_exception(validation_problems)
 
     @classmethod
-    def _collect_seating_problems(
-        cls,
-        reservation_date_text: str | None,
-        reservation_time_text: str | None,
-        party_size: int | None,
-        reservation_policy: ReservationPolicy,
-        booking_window: BookingWindow,
+    def _collect_required_seating_problems(
+        cls, reservation_date_text: str | None, reservation_time_text: str | None, party_size: int | None
     ) -> list[str]:
         validation_problems: list[str] = []
         validation_problems.extend(cls._collect_required_date_problems(reservation_date_text))
-        validation_problems.extend(cls._collect_required_time_problems(reservation_time_text, reservation_policy.slot_interval_minutes))
-        validation_problems.extend(cls._collect_party_size_problems(party_size, reservation_policy))
-        reservation_date: date | None = None if reservation_date_text is None else ReservationValueParsing.parse_date(reservation_date_text)
-        starts_at: time | None = None if reservation_time_text is None else ReservationValueParsing.parse_time(reservation_time_text)
-        if reservation_date is not None and starts_at is not None:
-            validation_problems.extend(cls._collect_booking_window_problems(reservation_date, starts_at, booking_window))
+        validation_problems.extend(cls._collect_required_time_problems(reservation_time_text))
+        validation_problems.extend(cls._collect_required_party_size_problems(party_size))
         return validation_problems
 
     @staticmethod
@@ -178,13 +166,10 @@ class ValidatorReservationRequests:
         return []
 
     @classmethod
-    def _collect_required_time_problems(cls, reservation_time_text: str | None, slot_interval_minutes: int) -> list[str]:
+    def _collect_required_time_problems(cls, reservation_time_text: str | None) -> list[str]:
         if reservation_time_text is None:
             return ["'reservation_time' is required but was not provided"]
-        starts_at: time | None = ReservationValueParsing.parse_time(reservation_time_text)
-        if starts_at is None:
-            return cls._collect_optional_time_problems(reservation_time_text)
-        return cls._collect_slot_boundary_problems(starts_at, slot_interval_minutes)
+        return cls._collect_optional_time_problems(reservation_time_text)
 
     @staticmethod
     def _collect_optional_time_problems(reservation_time_text: str | None) -> list[str]:
@@ -194,14 +179,20 @@ class ValidatorReservationRequests:
 
     @staticmethod
     def _collect_slot_boundary_problems(starts_at: time, slot_interval_minutes: int) -> list[str]:
+        # The seed reader refuses an interval that does not divide an hour and an opening time off the grid, so the
+        # minute of the hour alone decides whether a time is on the grid SeatingRules steps from each opening time.
         if starts_at.minute % slot_interval_minutes != 0:
             return [f"'reservation_time' value '{starts_at:%H:%M}' must fall on a {slot_interval_minutes}-minute boundary"]
         return []
 
     @staticmethod
-    def _collect_party_size_problems(party_size: int | None, reservation_policy: ReservationPolicy) -> list[str]:
+    def _collect_required_party_size_problems(party_size: int | None) -> list[str]:
         if party_size is None:
             return ["'party_size' is required but was not provided"]
+        return []
+
+    @staticmethod
+    def _collect_party_size_problems(party_size: int, reservation_policy: ReservationPolicy) -> list[str]:
         if party_size < reservation_policy.minimum_party_size:
             return [f"'party_size' must be at least {reservation_policy.minimum_party_size} but was {party_size}"]
         if party_size > reservation_policy.maximum_party_size:

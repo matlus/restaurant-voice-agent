@@ -19,11 +19,10 @@ class ReservationValueParsing:
     """The accepted text forms of reservation values, and how spoken forms are put into them."""
 
     @staticmethod
-    def as_provided(field_value: str | None) -> str | None:
-        """The trimmed value, or None when nothing but whitespace arrived."""
-        if field_value is None or field_value.strip() == "":
+    def as_provided(spoken_field_text: str | None) -> str | None:
+        if spoken_field_text is None or spoken_field_text.strip() == "":
             return None
-        return field_value.strip()
+        return spoken_field_text.strip()
 
     @staticmethod
     def parse_date(date_text: str) -> date | None:

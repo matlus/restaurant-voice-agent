@@ -156,10 +156,27 @@ class NewReservation:
 
 
 @dataclass(frozen=True)
+class BookedSchedule:
+    """Everything about a booking that a change can rewrite: when and where it sits, for how many, and its notes."""
+
+    party_size: int
+    reservation_date: date
+    starts_at: time
+    ends_at: time
+    table_id: str
+    notes: str | None
+
+
+@dataclass(frozen=True)
 class ReservationReschedule:
-    """New seating details for an existing booking, which the store moves to the first free candidate table."""
+    """New seating details for an existing booking, which the store moves to the first free candidate table.
+
+    current_schedule is the booking as it stood when the change was decided; the store applies the change only while
+    the booking still stands that way.
+    """
 
     confirmation_code: str
+    current_schedule: BookedSchedule
     party_size: int
     reservation_date: date
     starts_at: time

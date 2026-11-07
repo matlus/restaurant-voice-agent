@@ -12,9 +12,6 @@ class DietaryLabelRules:
 
     @classmethod
     def to_dish(cls, dish_record: DishRecord) -> Dish:
-        lifestyle_diet_labels: list[DietLabel] = [
-            diet_label for diet_label in dish_record.recipe_diet_labels if diet_label not in cls.FREE_FROM_LABELS
-        ]
         return Dish(
             dish_id=dish_record.dish_id,
             name=dish_record.name,
@@ -23,10 +20,15 @@ class DietaryLabelRules:
             price_cents=dish_record.price_cents,
             ingredients=dish_record.ingredients,
             allergens=dish_record.allergens,
-            diet_labels=lifestyle_diet_labels + cls._derive_free_from_labels(dish_record.contains_gluten, dish_record.allergens),
+            diet_labels=cls._derive_lifestyle_labels(dish_record.recipe_diet_labels)
+            + cls._derive_free_from_labels(dish_record.contains_gluten, dish_record.allergens),
             nutrition=dish_record.nutrition,
             cross_contact_note=dish_record.cross_contact_note,
         )
+
+    @classmethod
+    def _derive_lifestyle_labels(cls, recipe_diet_labels: Sequence[DietLabel]) -> list[DietLabel]:
+        return [diet_label for diet_label in recipe_diet_labels if diet_label not in cls.FREE_FROM_LABELS]
 
     @staticmethod
     def _derive_free_from_labels(contains_gluten: bool, allergens: Sequence[Allergen]) -> list[DietLabel]:  # noqa: FBT001 - a plain fact, not a mode switch
