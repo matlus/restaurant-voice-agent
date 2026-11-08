@@ -88,10 +88,9 @@ class ReservationCancellationRequest:
 
 @dataclass(frozen=True)
 class BookingWindow:
-    """When a booking may start, judged at restaurant_now: no earlier than earliest_start and on or before last_date."""
+    """When a booking may start, judged at restaurant_now: not in the past and on or before last_date."""
 
     restaurant_now: datetime
-    earliest_start: datetime
     last_date: date
 
 

@@ -97,8 +97,8 @@ class RestaurantStoreInitializer:
             INSERT INTO restaurant (
                 restaurant_id, name, tagline, description, street_address, city, state_or_region, postal_code, phone_number,
                 time_zone, house_notes_json, seating_duration_minutes, slot_interval_minutes, minimum_party_size,
-                maximum_party_size, booking_window_days, minimum_lead_time_minutes, late_arrival_hold_minutes, large_party_guidance
-            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                maximum_party_size, booking_window_days, late_arrival_hold_minutes, large_party_guidance
+            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 restaurant_profile.name,
@@ -116,7 +116,6 @@ class RestaurantStoreInitializer:
                 restaurant_profile.reservation_policy.minimum_party_size,
                 restaurant_profile.reservation_policy.maximum_party_size,
                 restaurant_profile.reservation_policy.booking_window_days,
-                restaurant_profile.reservation_policy.minimum_lead_time_minutes,
                 restaurant_profile.reservation_policy.late_arrival_hold_minutes,
                 restaurant_profile.reservation_policy.large_party_guidance,
             ),

@@ -24,7 +24,6 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         minimum_party_size INTEGER NOT NULL,
         maximum_party_size INTEGER NOT NULL,
         booking_window_days INTEGER NOT NULL,
-        minimum_lead_time_minutes INTEGER NOT NULL,
         late_arrival_hold_minutes INTEGER NOT NULL,
         large_party_guidance TEXT NOT NULL
     )

@@ -33,7 +33,6 @@ class ValidatorReservationRequests:
 
     MAXIMUM_GUEST_NAME_LENGTH: Final[int] = 100
     MAXIMUM_NOTES_LENGTH: Final[int] = 300
-    SECONDS_PER_MINUTE: Final[int] = 60
 
     @classmethod
     def validate_availability_request(cls, availability_request: AvailabilityRequest) -> RequestedSeating:
@@ -143,8 +142,7 @@ class ValidatorReservationRequests:
         booking_window: BookingWindow,
     ) -> None:
         """Judges only what a change moves. A new date or time must be bookable now and a new party size must be allowed;
-        a booking left at its time and size keeps what it was booked under, so a guest can still add a note shortly before
-        the meal."""
+        a booking left at its time and size keeps what it was booked under."""
         validation_problems: list[str] = []
         if (changed_seating.reservation_date, changed_seating.starts_at) != (current_seating.reservation_date, current_seating.starts_at):
             validation_problems.extend(cls._collect_slot_boundary_problems(changed_seating.starts_at, reservation_policy.slot_interval_minutes))
@@ -231,14 +229,8 @@ class ValidatorReservationRequests:
     def _collect_booking_window_problems(cls, reservation_date: date, starts_at: time, booking_window: BookingWindow) -> list[str]:
         restaurant_now: datetime = booking_window.restaurant_now
         requested_start: datetime = datetime.combine(reservation_date, starts_at, tzinfo=restaurant_now.tzinfo)
-        if requested_start < booking_window.earliest_start:
-            minimum_lead_time_minutes: int = int((booking_window.earliest_start - restaurant_now).total_seconds()) // cls.SECONDS_PER_MINUTE
-            return [
-                (
-                    f"{reservation_date.isoformat()} at {starts_at:%H:%M} has already passed or is less than "
-                    f"{minimum_lead_time_minutes} minutes away; it is now {restaurant_now:%Y-%m-%d %H:%M}"
-                )
-            ]
+        if requested_start < restaurant_now:
+            return [f"{reservation_date.isoformat()} at {starts_at:%H:%M} has already passed; it is now {restaurant_now:%Y-%m-%d %H:%M}"]
         if reservation_date > booking_window.last_date:
             booking_window_days: int = (booking_window.last_date - restaurant_now.date()).days
             return [

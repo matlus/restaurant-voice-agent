@@ -135,9 +135,6 @@ class SeedDataReader:
             booking_window_days=restaurant_seed_file.get_non_negative_number(
                 reservation_policy_object, "booking_window_days", reservation_policy_path
             ),
-            minimum_lead_time_minutes=restaurant_seed_file.get_non_negative_number(
-                reservation_policy_object, "minimum_lead_time_minutes", reservation_policy_path
-            ),
             late_arrival_hold_minutes=restaurant_seed_file.get_non_negative_number(
                 reservation_policy_object, "late_arrival_hold_minutes", reservation_policy_path
             ),

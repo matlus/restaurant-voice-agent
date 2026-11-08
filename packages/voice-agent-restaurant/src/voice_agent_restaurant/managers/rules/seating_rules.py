@@ -46,12 +46,8 @@ class SeatingRules:
         return list(Weekday)[calendar_date.weekday()]
 
     @staticmethod
-    def get_booking_window(restaurant_now: datetime, minimum_lead_time_minutes: int, booking_window_days: int) -> BookingWindow:
-        return BookingWindow(
-            restaurant_now=restaurant_now,
-            earliest_start=restaurant_now + timedelta(minutes=minimum_lead_time_minutes),
-            last_date=restaurant_now.date() + timedelta(days=booking_window_days),
-        )
+    def get_booking_window(restaurant_now: datetime, booking_window_days: int) -> BookingWindow:
+        return BookingWindow(restaurant_now=restaurant_now, last_date=restaurant_now.date() + timedelta(days=booking_window_days))
 
     @classmethod
     def get_seating_window(cls, weekday_hours: WeekdayHours, seating_duration_minutes: int) -> SeatingWindow | None:
@@ -112,21 +108,21 @@ class SeatingRules:
 
     @classmethod
     def get_alternative_times(
-        cls, seating_day: SeatingDay, requested_time: time, seating_rhythm: SeatingRhythm, earliest_start: datetime
+        cls, seating_day: SeatingDay, requested_time: time, seating_rhythm: SeatingRhythm, restaurant_now: datetime
     ) -> list[time]:
         """Up to MAXIMUM_ALTERNATIVE_TIMES other bookable times with a free fitting table, nearest to the requested time, in time order."""
-        open_slot_times: list[time] = cls._get_open_slot_times(seating_day, requested_time, seating_rhythm, earliest_start)
+        open_slot_times: list[time] = cls._get_open_slot_times(seating_day, requested_time, seating_rhythm, restaurant_now)
         return sorted(cls._get_nearest_slot_times(open_slot_times, requested_time))
 
     @classmethod
     def _get_open_slot_times(
-        cls, seating_day: SeatingDay, requested_time: time, seating_rhythm: SeatingRhythm, earliest_start: datetime
+        cls, seating_day: SeatingDay, requested_time: time, seating_rhythm: SeatingRhythm, restaurant_now: datetime
     ) -> list[time]:
         return [
             slot_time
             for slot_time in cls._get_slot_times(seating_day.seating_window, seating_rhythm.slot_interval_minutes)
             if slot_time != requested_time
-            and datetime.combine(seating_day.reservation_date, slot_time, tzinfo=earliest_start.tzinfo) >= earliest_start
+            and datetime.combine(seating_day.reservation_date, slot_time, tzinfo=restaurant_now.tzinfo) >= restaurant_now
             and cls.has_free_table(
                 seating_day.fitting_tables, seating_day.seatings, slot_time, cls.get_ends_at(slot_time, seating_rhythm.seating_duration_minutes)
             )

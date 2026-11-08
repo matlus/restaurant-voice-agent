@@ -143,7 +143,6 @@ class DataManagerRestaurant:
                 minimum_party_size=restaurant_row["minimum_party_size"],
                 maximum_party_size=restaurant_row["maximum_party_size"],
                 booking_window_days=restaurant_row["booking_window_days"],
-                minimum_lead_time_minutes=restaurant_row["minimum_lead_time_minutes"],
                 late_arrival_hold_minutes=restaurant_row["late_arrival_hold_minutes"],
                 large_party_guidance=restaurant_row["large_party_guidance"],
             ),

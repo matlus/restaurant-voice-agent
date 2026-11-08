@@ -64,7 +64,7 @@ class _SeatingPlan:
     seating_window: SeatingWindow
     fitting_tables: list[DiningTable]
     seating_rhythm: SeatingRhythm
-    earliest_start: datetime
+    restaurant_now: datetime
 
 
 class ManagerReservations:
@@ -162,9 +162,7 @@ class ManagerReservations:
         restaurant_now: datetime = self._to_restaurant_now(restaurant_profile.time_zone)
         return _BookingContext(
             reservation_policy=reservation_policy,
-            booking_window=SeatingRules.get_booking_window(
-                restaurant_now, reservation_policy.minimum_lead_time_minutes, reservation_policy.booking_window_days
-            ),
+            booking_window=SeatingRules.get_booking_window(restaurant_now, reservation_policy.booking_window_days),
             seating_rhythm=SeatingRhythm(
                 slot_interval_minutes=reservation_policy.slot_interval_minutes, seating_duration_minutes=reservation_policy.seating_duration_minutes
             ),
@@ -193,7 +191,7 @@ class ManagerReservations:
             seating_window=seating_window,
             fitting_tables=SeatingRules.get_fitting_tables(dining_tables, requested_seating.party_size),
             seating_rhythm=booking_context.seating_rhythm,
-            earliest_start=booking_context.booking_window.earliest_start,
+            restaurant_now=booking_context.booking_window.restaurant_now,
         )
 
     async def _get_seating_window_or_refuse(self, requested_seating: RequestedSeating, seating_duration_minutes: int) -> SeatingWindow:
@@ -248,7 +246,7 @@ class ManagerReservations:
             seatings=seatings,
         )
         return SeatingRules.get_alternative_times(
-            seating_day, seating_plan.requested_seating.starts_at, seating_plan.seating_rhythm, seating_plan.earliest_start
+            seating_day, seating_plan.requested_seating.starts_at, seating_plan.seating_rhythm, seating_plan.restaurant_now
         )
 
     @staticmethod
