@@ -11,7 +11,7 @@ import pytest
 
 from acceptance_support.asserters.asserter_exception import AsserterException, ExpectedExceptionMetadata
 from acceptance_support.asserters.asserter_restaurant_profile import AsserterRestaurantProfile
-from acceptance_support.bundled_seed import SeededRestaurant, SeededWeekdayHours, read_seeded_restaurant
+from acceptance_support.bundled_seed import SeededClosedWeekday, SeededRestaurant, SeededWeekdayHours, read_seeded_restaurant
 from acceptance_support.generated_guests import GeneratedGuest, create_generated_guest
 from acceptance_support.service_locator_testing import (
     DATABASE_PATH_VARIABLE_NAME,
@@ -49,7 +49,7 @@ def foreign_file_database_path(restaurant_database_path: Path) -> Path:
 
 def to_weekday_hours(seeded_weekday_hours: SeededWeekdayHours) -> WeekdayHours:
     weekday: Weekday = Weekday(seeded_weekday_hours.weekday)
-    if seeded_weekday_hours.opens_at is None or seeded_weekday_hours.closes_at is None:
+    if isinstance(seeded_weekday_hours, SeededClosedWeekday):
         return ClosedWeekday(weekday=weekday)
     return OpenWeekday(weekday=weekday, opens_at=seeded_weekday_hours.opens_at, closes_at=seeded_weekday_hours.closes_at)
 

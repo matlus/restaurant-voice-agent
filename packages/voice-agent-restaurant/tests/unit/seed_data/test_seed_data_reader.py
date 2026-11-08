@@ -62,11 +62,13 @@ def assert_seed_refusal_is_as_expected(
         ("Reason", SEED_DATA_INVALID_REASON, actual_restaurant_seed_data_invalid_exception.reason),
         ("Severity", Severity.ERROR, actual_restaurant_seed_data_invalid_exception.severity),
     ]
-    mismatch_messages: list[str] = [
-        f"{obligation_name}: expected {expected_value!r}; actual {actual_value!r}."
-        for obligation_name, expected_value, actual_value in expected_obligations
-        if expected_value != actual_value
-    ]
+    mismatch_messages: list[str] = []
+    obligation_name: str
+    expected_obligation_value: object
+    actual_obligation_value: object
+    for obligation_name, expected_obligation_value, actual_obligation_value in expected_obligations:
+        if expected_obligation_value != actual_obligation_value:
+            mismatch_messages.append(f"{obligation_name}: expected {expected_obligation_value!r}; actual {actual_obligation_value!r}.")
     if expected_message_phrase not in actual_restaurant_seed_data_invalid_exception.message:
         mismatch_messages.append(f"Message is missing {expected_message_phrase!r}.")
     failure_report: str = "\n".join(mismatch_messages)
@@ -110,6 +112,21 @@ def seat_two_bookings_at_one_table(reservations_object: dict[str, Any]) -> None:
     reservations_object["reservations"][1]["table_id"] = reservations_object["reservations"][0]["table_id"]
 
 
+def seat_a_booking_off_the_slot_grid(reservations_object: dict[str, Any]) -> None:
+    reservations_object["reservations"][0]["starts_at"] = "19:10"
+
+
+def create_party_size_change(seeded_party_size: int) -> SeedChange:
+    def give_the_first_booking_the_party_size(reservations_object: dict[str, Any]) -> None:
+        reservations_object["reservations"][0]["party_size"] = seeded_party_size
+
+    return give_the_first_booking_the_party_size
+
+
+def read_seed_file_object(seed_directory: Path, file_name: str) -> dict[str, Any]:
+    return json.loads((seed_directory / file_name).read_text(encoding="utf-8"))
+
+
 def create_confirmation_code_change(seeded_confirmation_code: str) -> SeedChange:
     def give_the_first_booking_the_code(reservations_object: dict[str, Any]) -> None:
         reservations_object["reservations"][0]["confirmation_code"] = seeded_confirmation_code
@@ -127,13 +144,18 @@ def create_phone_number_change(seeded_phone_number: str) -> SeedChange:
 class TestSeedDataReaderBundledSeed:
     def test_ReadRestaurantSeed_WhenTheBundledSeedIsCopied_ThenEveryBookingIsRead(self, tmp_path: Path) -> None:
         seed_directory: Path = copy_bundled_seed(tmp_path / "seed_data")
-        expected_seed_reservation_count: int = len(
-            json.loads((seed_directory / SeedDataReader.RESERVATIONS_FILE_NAME).read_text(encoding="utf-8"))["reservations"]
-        )
+        expected_seed_bookings: list[tuple[str, str, str]] = [
+            (reservation_object["confirmation_code"], reservation_object["table_id"], reservation_object["starts_at"])
+            for reservation_object in read_seed_file_object(seed_directory, SeedDataReader.RESERVATIONS_FILE_NAME)["reservations"]
+        ]
 
         actual_restaurant_seed: RestaurantSeed = SeedDataReader.read_restaurant_seed(seed_directory)
 
-        assert len(actual_restaurant_seed.seed_reservations) == expected_seed_reservation_count
+        actual_seed_bookings: list[tuple[str, str, str]] = [
+            (seed_reservation.confirmation_code, seed_reservation.table_id, f"{seed_reservation.starts_at:%H:%M}")
+            for seed_reservation in actual_restaurant_seed.seed_reservations
+        ]
+        assert actual_seed_bookings == expected_seed_bookings
 
     def test_ReadRestaurantSeed_WhenASeedFileIsMissing_ThenTheRefusalNamesTheFile(self, tmp_path: Path) -> None:
         seed_directory: Path = copy_bundled_seed(tmp_path / "seed_data")
@@ -296,6 +318,43 @@ class TestSeedDataReaderReservations:
         expected_file_name: str = SeedDataReader.RESERVATIONS_FILE_NAME
         expected_value_path: str = "$.reservations[1].starts_at"
         expected_message_phrase: str = "still holds it"
+
+        with pytest.raises(RestaurantSeedDataInvalidException) as raised:
+            SeedDataReader.read_restaurant_seed(seed_directory)
+
+        assert_seed_refusal_is_as_expected(
+            expected_file_name=expected_file_name,
+            expected_value_path=expected_value_path,
+            expected_message_phrase=expected_message_phrase,
+            actual_restaurant_seed_data_invalid_exception=raised.value,
+        )
+
+    def test_ReadRestaurantSeed_WhenABookingStartsOffTheSlotGrid_ThenTheRefusalNamesItsStart(self, tmp_path: Path) -> None:
+        seed_directory: Path = create_broken_seed(tmp_path, SeedDataReader.RESERVATIONS_FILE_NAME, seat_a_booking_off_the_slot_grid)
+        expected_file_name: str = SeedDataReader.RESERVATIONS_FILE_NAME
+        expected_value_path: str = "$.reservations[0].starts_at"
+        expected_message_phrase: str = "'19:10' must fall on the 15-minute slot grid"
+
+        with pytest.raises(RestaurantSeedDataInvalidException) as raised:
+            SeedDataReader.read_restaurant_seed(seed_directory)
+
+        assert_seed_refusal_is_as_expected(
+            expected_file_name=expected_file_name,
+            expected_value_path=expected_value_path,
+            expected_message_phrase=expected_message_phrase,
+            actual_restaurant_seed_data_invalid_exception=raised.value,
+        )
+
+    def test_ReadRestaurantSeed_WhenABookingIsForALargerPartyThanThePolicyAllows_ThenTheRefusalNamesItsPartySize(self, tmp_path: Path) -> None:
+        seed_directory: Path = copy_bundled_seed(tmp_path / "seed_data")
+        maximum_party_size: int = read_seed_file_object(seed_directory, SeedDataReader.RESTAURANT_FILE_NAME)["reservation_policy"][
+            "maximum_party_size"
+        ]
+        oversized_party_size: int = maximum_party_size + 1
+        change_seed_file(seed_directory, SeedDataReader.RESERVATIONS_FILE_NAME, create_party_size_change(oversized_party_size))
+        expected_file_name: str = SeedDataReader.RESERVATIONS_FILE_NAME
+        expected_value_path: str = "$.reservations[0].party_size"
+        expected_message_phrase: str = f"the party sizes the reservation policy allows, but was {oversized_party_size}"
 
         with pytest.raises(RestaurantSeedDataInvalidException) as raised:
             SeedDataReader.read_restaurant_seed(seed_directory)

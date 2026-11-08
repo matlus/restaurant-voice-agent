@@ -38,7 +38,7 @@ def create_notes_reschedule(read_reservation: Reservation, requested_notes: str)
     """A change of notes alone, decided from read_reservation, so the booking keeps its own table and time."""
     return ReservationReschedule(
         confirmation_code=read_reservation.confirmation_code,
-        current_schedule=BookedSchedule(
+        current_booked_schedule=BookedSchedule(
             party_size=read_reservation.party_size,
             reservation_date=read_reservation.reservation_date,
             starts_at=read_reservation.starts_at,

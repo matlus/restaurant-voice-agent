@@ -15,7 +15,7 @@ import pytest
 
 from acceptance_support.asserters.asserter_exception import AsserterException, ExpectedExceptionMetadata
 from acceptance_support.asserters.asserter_reservation import AsserterReservation, ExpectedNewReservation
-from acceptance_support.bundled_seed import SeededRestaurant, SeededTable, SeededWeekdayHours, read_seeded_restaurant, read_seeded_tables
+from acceptance_support.bundled_seed import SeededOpenWeekday, SeededRestaurant, SeededTable, read_seeded_restaurant, read_seeded_tables
 from acceptance_support.generated_guests import GeneratedGuest, create_generated_guest, create_generated_note
 from acceptance_support.service_locator_testing import FRIDAY_EVENING_UTC, create_domain_facade
 from voice_agent_restaurant import (
@@ -147,12 +147,14 @@ def retrieve_smallest_fitting_table_id(party_size: int) -> str:
     return min(fitting_tables, key=lambda fitting_table: (fitting_table.seats, fitting_table.table_id)).table_id
 
 
-def retrieve_seeded_weekday_hours(seeded_restaurant: SeededRestaurant, weekday: Weekday) -> SeededWeekdayHours:
-    weekday_hours: list[SeededWeekdayHours] = [
-        seeded_weekday_hours for seeded_weekday_hours in seeded_restaurant.weekly_hours if seeded_weekday_hours.weekday == weekday.value
+def retrieve_seeded_open_weekday(seeded_restaurant: SeededRestaurant, weekday: Weekday) -> SeededOpenWeekday:
+    seeded_open_weekdays: list[SeededOpenWeekday] = [
+        seeded_weekday_hours
+        for seeded_weekday_hours in seeded_restaurant.weekly_hours
+        if isinstance(seeded_weekday_hours, SeededOpenWeekday) and seeded_weekday_hours.weekday == weekday.value
     ]
-    assert len(weekday_hours) == 1, f"The seed must list {weekday.value} exactly once; found {weekday_hours!r}"
-    return weekday_hours[0]
+    assert len(seeded_open_weekdays) == 1, f"The restaurant must open on {weekday.value} for this scenario; the seeded data no longer supports it"
+    return seeded_open_weekdays[0]
 
 
 def to_minutes(time_of_day: time) -> int:
@@ -255,13 +257,11 @@ class TestCheckAvailability:
     ) -> None:
         # The last table is seated one full seating before closing; the request is one slot later than that.
         seeded_restaurant: SeededRestaurant = read_seeded_restaurant()
-        friday_hours: SeededWeekdayHours = retrieve_seeded_weekday_hours(seeded_restaurant, Weekday.FRIDAY)
-        friday_opens_at: time | None = friday_hours.opens_at
-        friday_closes_at: time | None = friday_hours.closes_at
-        assert friday_opens_at is not None, "The restaurant must open on Fridays for this scenario; the seeded data no longer supports it"
-        assert friday_closes_at is not None, "The restaurant must close on Fridays for this scenario; the seeded data no longer supports it"
-        first_seating_time: time = friday_opens_at
-        last_seating_time: time = to_time(to_minutes(friday_closes_at) - seeded_restaurant.reservation_policy.seating_duration_minutes)
+        friday_seeded_open_weekday: SeededOpenWeekday = retrieve_seeded_open_weekday(seeded_restaurant, Weekday.FRIDAY)
+        first_seating_time: time = friday_seeded_open_weekday.opens_at
+        last_seating_time: time = to_time(
+            to_minutes(friday_seeded_open_weekday.closes_at) - seeded_restaurant.reservation_policy.seating_duration_minutes
+        )
         requested_time: str = f"{to_time(to_minutes(last_seating_time) + seeded_restaurant.reservation_policy.slot_interval_minutes):%H:%M}"
         expected_seating_hours: tuple[time, time] = (first_seating_time, last_seating_time)
         expected_message_phrases: list[str] = [

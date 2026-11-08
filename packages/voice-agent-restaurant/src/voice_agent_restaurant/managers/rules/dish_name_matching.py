@@ -24,7 +24,9 @@ class DishNameMatching:
         exact_matches: list[Dish] = cls._find_exactly_named_dishes(dishes, folded_requested_name)
         if exact_matches:
             return exact_matches
-        return cls._find_dishes_containing_every_word(dishes, cls._get_significant_words(folded_requested_name))
+        requested_words: list[str] = cls._get_significant_words(folded_requested_name)
+        # A name made only of separators leaves no word to match, and matching every word of nothing would match every dish.
+        return cls._find_dishes_containing_every_word(dishes, requested_words) if requested_words else []
 
     @classmethod
     def find_suggested_names(cls, dishes: Sequence[Dish], matching_dishes: Sequence[Dish], requested_name: str) -> list[str]:

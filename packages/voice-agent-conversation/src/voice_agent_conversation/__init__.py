@@ -1,19 +1,22 @@
 """Real-time voice conversations with the restaurant's agent. Import everything from this package's root."""
 
 from voice_agent_conversation.domain_facade import DomainFacade
-from voice_agent_conversation.managers.exceptions.configuration_exceptions import ConfigurationSettingException
+from voice_agent_conversation.managers.exceptions.configuration_exceptions import ConfigurationSettingException, LogEventConfiguration
 from voice_agent_conversation.managers.exceptions.conversation_exceptions import (
     ConversationRequestValidationException,
+    LogEventConversation,
     VoiceCatalogInvalidException,
     VoiceNotOfferedException,
 )
 from voice_agent_conversation.managers.exceptions.realtime_voice_exceptions import (
+    LogEventRealtimeVoice,
     RealtimeVoiceProviderAccessDeniedException,
     RealtimeVoiceProviderErrorException,
     RealtimeVoiceProviderUnavailableException,
 )
 from voice_agent_conversation.managers.exceptions.voice_agent_conversation_exceptions import (
     ExceptionAction,
+    LogEventBase,
     Severity,
     VoiceAgentConversationBaseException,
     VoiceAgentConversationBusinessBaseException,
@@ -44,6 +47,10 @@ __all__ = [
     "DomainFacade",
     "ExceptionAction",
     "GuestStartedSpeaking",
+    "LogEventBase",
+    "LogEventConfiguration",
+    "LogEventConversation",
+    "LogEventRealtimeVoice",
     "PresentedGender",
     "RealtimeVoiceProviderAccessDeniedException",
     "RealtimeVoiceProviderErrorException",

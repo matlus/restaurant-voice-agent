@@ -43,6 +43,8 @@ from voice_agent_conversation import (
     DomainFacade,
     ExceptionAction,
     GuestStartedSpeaking,
+    LogEventConversation,
+    LogEventRealtimeVoice,
     PresentedGender,
     RealtimeVoiceProviderAccessDeniedException,
     RealtimeVoiceProviderErrorException,
@@ -79,7 +81,7 @@ CONNECT_OPERATION: Final[str] = f"connecting to model '{TESTING_REALTIME_MODEL}'
 
 @dataclass(frozen=True)
 class ProviderFailureScenario:
-    scripted_failure_event: ScriptedServerEventMessage
+    scripted_server_event_message: ScriptedServerEventMessage
     expected_exception_type: type[VoiceAgentConversationBaseException]
     expected_exception_content: ExpectedExceptionContent
 
@@ -197,11 +199,12 @@ class TestConversation:
         expected_offered_voice_keys: list[str] = [voice_option.voice_key for voice_option in CATALOG_VOICE_OPTIONS]
         expected_exception_content: ExpectedExceptionContent = ExpectedExceptionContent(
             message_phrases=[refused_voice_key, *expected_offered_voice_keys],
-            exception_metadata=ExpectedExceptionMetadata(
+            expected_exception_metadata=ExpectedExceptionMetadata(
                 http_status_code=NOT_FOUND_HTTP_STATUS_CODE,
                 exception_action=ExceptionAction.USER_ACTION_REQUIRED,
                 reason="The requested voice is not offered",
                 severity=Severity.ERROR,
+                log_event=LogEventConversation.CONVERSATION_START,
             ),
             contextual_data_by_name={"Conversation.RequestedVoiceKey": refused_voice_key},
         )
@@ -239,11 +242,12 @@ class TestConversation:
         expected_validation_problem_count: int = 1
         expected_exception_content: ExpectedExceptionContent = ExpectedExceptionContent(
             message_phrases=[expected_problem_phrase],
-            exception_metadata=ExpectedExceptionMetadata(
+            expected_exception_metadata=ExpectedExceptionMetadata(
                 http_status_code=BUSINESS_REFUSAL_HTTP_STATUS_CODE,
                 exception_action=ExceptionAction.USER_ACTION_REQUIRED,
                 reason="The conversation request is not valid",
                 severity=Severity.ERROR,
+                log_event=LogEventConversation.CONVERSATION_START,
             ),
             contextual_data_by_name={"Conversation.ValidationProblemCount": expected_validation_problem_count},
         )
@@ -344,11 +348,12 @@ class TestConversationProviderFailures:
         refusal_status: HTTPStatus = HTTPStatus.UNAUTHORIZED
         expected_exception_content: ExpectedExceptionContent = ExpectedExceptionContent(
             message_phrases=["refused the API key", f"HTTP {refusal_status.value}", TESTING_REALTIME_MODEL],
-            exception_metadata=ExpectedExceptionMetadata(
+            expected_exception_metadata=ExpectedExceptionMetadata(
                 http_status_code=TECHNICAL_FAILURE_HTTP_STATUS_CODE,
                 exception_action=ExceptionAction.INFRA_ACTION_REQUIRED,
                 reason=PROVIDER_ACCESS_DENIED_REASON,
                 severity=Severity.ERROR,
+                log_event=LogEventRealtimeVoice.SESSION_OPEN,
             ),
             contextual_data_by_name={OPERATION_CONTEXT_NAME: CONNECT_OPERATION, "RealtimeVoice.HttpStatusCode": refusal_status.value},
             absent_phrases=[SCRIPTED_SERVICE_API_KEY],
@@ -379,11 +384,12 @@ class TestConversationProviderFailures:
         refusal_close_reason: str = "invalid_request_error.invalid_api_key"
         expected_exception_content: ExpectedExceptionContent = ExpectedExceptionContent(
             message_phrases=["refused the account while configuring the session", refusal_close_reason],
-            exception_metadata=ExpectedExceptionMetadata(
+            expected_exception_metadata=ExpectedExceptionMetadata(
                 http_status_code=TECHNICAL_FAILURE_HTTP_STATUS_CODE,
                 exception_action=ExceptionAction.INFRA_ACTION_REQUIRED,
                 reason=PROVIDER_ACCESS_DENIED_REASON,
                 severity=Severity.ERROR,
+                log_event=LogEventRealtimeVoice.SESSION_CONFIGURATION,
             ),
             contextual_data_by_name={
                 OPERATION_CONTEXT_NAME: "configuring the session",
@@ -422,11 +428,12 @@ class TestConversationProviderFailures:
         configure_operation: str = "configuring the session"
         expected_exception_content: ExpectedExceptionContent = ExpectedExceptionContent(
             message_phrases=[configure_operation, provider_error_message],
-            exception_metadata=ExpectedExceptionMetadata(
+            expected_exception_metadata=ExpectedExceptionMetadata(
                 http_status_code=PROVIDER_ERROR_HTTP_STATUS_CODE,
                 exception_action=ExceptionAction.DEVELOPER_ACTION_REQUIRED,
                 reason="The voice service reported an error",
                 severity=Severity.ERROR,
+                log_event=LogEventRealtimeVoice.SESSION_CONFIGURATION,
             ),
             contextual_data_by_name={
                 OPERATION_CONTEXT_NAME: configure_operation,
@@ -437,7 +444,7 @@ class TestConversationProviderFailures:
         expected_provider_session_count: int = 1
 
         async with (
-            RealtimeVoiceServiceScripted(session_update_error_event=session_update_error_event_message) as realtime_voice_service_scripted,
+            RealtimeVoiceServiceScripted(session_update_error_event_message=session_update_error_event_message) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_audio())) as conversation,
         ):
@@ -457,15 +464,16 @@ class TestConversationProviderFailures:
         [
             pytest.param(
                 ProviderFailureScenario(
-                    scripted_failure_event=create_error_event("server_error", None, "The server had an error while processing your request."),
+                    scripted_server_event_message=create_error_event("server_error", None, "The server had an error while processing your request."),
                     expected_exception_type=RealtimeVoiceProviderUnavailableException,
                     expected_exception_content=ExpectedExceptionContent(
                         message_phrases=["failed while conversing", "The server had an error while processing your request."],
-                        exception_metadata=ExpectedExceptionMetadata(
+                        expected_exception_metadata=ExpectedExceptionMetadata(
                             http_status_code=SERVICE_UNAVAILABLE_HTTP_STATUS_CODE,
                             exception_action=ExceptionAction.RETRY_ACTION_NEEDED,
                             reason=PROVIDER_UNAVAILABLE_REASON,
                             severity=Severity.ERROR,
+                            log_event=LogEventRealtimeVoice.EVENT_RECEIPT,
                         ),
                         contextual_data_by_name={OPERATION_CONTEXT_NAME: "conversing", PROVIDER_ERROR_TYPE_CONTEXT_NAME: "server_error"},
                         absent_contextual_data_names=[PROVIDER_ERROR_CODE_CONTEXT_NAME],
@@ -475,17 +483,18 @@ class TestConversationProviderFailures:
             ),
             pytest.param(
                 ProviderFailureScenario(
-                    scripted_failure_event=create_failed_response_event(
+                    scripted_server_event_message=create_failed_response_event(
                         "insufficient_quota", "insufficient_quota", "You exceeded your current quota."
                     ),
                     expected_exception_type=RealtimeVoiceProviderAccessDeniedException,
                     expected_exception_content=ExpectedExceptionContent(
                         message_phrases=["refused the account while conversing", "You exceeded your current quota."],
-                        exception_metadata=ExpectedExceptionMetadata(
+                        expected_exception_metadata=ExpectedExceptionMetadata(
                             http_status_code=TECHNICAL_FAILURE_HTTP_STATUS_CODE,
                             exception_action=ExceptionAction.INFRA_ACTION_REQUIRED,
                             reason=PROVIDER_ACCESS_DENIED_REASON,
                             severity=Severity.ERROR,
+                            log_event=LogEventRealtimeVoice.EVENT_RECEIPT,
                         ),
                         contextual_data_by_name={
                             OPERATION_CONTEXT_NAME: "conversing",
@@ -508,7 +517,7 @@ class TestConversationProviderFailures:
 
         async with (
             RealtimeVoiceServiceScripted(
-                events_after_each_guest_audio=[provider_failure_scenario.scripted_failure_event]
+                events_after_each_guest_audio=[provider_failure_scenario.scripted_server_event_message]
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_audio())) as conversation,
@@ -546,11 +555,12 @@ class TestClose:
         conversation_request: ConversationRequest = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
         expected_exception_content: ExpectedExceptionContent = ExpectedExceptionContent(
             message_phrases=["the gateway is already closed"],
-            exception_metadata=ExpectedExceptionMetadata(
+            expected_exception_metadata=ExpectedExceptionMetadata(
                 http_status_code=SERVICE_UNAVAILABLE_HTTP_STATUS_CODE,
                 exception_action=ExceptionAction.RETRY_ACTION_NEEDED,
                 reason=PROVIDER_UNAVAILABLE_REASON,
                 severity=Severity.ERROR,
+                log_event=LogEventRealtimeVoice.SESSION_OPEN,
             ),
             contextual_data_by_name={OPERATION_CONTEXT_NAME: CONNECT_OPERATION},
         )

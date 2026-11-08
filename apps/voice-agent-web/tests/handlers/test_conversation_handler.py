@@ -166,22 +166,28 @@ class TestConversationHandlerHoldConversation:
         assert (actual_refused_message_types, raised.value.code) == (expected_refused_message_types, expected_close_code)
 
     async def test_HoldConversation_WhenTheDomainFailsMidCall_ThenThatSameFailurePassesUntouchedToTheMiddleware(self) -> None:
-        scripted_conversation_failure: RealtimeVoiceProviderUnavailableException = RealtimeVoiceProviderUnavailableException(
+        scripted_realtime_voice_provider_unavailable_exception: RealtimeVoiceProviderUnavailableException = RealtimeVoiceProviderUnavailableException(
             "The provider dropped the session mid-call.", LogEventRealtimeVoice.EVENT_RECEIPT, {"RealtimeVoice.Operation": "receiving events"}
         )
         scripted_browser: ScriptedBrowser = ScriptedBrowser(query_string=b"voice=openai-cedar")
         conversation_handler_for_test: ConversationHandlerForTest = ConversationHandlerForTest(
             scripted_conversation_events=[ConversationStarted(audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION)],
-            scripted_conversation_failure=scripted_conversation_failure,
+            scripted_conversation_failure=scripted_realtime_voice_provider_unavailable_exception,
         )
-        expected_contextual_data_by_name: dict[str, str | int | float | bool] = dict(scripted_conversation_failure.contextual_data_by_name)
+        expected_contextual_data_by_name: dict[str, str | int | float | bool] = dict(
+            scripted_realtime_voice_provider_unavailable_exception.contextual_data_by_name
+        )
         expected_delivered_message_types: list[str] = ["websocket.accept", "websocket.send"]
 
         with pytest.raises(RealtimeVoiceProviderUnavailableException) as raised:
             await conversation_handler_for_test.hold_conversation(scripted_browser.create_websocket())
 
         actual_delivered_message_types: list[str] = [delivered_message["type"] for delivered_message in scripted_browser.delivered_messages]
-        assert (raised.value is scripted_conversation_failure, raised.value.contextual_data_by_name, actual_delivered_message_types) == (
+        assert (
+            raised.value is scripted_realtime_voice_provider_unavailable_exception,
+            raised.value.contextual_data_by_name,
+            actual_delivered_message_types,
+        ) == (
             True,
             expected_contextual_data_by_name,
             expected_delivered_message_types,

@@ -165,13 +165,16 @@ class SeedDataReader:
         hours_object: JsonObject
         for position, hours_object in enumerate(restaurant_seed_file.get_objects(restaurant_seed_file.root_object, "weekly_hours", "$")):
             weekly_hours.append(cls._read_weekday_hours(restaurant_seed_file, hours_object, f"$.weekly_hours[{position}]"))
-        if sorted(weekday_hours.weekday for weekday_hours in weekly_hours) != sorted(Weekday):
-            listed_weekdays: str = ", ".join(weekday_hours.weekday.value for weekday_hours in weekly_hours)
-            permitted_weekdays: str = ", ".join(weekday.value for weekday in Weekday)
-            raise restaurant_seed_file.fail(
-                "$.weekly_hours", f"must list each weekday exactly once ({permitted_weekdays}) but listed: {listed_weekdays}"
-            )
+        cls._verify_every_weekday_listed_once(restaurant_seed_file, weekly_hours)
         return weekly_hours
+
+    @staticmethod
+    def _verify_every_weekday_listed_once(restaurant_seed_file: SeedFile, weekly_hours: Sequence[WeekdayHours]) -> None:
+        if sorted(weekday_hours.weekday for weekday_hours in weekly_hours) == sorted(Weekday):
+            return
+        listed_weekdays: str = ", ".join(weekday_hours.weekday.value for weekday_hours in weekly_hours)
+        permitted_weekdays: str = ", ".join(weekday.value for weekday in Weekday)
+        raise restaurant_seed_file.fail("$.weekly_hours", f"must list each weekday exactly once ({permitted_weekdays}) but listed: {listed_weekdays}")
 
     @classmethod
     def _read_weekday_hours(cls, restaurant_seed_file: SeedFile, hours_object: JsonObject, value_path: str) -> WeekdayHours:
@@ -341,6 +344,9 @@ class SeedDataReader:
         cls._verify_opening_times_on_slot_grid(
             seed_files.restaurant_seed_file, restaurant_seed.weekly_hours, restaurant_seed.restaurant_profile.reservation_policy.slot_interval_minutes
         )
+        cls._verify_reservation_party_sizes(
+            seed_files.reservations_seed_file, restaurant_seed.seed_reservations, restaurant_seed.restaurant_profile.reservation_policy
+        )
         cls._verify_reservation_tables(seed_files.reservations_seed_file, restaurant_seed.seed_reservations, restaurant_seed.dining_tables)
         cls._verify_reservation_seating_times(seed_files.reservations_seed_file, restaurant_seed)
 
@@ -385,6 +391,23 @@ class SeedDataReader:
                     f"'{weekday_hours.opens_at:%H:%M}' must fall on the {slot_interval_minutes}-minute slot grid that bookable times follow",
                 )
 
+    # A guest's change is checked against the booking policy as a whole, so a seed booking outside it could never be changed.
+    @staticmethod
+    def _verify_reservation_party_sizes(
+        reservations_seed_file: SeedFile, seed_reservations: Sequence[SeedReservation], reservation_policy: ReservationPolicy
+    ) -> None:
+        position: int
+        seed_reservation: SeedReservation
+        for position, seed_reservation in enumerate(seed_reservations):
+            if not reservation_policy.minimum_party_size <= seed_reservation.party_size <= reservation_policy.maximum_party_size:
+                raise reservations_seed_file.fail(
+                    f"$.reservations[{position}].party_size",
+                    (
+                        f"must be between {reservation_policy.minimum_party_size} and {reservation_policy.maximum_party_size}, "
+                        f"the party sizes the reservation policy allows, but was {seed_reservation.party_size}"
+                    ),
+                )
+
     @classmethod
     def _verify_reservation_tables(
         cls, reservations_seed_file: SeedFile, seed_reservations: Sequence[SeedReservation], dining_tables: Sequence[DiningTable]
@@ -403,8 +426,10 @@ class SeedDataReader:
 
     @classmethod
     def _verify_reservation_seating_times(cls, reservations_seed_file: SeedFile, restaurant_seed: RestaurantSeed) -> None:
-        """Each seed booking must be seated within its weekday's hours, finish by closing, and share its table with no other booking."""
+        """Each seed booking must start on the slot grid, be seated within its weekday's hours, finish by closing, and share its
+        table with no other booking."""
         seating_duration_minutes: int = restaurant_seed.restaurant_profile.reservation_policy.seating_duration_minutes
+        slot_interval_minutes: int = restaurant_seed.restaurant_profile.reservation_policy.slot_interval_minutes
         weekday_hours_by_weekday: dict[Weekday, WeekdayHours] = {
             weekday_hours.weekday: weekday_hours for weekday_hours in restaurant_seed.weekly_hours
         }
@@ -415,6 +440,7 @@ class SeedDataReader:
             weekday_hours: WeekdayHours = weekday_hours_by_weekday[seed_reservation.weekday]
             if not isinstance(weekday_hours, OpenWeekday):
                 raise reservations_seed_file.fail(starts_at_path, f"falls on a {seed_reservation.weekday.value}, when the restaurant does not open")
+            cls._verify_seating_on_slot_grid(reservations_seed_file, starts_at_path, seed_reservation.starts_at, slot_interval_minutes)
             cls._verify_seating_fits_weekday_hours(
                 reservations_seed_file, starts_at_path, seed_reservation.starts_at, weekday_hours, seating_duration_minutes
             )
@@ -429,6 +455,14 @@ class SeedDataReader:
                         f"still holds it on {seed_reservation.weekday.value}"
                     ),
                 )
+
+    # A guest's change keeps the booking's start time, which must still be a bookable time for the change to be accepted.
+    @classmethod
+    def _verify_seating_on_slot_grid(cls, reservations_seed_file: SeedFile, starts_at_path: str, starts_at: time, slot_interval_minutes: int) -> None:
+        if cls._to_minutes(starts_at) % slot_interval_minutes != 0:
+            raise reservations_seed_file.fail(
+                starts_at_path, f"'{starts_at:%H:%M}' must fall on the {slot_interval_minutes}-minute slot grid that bookable times follow"
+            )
 
     @classmethod
     def _verify_seating_fits_weekday_hours(

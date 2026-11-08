@@ -279,7 +279,7 @@ class ManagerReservations:
     ) -> ReservationReschedule:
         return ReservationReschedule(
             confirmation_code=current_reservation.confirmation_code,
-            current_schedule=BookedSchedule(
+            current_booked_schedule=BookedSchedule(
                 party_size=current_reservation.party_size,
                 reservation_date=current_reservation.reservation_date,
                 starts_at=current_reservation.starts_at,

@@ -177,12 +177,12 @@ class BookedSchedule:
 class ReservationReschedule:
     """New seating details for an existing booking, which the store moves to the first free candidate table.
 
-    current_schedule is the booking as it stood when the change was decided; the store applies the change only while
+    current_booked_schedule is the booking as it stood when the change was decided; the store applies the change only while
     the booking still stands that way.
     """
 
     confirmation_code: str
-    current_schedule: BookedSchedule
+    current_booked_schedule: BookedSchedule
     party_size: int
     reservation_date: date
     starts_at: time

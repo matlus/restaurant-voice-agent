@@ -47,7 +47,7 @@ class DataManagerReservations:
 
     Seating a booking is check-then-write, so it runs inside one IMMEDIATE transaction: no other
     writer can take the same table between the overlap check and the insert or update. The manager
-    decides which tables are acceptable and in what order; this class only finds the first one free.
+    decides which tables are acceptable and in what order; this class only takes the first one free.
     Every write commits as its last statement, after the row it returns has been read back.
     """
 
@@ -199,7 +199,7 @@ class DataManagerReservations:
             ends_at=new_reservation.ends_at,
             confirmation_code=confirmation_code,
         )
-        free_table_id: str = self._find_first_free_table(connection, table_slot, candidate_table_ids)
+        free_table_id: str = self._retrieve_first_free_table_id(connection, table_slot, candidate_table_ids)
         self._insert_reservation(connection, new_reservation, confirmation_code, free_table_id, now_utc)
         return self._read_reservation(connection, confirmation_code)
 
@@ -212,7 +212,7 @@ class DataManagerReservations:
             ends_at=reservation_reschedule.ends_at,
             confirmation_code=reservation_reschedule.confirmation_code,
         )
-        free_table_id: str = self._find_first_free_table(connection, table_slot, candidate_table_ids)
+        free_table_id: str = self._retrieve_first_free_table_id(connection, table_slot, candidate_table_ids)
         self._update_reservation_schedule(connection, reservation_reschedule, free_table_id, now_utc)
         return self._read_reservation(connection, reservation_reschedule.confirmation_code)
 
@@ -235,7 +235,7 @@ class DataManagerReservations:
             contextual_data_by_name={"Reservation.ConfirmationCodeAttempts": self.MAXIMUM_CONFIRMATION_CODE_ATTEMPTS},
         )
 
-    def _find_first_free_table(self, connection: sqlite3.Connection, table_slot: _TableSlot, candidate_table_ids: Iterable[str]) -> str:
+    def _retrieve_first_free_table_id(self, connection: sqlite3.Connection, table_slot: _TableSlot, candidate_table_ids: Iterable[str]) -> str:
         for candidate_table_id in candidate_table_ids:
             overlapping_row: sqlite3.Row | None = connection.execute(
                 self._OVERLAPPING_SEATING_QUERY,
@@ -283,7 +283,9 @@ class DataManagerReservations:
     ) -> None:
         # The manager decided the change from the booking it read on another connection. The row is rewritten only
         # while it still holds that schedule, so a change committed in between is never silently overwritten.
-        current_schedule: BookedSchedule = reservation_reschedule.current_schedule
+        current_booked_schedule: BookedSchedule = reservation_reschedule.current_booked_schedule
+        # notes is the one nullable column: in SQLite `notes = ?` is NULL rather than true when both sides are NULL, so
+        # `IS` is required for a booking without notes to still match the schedule it was read with.
         update_cursor: sqlite3.Cursor = connection.execute(
             """
             UPDATE reservations
@@ -301,12 +303,12 @@ class DataManagerReservations:
                 now_utc.isoformat(),
                 reservation_reschedule.confirmation_code,
                 ReservationStatus.BOOKED.value,
-                current_schedule.party_size,
-                current_schedule.reservation_date.isoformat(),
-                to_minutes_after_midnight(current_schedule.starts_at),
-                to_minutes_after_midnight(current_schedule.ends_at),
-                current_schedule.table_id,
-                current_schedule.notes,
+                current_booked_schedule.party_size,
+                current_booked_schedule.reservation_date.isoformat(),
+                to_minutes_after_midnight(current_booked_schedule.starts_at),
+                to_minutes_after_midnight(current_booked_schedule.ends_at),
+                current_booked_schedule.table_id,
+                current_booked_schedule.notes,
             ),
         )
         if update_cursor.rowcount != 1:

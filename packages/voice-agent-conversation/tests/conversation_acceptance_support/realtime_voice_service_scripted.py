@@ -166,12 +166,12 @@ class RealtimeVoiceServiceScripted:
         self,
         *,
         events_after_each_guest_audio: Sequence[ScriptedServerEventMessage] = (),
-        session_update_error_event: ErrorEventMessage | None = None,
+        session_update_error_event_message: ErrorEventMessage | None = None,
         handshake_refusal_status: HTTPStatus | None = None,
         connection_refusal_close_reason: str | None = None,
     ) -> None:
         self._events_after_each_guest_audio: tuple[ScriptedServerEventMessage, ...] = tuple(events_after_each_guest_audio)
-        self._session_update_error_event: ErrorEventMessage | None = session_update_error_event
+        self._session_update_error_event_message: ErrorEventMessage | None = session_update_error_event_message
         self._handshake_refusal_status: HTTPStatus | None = handshake_refusal_status
         self._connection_refusal_close_reason: str | None = connection_refusal_close_reason
         self.captured_realtime_sessions: list[CapturedRealtimeSession] = []
@@ -266,9 +266,9 @@ class RealtimeVoiceServiceScripted:
             case "input_audio_buffer.append":
                 input_audio_buffer_append_event_message: InputAudioBufferAppendEventMessage = cast(InputAudioBufferAppendEventMessage, client_event)
                 captured_realtime_session.guest_audio.append(base64.b64decode(input_audio_buffer_append_event_message["audio"]))
-                scripted_event: ScriptedServerEventMessage
-                for scripted_event in self._events_after_each_guest_audio:
-                    await self._send_event(server_connection, scripted_event)
+                scripted_server_event_message: ScriptedServerEventMessage
+                for scripted_server_event_message in self._events_after_each_guest_audio:
+                    await self._send_event(server_connection, scripted_server_event_message)
             case _:
                 pass
 
@@ -284,8 +284,8 @@ class RealtimeVoiceServiceScripted:
                 agent_instructions=session_settings_message["instructions"], provider_voice_id=session_settings_message["audio"]["output"]["voice"]
             )
         )
-        if self._session_update_error_event is not None:
-            await self._send_event(server_connection, self._session_update_error_event)
+        if self._session_update_error_event_message is not None:
+            await self._send_event(server_connection, self._session_update_error_event_message)
             return
         await self._send_event(
             server_connection,
@@ -316,8 +316,8 @@ class RealtimeVoiceServiceScripted:
         )
 
     @staticmethod
-    async def _send_event(server_connection: ServerConnection, server_event: ServerEventMessage) -> None:
-        await server_connection.send(json.dumps(server_event))
+    async def _send_event(server_connection: ServerConnection, server_event_message: ServerEventMessage) -> None:
+        await server_connection.send(json.dumps(server_event_message))
 
     @staticmethod
     def _read_model(request: Request | None) -> str | None:

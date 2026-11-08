@@ -8,6 +8,7 @@ from conversation_acceptance_support.realtime_voice_service_scripted import Capt
 from voice_agent_conversation import (
     ConversationRequestValidationException,
     ExceptionAction,
+    LogEventBase,
     Severity,
     VoiceAgentConversationBaseException,
     VoiceNotOfferedException,
@@ -24,6 +25,7 @@ class ExpectedExceptionMetadata:
     exception_action: ExceptionAction
     reason: str
     severity: Severity
+    log_event: LogEventBase
 
 
 @dataclass(frozen=True)
@@ -36,7 +38,7 @@ class ExpectedExceptionContent:
     """
 
     message_phrases: Sequence[str]
-    exception_metadata: ExpectedExceptionMetadata
+    expected_exception_metadata: ExpectedExceptionMetadata
     contextual_data_by_name: Mapping[str, ContextualDataValue]
     absent_contextual_data_names: Sequence[str] = ()
     absent_phrases: Sequence[str] = ()
@@ -140,7 +142,9 @@ class AsserterException:
             AsserterException._find_disclosed_phrase_mismatches(expected_exception_content.absent_phrases, actual_voice_agent_conversation_exception)
         )
         mismatch_messages.extend(
-            AsserterException._find_metadata_mismatches(expected_exception_content.exception_metadata, actual_voice_agent_conversation_exception)
+            AsserterException._find_metadata_mismatches(
+                expected_exception_content.expected_exception_metadata, actual_voice_agent_conversation_exception
+            )
         )
         mismatch_messages.extend(
             AsserterException._find_contextual_data_mismatches(
@@ -159,9 +163,9 @@ class AsserterException:
         expected_absent_phrase: str
         for expected_absent_phrase in expected_absent_phrases:
             if expected_absent_phrase in actual_voice_agent_conversation_exception.message:
-                mismatch_messages.append("Message discloses a phrase that must be absent.")
+                mismatch_messages.append(f"Message discloses {expected_absent_phrase!r}, which must be absent.")
             mismatch_messages.extend(
-                f"Context {contextual_data_name!r} discloses a phrase that must be absent."
+                f"Context {contextual_data_name!r} discloses {expected_absent_phrase!r}, which must be absent."
                 for contextual_data_name, contextual_data_value in actual_voice_agent_conversation_exception.contextual_data_by_name.items()
                 if expected_absent_phrase in str(contextual_data_value)
             )
@@ -189,6 +193,11 @@ class AsserterException:
         if actual_voice_agent_conversation_exception.severity != expected_exception_metadata.severity:
             mismatch_messages.append(
                 f"Severity: expected {expected_exception_metadata.severity.name}; actual {actual_voice_agent_conversation_exception.severity.name}."
+            )
+        if actual_voice_agent_conversation_exception.log_event != expected_exception_metadata.log_event:
+            mismatch_messages.append(
+                f"Log event: expected {expected_exception_metadata.log_event.value}; "
+                f"actual {actual_voice_agent_conversation_exception.log_event.value}."
             )
         return mismatch_messages
 

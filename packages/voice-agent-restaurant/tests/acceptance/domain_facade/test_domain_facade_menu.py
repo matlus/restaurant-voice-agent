@@ -71,7 +71,6 @@ def split_dish_name_into_words(dish_name: str) -> list[str]:
 
 
 def find_seeded_dishes_named_by(seeded_dishes: Iterable[SeededDish], spoken_words: Iterable[str]) -> list[SeededDish]:
-    """The seeded dishes whose name has a word starting with each spoken word."""
     spoken_word_list: list[str] = list(spoken_words)
     return [
         seeded_dish
@@ -332,6 +331,8 @@ class TestDishLookup:
             "lasagna",
             # "tea" sits inside "Steak", but no word on the menu starts with it, so the steak is never taken for tea.
             "the tea",
+            # Separators alone hold no word to match, so they match no dish rather than every dish.
+            "- -",
         ],
     )
     async def test_RetrieveDish_WhenNoWordOnTheMenuStartsWithTheSpokenWords_ThenTheRefusalOffersNoMatches(
