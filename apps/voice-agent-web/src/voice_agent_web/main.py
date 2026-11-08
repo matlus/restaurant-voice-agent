@@ -6,11 +6,11 @@ from pathlib import Path
 from fastapi import FastAPI
 from starlette.middleware import Middleware
 from starlette.routing import Mount, Route, WebSocketRoute
-from starlette.staticfiles import StaticFiles
 
 from voice_agent_conversation import DomainFacade
 from voice_agent_web.handlers.conversation_handler import ConversationHandler
 from voice_agent_web.middleware.middleware_exception_translation import MiddlewareExceptionTranslation
+from voice_agent_web.static_assets.static_assets_app import StaticAssetsApp
 
 type DomainFacadeFactory = Callable[[], DomainFacade]
 
@@ -35,6 +35,6 @@ def create_app(create_domain_facade: DomainFacadeFactory = DomainFacade) -> Fast
         routes=[
             Route("/voices", conversation_handler.list_voices, methods=["GET"]),
             WebSocketRoute("/conversation", conversation_handler.hold_conversation),
-            Mount("/", StaticFiles(directory=static_folder, html=True)),
+            Mount("/", StaticAssetsApp(static_folder)),
         ],
     )

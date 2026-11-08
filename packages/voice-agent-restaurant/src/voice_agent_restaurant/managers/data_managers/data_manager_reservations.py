@@ -112,43 +112,35 @@ class DataManagerReservations:
             raise TranslatorRestaurantStoreExceptions.translate(
                 store_error, "read the seatings for a date", {self._RESERVATION_DATE_CONTEXT_KEY: reservation_date.isoformat()}
             ) from store_error
-        return [
-            Seating(
-                confirmation_code=seating_row["confirmation_code"],
-                table_id=seating_row["table_id"],
-                starts_at=from_minutes_after_midnight(seating_row["starts_at_minutes"]),
-                ends_at=from_minutes_after_midnight(seating_row["ends_at_minutes"]),
-            )
-            for seating_row in seating_rows
-        ]
+        return [self._map_seating_row(seating_row) for seating_row in seating_rows]
 
     def _record_reservation_synchronously(
         self, new_reservation: NewReservation, candidate_table_ids: Sequence[str], now_utc: datetime
     ) -> Reservation:
         try:
             with self._restaurant_store_connector.open_connection() as connection:
-                recorded_reservation: Reservation = self._run_in_immediate_transaction(
+                reservation: Reservation = self._run_in_immediate_transaction(
                     connection, lambda: self._seat_new_reservation(connection, new_reservation, candidate_table_ids, now_utc)
                 )
         except (sqlite3.Error, OSError) as store_error:
             raise TranslatorRestaurantStoreExceptions.translate(
                 store_error, "record the reservation", {self._RESERVATION_DATE_CONTEXT_KEY: new_reservation.reservation_date.isoformat()}
             ) from store_error
-        return recorded_reservation
+        return reservation
 
     def _reschedule_reservation_synchronously(
         self, reservation_reschedule: ReservationReschedule, candidate_table_ids: Sequence[str], now_utc: datetime
     ) -> Reservation:
         try:
             with self._restaurant_store_connector.open_connection() as connection:
-                rescheduled_reservation: Reservation = self._run_in_immediate_transaction(
+                reservation: Reservation = self._run_in_immediate_transaction(
                     connection, lambda: self._move_booked_reservation(connection, reservation_reschedule, candidate_table_ids, now_utc)
                 )
         except (sqlite3.Error, OSError) as store_error:
             raise TranslatorRestaurantStoreExceptions.translate(
                 store_error, "change the reservation", {self._CONFIRMATION_CODE_CONTEXT_KEY: reservation_reschedule.confirmation_code}
             ) from store_error
-        return rescheduled_reservation
+        return reservation
 
     def _cancel_reservation_synchronously(self, confirmation_code: str, now_utc: datetime) -> Reservation:
         try:
@@ -355,6 +347,15 @@ class DataManagerReservations:
                 connection.execute("ROLLBACK")
             raise
         return write_result
+
+    @staticmethod
+    def _map_seating_row(seating_row: sqlite3.Row) -> Seating:
+        return Seating(
+            confirmation_code=seating_row["confirmation_code"],
+            table_id=seating_row["table_id"],
+            starts_at=from_minutes_after_midnight(seating_row["starts_at_minutes"]),
+            ends_at=from_minutes_after_midnight(seating_row["ends_at_minutes"]),
+        )
 
     @staticmethod
     def _map_reservation_row(reservation_row: sqlite3.Row) -> Reservation:

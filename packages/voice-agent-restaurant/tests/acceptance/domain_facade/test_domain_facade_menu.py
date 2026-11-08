@@ -1,6 +1,10 @@
 # Acceptance tests for menu search, dish lookup, and the consistency of the seeded diet and allergen data.
-# Black-box through the DomainFacade against a real SQLite store seeded from the bundled seed files.
+# Black-box through the DomainFacade against a real SQLite store seeded from the bundled seed files. The dishes a
+# search or lookup should find are derived from the bundled menu by the rule the scenario states.
 
+import re
+from collections.abc import Iterable
+from enum import Enum, auto
 from pathlib import Path
 from typing import Final
 
@@ -8,7 +12,7 @@ import pytest
 
 from acceptance_support.asserters.asserter_dish import AsserterDish
 from acceptance_support.asserters.asserter_exception import AsserterException, ExpectedExceptionMetadata
-from acceptance_support.bundled_seed import MENU_SEED_FILE_NAME, read_bundled_seed_file
+from acceptance_support.bundled_seed import SeededDish, read_seeded_dishes
 from acceptance_support.service_locator_testing import create_domain_facade
 from voice_agent_restaurant import (
     Allergen,
@@ -18,6 +22,7 @@ from voice_agent_restaurant import (
     DishLookupValidationException,
     DishNotFoundException,
     ExceptionAction,
+    MenuCategory,
     MenuSearchRequest,
     MenuSearchValidationException,
     Severity,
@@ -25,6 +30,18 @@ from voice_agent_restaurant import (
 
 KETO_MAXIMUM_CARBOHYDRATE_GRAMS: Final[int] = 15
 CARNIVORE_MAXIMUM_CARBOHYDRATE_GRAMS: Final[int] = 5
+# Dish names join words with spaces or hyphens ("Dry-Aged Ribeye"), and a guest may say either.
+DISH_NAME_WORD_SEPARATORS_PATTERN: Final[re.Pattern[str]] = re.compile(r"[\s-]+")
+CUT_SHORT_WORD_LENGTH: Final[int] = 3
+REQUESTED_DISH_NAME_CONTEXT_NAME: Final[str] = "Menu.RequestedDishName"
+MATCHING_DISH_COUNT_CONTEXT_NAME: Final[str] = "Menu.MatchingDishCount"
+
+
+class SpokenDishForm(Enum):
+    """How a guest says a dish's name when they say only part of it."""
+
+    LAST_WORD = auto()
+    EVERY_WORD_WITH_THE_LAST_CUT_SHORT = auto()
 
 
 def create_menu_search_request(
@@ -43,32 +60,52 @@ def create_menu_search_request(
     )
 
 
-def find_pinned_dish(seeded_dishes: list[Dish], pinned_dish_id: str) -> Dish:
-    pinned_dishes: list[Dish] = [seeded_dish for seeded_dish in seeded_dishes if seeded_dish.dish_id == pinned_dish_id]
+def retrieve_pinned_dish[TDish: (Dish, SeededDish)](seeded_dishes: Iterable[TDish], pinned_dish_id: str) -> TDish:
+    pinned_dishes: list[TDish] = [seeded_dish for seeded_dish in seeded_dishes if seeded_dish.dish_id == pinned_dish_id]
     assert len(pinned_dishes) == 1, f"The seeded menu must hold exactly one dish '{pinned_dish_id}'; found {len(pinned_dishes)}"
     return pinned_dishes[0]
 
 
+def split_dish_name_into_words(dish_name: str) -> list[str]:
+    return [dish_name_word for dish_name_word in DISH_NAME_WORD_SEPARATORS_PATTERN.split(dish_name.casefold()) if dish_name_word]
+
+
+def find_seeded_dishes_named_by(seeded_dishes: Iterable[SeededDish], spoken_words: Iterable[str]) -> list[SeededDish]:
+    """The seeded dishes whose name has a word starting with each spoken word."""
+    spoken_word_list: list[str] = list(spoken_words)
+    return [
+        seeded_dish
+        for seeded_dish in seeded_dishes
+        if all(
+            any(dish_name_word.startswith(spoken_word) for dish_name_word in split_dish_name_into_words(seeded_dish.name))
+            for spoken_word in spoken_word_list
+        )
+    ]
+
+
+def to_spoken_words(dish_name: str, spoken_dish_form: SpokenDishForm) -> list[str]:
+    dish_name_words: list[str] = split_dish_name_into_words(dish_name)
+    if spoken_dish_form is SpokenDishForm.LAST_WORD:
+        return dish_name_words[-1:]
+    return [*dish_name_words[:-1], dish_name_words[-1][:CUT_SHORT_WORD_LENGTH]]
+
+
 class TestMenuSearch:
     async def test_SearchMenu_WhenNothingNarrowsTheSearch_ThenEverySeededDishIsReturned(self, restaurant_database_path: Path) -> None:
-        expected_dish_count: int = len(read_bundled_seed_file(MENU_SEED_FILE_NAME)["dishes"])
+        expected_dish_ids: list[str] = [seeded_dish.dish_id for seeded_dish in read_seeded_dishes()]
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
             actual_dishes: list[Dish] = await domain_facade.search_menu(create_menu_search_request())
 
-        assert len(actual_dishes) == expected_dish_count
+        assert [actual_dish.dish_id for actual_dish in actual_dishes] == expected_dish_ids
 
     async def test_SearchMenu_WhenVeganWithoutSesameIsRequested_ThenExactlyTheVeganDishesFreeOfSesameAreReturned(
         self, restaurant_database_path: Path
     ) -> None:
         expected_dish_ids: list[str] = [
-            "green-goddess-salad",
-            "thai-peanut-noodle-salad",
-            "king-oyster-mushroom-steak",
-            "smoky-jackfruit-tacos",
-            "grilled-broccolini",
-            "coconut-panna-cotta",
-            "fresh-mint-lemonade",
+            seeded_dish.dish_id
+            for seeded_dish in read_seeded_dishes()
+            if DietLabel.VEGAN.value in seeded_dish.diets and Allergen.SESAME.value not in seeded_dish.allergens
         ]
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
@@ -79,7 +116,11 @@ class TestMenuSearch:
         assert [actual_dish.dish_id for actual_dish in actual_dishes] == expected_dish_ids
 
     async def test_SearchMenu_WhenKetoAndCarnivoreAreBothRequested_ThenOnlyDishesSuitingBothAreReturned(self, restaurant_database_path: Path) -> None:
-        expected_dish_ids: list[str] = ["dry-aged-ribeye", "butchers-board", "beef-bone-broth"]
+        expected_dish_ids: list[str] = [
+            seeded_dish.dish_id
+            for seeded_dish in read_seeded_dishes()
+            if DietLabel.KETO.value in seeded_dish.diets and DietLabel.CARNIVORE.value in seeded_dish.diets
+        ]
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
             actual_dishes: list[Dish] = await domain_facade.search_menu(create_menu_search_request(diet_labels=["keto", "carnivore"]))
@@ -87,8 +128,15 @@ class TestMenuSearch:
         assert [actual_dish.dish_id for actual_dish in actual_dishes] == expected_dish_ids
 
     async def test_SearchMenu_WhenLabelsArriveInSpokenForms_ThenTheyMatchTheirStoredForms(self, restaurant_database_path: Path) -> None:
-        # The only seeded dessert that is gluten free and free of tree nuts.
-        expected_dish_ids: list[str] = ["coconut-panna-cotta"]
+        # Gluten free is derived from the allergen data: no gluten in the recipe and no wheat among the allergens.
+        expected_dish_ids: list[str] = [
+            seeded_dish.dish_id
+            for seeded_dish in read_seeded_dishes()
+            if seeded_dish.category == MenuCategory.DESSERTS.value
+            and not seeded_dish.contains_gluten
+            and Allergen.WHEAT.value not in seeded_dish.allergens
+            and Allergen.TREE_NUTS.value not in seeded_dish.allergens
+        ]
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
             actual_spoken_form_dishes: list[Dish] = await domain_facade.search_menu(
@@ -101,7 +149,11 @@ class TestMenuSearch:
         self, restaurant_database_path: Path
     ) -> None:
         maximum_calories: int = 600
-        expected_dish_ids: list[str] = ["cedar-plank-salmon", "king-oyster-mushroom-steak", "smoky-jackfruit-tacos", "seared-sea-scallops"]
+        expected_dish_ids: list[str] = [
+            seeded_dish.dish_id
+            for seeded_dish in read_seeded_dishes()
+            if seeded_dish.category == MenuCategory.MAINS.value and seeded_dish.calories <= maximum_calories
+        ]
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
             actual_dishes: list[Dish] = await domain_facade.search_menu(
@@ -111,10 +163,18 @@ class TestMenuSearch:
         assert [actual_dish.dish_id for actual_dish in actual_dishes] == expected_dish_ids
 
     async def test_SearchMenu_WhenSearchTextNamesAnIngredient_ThenDishesContainingItAreReturned(self, restaurant_database_path: Path) -> None:
-        expected_dish_ids: list[str] = ["ember-caesar"]
+        search_text: str = "ANCHOVIES"
+        expected_dish_ids: list[str] = [
+            seeded_dish.dish_id
+            for seeded_dish in read_seeded_dishes()
+            if any(
+                search_text.casefold() in seeded_text.casefold()
+                for seeded_text in [seeded_dish.name, seeded_dish.description, *seeded_dish.ingredients]
+            )
+        ]
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
-            actual_dishes: list[Dish] = await domain_facade.search_menu(create_menu_search_request(search_text="ANCHOVIES"))
+            actual_dishes: list[Dish] = await domain_facade.search_menu(create_menu_search_request(search_text=search_text))
 
         assert [actual_dish.dish_id for actual_dish in actual_dishes] == expected_dish_ids
 
@@ -128,6 +188,7 @@ class TestMenuSearch:
             reason="Menu search failed validation",
             severity=Severity.ERROR,
         )
+        expected_contextual_data_by_name: dict[str, int] = {"MenuSearch.ProblemCount": len(expected_problem_phrases)}
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
             with pytest.raises(MenuSearchValidationException) as raised:
@@ -138,6 +199,7 @@ class TestMenuSearch:
         AsserterException.assert_validation_problems_are_as_expected(
             expected_problem_phrases=expected_problem_phrases,
             expected_exception_metadata=expected_exception_metadata,
+            expected_contextual_data_by_name=expected_contextual_data_by_name,
             actual_validation_exception=raised.value,
         )
 
@@ -194,7 +256,7 @@ class TestDishLookup:
         pinned_dish_id: str = "dry-aged-ribeye"
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
-            pinned_dish: Dish = find_pinned_dish(await domain_facade.search_menu(create_menu_search_request()), pinned_dish_id)
+            pinned_dish: Dish = retrieve_pinned_dish(await domain_facade.search_menu(create_menu_search_request()), pinned_dish_id)
             actual_dish: Dish = await domain_facade.retrieve_dish(DishLookupRequest(dish_name=pinned_dish.name.swapcase()))
 
         AsserterDish.assert_dish_and_its_labels_are_as_expected(
@@ -205,17 +267,27 @@ class TestDishLookup:
         )
 
     @pytest.mark.parametrize(
-        ("spoken_dish_name", "expected_dish_id"),
+        ("pinned_dish_id", "lead_in_words", "spoken_dish_form"),
         [
-            ("salmon", "cedar-plank-salmon"),
-            ("the ribeye", "dry-aged-ribeye"),
-            ("your scallops", "seared-sea-scallops"),
-            ("dry aged rib", "dry-aged-ribeye"),
+            ("cedar-plank-salmon", "", SpokenDishForm.LAST_WORD),
+            ("dry-aged-ribeye", "the ", SpokenDishForm.LAST_WORD),
+            ("seared-sea-scallops", "your ", SpokenDishForm.LAST_WORD),
+            ("dry-aged-ribeye", "", SpokenDishForm.EVERY_WORD_WITH_THE_LAST_CUT_SHORT),
         ],
     )
     async def test_RetrieveDish_WhenOnlyOneDishContainsTheSpokenWords_ThenThatDishIsReturned(
-        self, restaurant_database_path: Path, spoken_dish_name: str, expected_dish_id: str
+        self, restaurant_database_path: Path, pinned_dish_id: str, lead_in_words: str, spoken_dish_form: SpokenDishForm
     ) -> None:
+        seeded_dishes: list[SeededDish] = read_seeded_dishes()
+        spoken_words: list[str] = to_spoken_words(retrieve_pinned_dish(seeded_dishes, pinned_dish_id).name, spoken_dish_form)
+        named_dish_ids: list[str] = [seeded_dish.dish_id for seeded_dish in find_seeded_dishes_named_by(seeded_dishes, spoken_words)]
+        assert named_dish_ids == [pinned_dish_id], (
+            f"This single-match lookup needs {spoken_words!r} to name only '{pinned_dish_id}', but the seeded menu names {named_dish_ids!r}; "
+            "the seeded data no longer supports the scenario"
+        )
+        spoken_dish_name: str = lead_in_words + " ".join(spoken_words)
+        expected_dish_id: str = pinned_dish_id
+
         async with create_domain_facade(restaurant_database_path) as domain_facade:
             actual_dish: Dish = await domain_facade.retrieve_dish(DishLookupRequest(dish_name=spoken_dish_name))
 
@@ -223,7 +295,13 @@ class TestDishLookup:
 
     async def test_RetrieveDish_WhenSeveralDishesContainTheSpokenWords_ThenTheRefusalNamesEachOfThem(self, restaurant_database_path: Path) -> None:
         spoken_dish_name: str = "chicken"
-        expected_close_match_names: list[str] = ["Smoked Chicken Wings", "Half Roast Chicken"]
+        expected_close_match_names: list[str] = [
+            seeded_dish.name for seeded_dish in find_seeded_dishes_named_by(read_seeded_dishes(), [spoken_dish_name])
+        ]
+        assert len(expected_close_match_names) > 1, (
+            f"This several-match lookup needs more than one seeded dish named by '{spoken_dish_name}', but found {expected_close_match_names!r}; "
+            "the seeded data no longer supports the scenario"
+        )
         expected_message_phrases: list[str] = ["No single dish on the menu matches", f"'{spoken_dish_name}'"]
         expected_exception_metadata: ExpectedExceptionMetadata = ExpectedExceptionMetadata(
             http_status_code=404,
@@ -231,6 +309,10 @@ class TestDishLookup:
             reason="No single dish matches the name",
             severity=Severity.ERROR,
         )
+        expected_contextual_data_by_name: dict[str, str | int] = {
+            REQUESTED_DISH_NAME_CONTEXT_NAME: spoken_dish_name,
+            MATCHING_DISH_COUNT_CONTEXT_NAME: len(expected_close_match_names),
+        }
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
             with pytest.raises(DishNotFoundException) as raised:
@@ -240,6 +322,7 @@ class TestDishLookup:
             expected_close_match_names=expected_close_match_names,
             expected_message_phrases=expected_message_phrases,
             expected_exception_metadata=expected_exception_metadata,
+            expected_contextual_data_by_name=expected_contextual_data_by_name,
             actual_dish_not_found_exception=raised.value,
         )
 
@@ -262,6 +345,10 @@ class TestDishLookup:
             reason="No single dish matches the name",
             severity=Severity.ERROR,
         )
+        expected_contextual_data_by_name: dict[str, str | int] = {
+            REQUESTED_DISH_NAME_CONTEXT_NAME: spoken_dish_name,
+            MATCHING_DISH_COUNT_CONTEXT_NAME: 0,
+        }
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
             with pytest.raises(DishNotFoundException) as raised:
@@ -271,6 +358,7 @@ class TestDishLookup:
             expected_close_match_names=expected_close_match_names,
             expected_message_phrases=expected_message_phrases,
             expected_exception_metadata=expected_exception_metadata,
+            expected_contextual_data_by_name=expected_contextual_data_by_name,
             actual_dish_not_found_exception=raised.value,
         )
 
@@ -282,6 +370,7 @@ class TestDishLookup:
             reason="Dish lookup failed validation",
             severity=Severity.ERROR,
         )
+        expected_contextual_data_by_name: dict[str, int] = {"DishLookup.ProblemCount": len(expected_problem_phrases)}
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
             with pytest.raises(DishLookupValidationException) as raised:
@@ -290,5 +379,6 @@ class TestDishLookup:
         AsserterException.assert_validation_problems_are_as_expected(
             expected_problem_phrases=expected_problem_phrases,
             expected_exception_metadata=expected_exception_metadata,
+            expected_contextual_data_by_name=expected_contextual_data_by_name,
             actual_validation_exception=raised.value,
         )

@@ -25,7 +25,12 @@ from conversation_acceptance_support.realtime_voice_service_scripted import (
     create_failed_response_event,
     create_speech_started_event,
 )
-from conversation_acceptance_support.service_locator_testing import TESTING_REALTIME_MODEL, create_domain_facade, create_restaurant_domain_facade
+from conversation_acceptance_support.service_locator_testing import (
+    SCRIPTED_SERVICE_API_KEY,
+    TESTING_REALTIME_MODEL,
+    create_domain_facade,
+    create_restaurant_domain_facade,
+)
 
 from voice_agent_conversation import (
     AgentSpeechChunk,
@@ -346,6 +351,7 @@ class TestConversationProviderFailures:
                 severity=Severity.ERROR,
             ),
             contextual_data_by_name={OPERATION_CONTEXT_NAME: CONNECT_OPERATION, "RealtimeVoice.HttpStatusCode": refusal_status.value},
+            absent_phrases=[SCRIPTED_SERVICE_API_KEY],
         )
         expected_provider_session_count: int = 0
 
@@ -384,6 +390,7 @@ class TestConversationProviderFailures:
                 PROVIDER_ERROR_TYPE_CONTEXT_NAME: "invalid_request_error",
                 PROVIDER_ERROR_CODE_CONTEXT_NAME: "invalid_api_key",
             },
+            absent_phrases=[SCRIPTED_SERVICE_API_KEY],
         )
         expected_provider_session_count: int = 0
 
@@ -408,8 +415,10 @@ class TestConversationProviderFailures:
     ) -> None:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         conversation_request: ConversationRequest = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
+        provider_error_type: str = "invalid_request_error"
+        provider_error_code: str = "invalid_value"
         provider_error_message: str = "Invalid value: 'cedar'. Supported values are: 'alloy'."
-        session_update_error_event: ErrorEventMessage = create_error_event("invalid_request_error", "invalid_value", provider_error_message)
+        session_update_error_event_message: ErrorEventMessage = create_error_event(provider_error_type, provider_error_code, provider_error_message)
         configure_operation: str = "configuring the session"
         expected_exception_content: ExpectedExceptionContent = ExpectedExceptionContent(
             message_phrases=[configure_operation, provider_error_message],
@@ -421,14 +430,14 @@ class TestConversationProviderFailures:
             ),
             contextual_data_by_name={
                 OPERATION_CONTEXT_NAME: configure_operation,
-                PROVIDER_ERROR_TYPE_CONTEXT_NAME: "invalid_request_error",
-                PROVIDER_ERROR_CODE_CONTEXT_NAME: "invalid_value",
+                PROVIDER_ERROR_TYPE_CONTEXT_NAME: provider_error_type,
+                PROVIDER_ERROR_CODE_CONTEXT_NAME: provider_error_code,
             },
         )
         expected_provider_session_count: int = 1
 
         async with (
-            RealtimeVoiceServiceScripted(session_update_error_event=session_update_error_event) as realtime_voice_service_scripted,
+            RealtimeVoiceServiceScripted(session_update_error_event=session_update_error_event_message) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_audio())) as conversation,
         ):

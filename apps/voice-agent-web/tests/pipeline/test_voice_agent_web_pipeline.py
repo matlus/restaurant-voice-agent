@@ -21,6 +21,7 @@ from voice_agent_web.resource_models.conversation_resources import ConversationE
 GUEST_AUDIO_CHUNK: Final[bytes] = b"guest audio from the browser"
 HTTP_OK_STATUS_CODE: Final[int] = 200
 POLICY_VIOLATION_CLOSE_CODE: Final[int] = 1008
+NORMAL_CLOSURE_CODE: Final[int] = 1000
 
 
 @pytest.fixture
@@ -79,18 +80,28 @@ class TestVoiceAgentWebPipeline:
     def test_Conversation_WhenTheVoiceIsNotOffered_ThenAnErrorMessageArrivesAndTheSocketClosesAsAPolicyViolation(
         self, test_client: TestClient
     ) -> None:
+        refused_voice_key: str = "openai-nova"
         expected_error_message_shape: list[str] = sorted(ConversationErrorMessage.__required_keys__)
         expected_error_message_type: str = "error"
+        expected_detail_phrase: str = f"The voice '{refused_voice_key}' is not offered"
         expected_close_code: int = POLICY_VIOLATION_CLOSE_CODE
 
-        with test_client.websocket_connect("/conversation?voice=openai-nova") as websocket:
+        with test_client.websocket_connect(f"/conversation?voice={refused_voice_key}") as websocket:
             actual_error_message: dict[str, object] = json.loads(websocket.receive_text())
             with pytest.raises(WebSocketDisconnect) as raised:
                 websocket.receive_text()
 
-        assert (sorted(actual_error_message), actual_error_message["type"], bool(actual_error_message["detail"]), raised.value.code) == (
-            expected_error_message_shape,
-            expected_error_message_type,
-            True,
-            expected_close_code,
-        )
+        assert (
+            sorted(actual_error_message),
+            actual_error_message["type"],
+            expected_detail_phrase in str(actual_error_message["detail"]),
+            raised.value.code,
+        ) == (expected_error_message_shape, expected_error_message_type, True, expected_close_code)
+
+    def test_WebSocket_WhenThePathIsNotTheConversation_ThenTheHandshakeIsRefusedWithoutAnInternalFailure(self, test_client: TestClient) -> None:
+        expected_close_code: int = NORMAL_CLOSURE_CODE
+
+        with pytest.raises(WebSocketDisconnect) as raised, test_client.websocket_connect("/conversation/"):
+            pass
+
+        assert raised.value.code == expected_close_code

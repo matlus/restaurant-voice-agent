@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from enum import StrEnum
@@ -6,6 +7,11 @@ from typing import Final
 # Confirmation codes avoid letters and digits that sound or look alike when read aloud (B/D/P, I/1, O/0, S/5, Z/2).
 CONFIRMATION_CODE_ALPHABET: Final[str] = "ACDEFGHJKMNPQRTUVWXY34679"
 CONFIRMATION_CODE_LENGTH: Final[int] = 6
+NATIONAL_PHONE_NUMBER_LENGTH: Final[int] = 10
+# The stored forms the store matches guests' codes and numbers in exactly; validation puts spoken values into these forms.
+# [0-9] rather than \d: in a str pattern \d also matches non-ASCII digits, which would be stored but never found again.
+STORED_CONFIRMATION_CODE_PATTERN: Final[re.Pattern[str]] = re.compile(f"[{re.escape(CONFIRMATION_CODE_ALPHABET)}]{{{CONFIRMATION_CODE_LENGTH}}}")
+STORED_PHONE_NUMBER_PATTERN: Final[re.Pattern[str]] = re.compile(f"[0-9]{{{NATIONAL_PHONE_NUMBER_LENGTH}}}")
 
 
 class ReservationStatus(StrEnum):

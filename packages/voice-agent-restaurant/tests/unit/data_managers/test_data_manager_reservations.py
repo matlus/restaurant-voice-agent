@@ -70,6 +70,7 @@ class TestDataManagerReservationsReschedule:
             read_reservation: Reservation = await read_seeded_booking(domain_facade, SEEDED_PRIYA_PHONE)
             stale_reservation_reschedule: ReservationReschedule = create_notes_reschedule(read_reservation, create_generated_note())
             expected_message_phrases: list[str] = [read_reservation.confirmation_code, "was changed by another request", "nothing was changed"]
+            expected_contextual_data_by_name: dict[str, str] = {"Reservation.ConfirmationCode": read_reservation.confirmation_code}
             expected_reservations: list[Reservation] = [
                 await domain_facade.change_reservation(
                     ReservationChangeRequest(
@@ -93,6 +94,7 @@ class TestDataManagerReservationsReschedule:
         AsserterException.assert_message_and_metadata_are_as_expected(
             expected_message_phrases=expected_message_phrases,
             expected_exception_metadata=expected_exception_metadata,
+            expected_contextual_data_by_name=expected_contextual_data_by_name,
             actual_voice_agent_restaurant_exception=raised.value,
         )
         assert actual_found_reservations == expected_reservations
@@ -111,6 +113,7 @@ class TestDataManagerReservationsReschedule:
             read_reservation: Reservation = await read_seeded_booking(domain_facade, SEEDED_PRIYA_PHONE)
             stale_reservation_reschedule: ReservationReschedule = create_notes_reschedule(read_reservation, create_generated_note())
             expected_message_phrases: list[str] = [read_reservation.confirmation_code, "No current reservation was found"]
+            expected_contextual_data_by_name: dict[str, str] = {"Reservation.ConfirmationCode": read_reservation.confirmation_code}
             await domain_facade.cancel_reservation(
                 ReservationCancellationRequest(confirmation_code=read_reservation.confirmation_code, phone_number=SEEDED_PRIYA_PHONE)
             )
@@ -125,6 +128,7 @@ class TestDataManagerReservationsReschedule:
         AsserterException.assert_message_and_metadata_are_as_expected(
             expected_message_phrases=expected_message_phrases,
             expected_exception_metadata=expected_exception_metadata,
+            expected_contextual_data_by_name=expected_contextual_data_by_name,
             actual_voice_agent_restaurant_exception=raised.value,
         )
         assert actual_found_reservations == expected_found_reservations

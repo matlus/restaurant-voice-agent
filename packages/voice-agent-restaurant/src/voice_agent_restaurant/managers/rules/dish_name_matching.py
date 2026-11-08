@@ -27,7 +27,7 @@ class DishNameMatching:
         return cls._find_dishes_containing_every_word(dishes, cls._get_significant_words(folded_requested_name))
 
     @classmethod
-    def get_suggested_names(cls, dishes: Sequence[Dish], matching_dishes: Sequence[Dish], requested_name: str) -> list[str]:
+    def find_suggested_names(cls, dishes: Sequence[Dish], matching_dishes: Sequence[Dish], requested_name: str) -> list[str]:
         """The names to offer when no single dish matches: the several matching dishes, or else the names that sound closest."""
         if matching_dishes:
             return [matching_dish.name for matching_dish in matching_dishes][: cls.MAXIMUM_SUGGESTED_NAMES]

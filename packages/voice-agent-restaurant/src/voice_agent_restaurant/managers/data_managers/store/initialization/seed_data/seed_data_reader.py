@@ -9,7 +9,13 @@ from typing import Final
 from voice_agent_restaurant.managers.data_managers.store.initialization.seed_data.seed_values.seed_file import JsonObject, JsonValue, SeedFile
 from voice_agent_restaurant.managers.exceptions.restaurant_store_exceptions import RestaurantSeedDataInvalidException
 from voice_agent_restaurant.managers.models.menu_models import Allergen, DietLabel, DishRecord, MenuCategory, Nutrition
-from voice_agent_restaurant.managers.models.reservation_models import CONFIRMATION_CODE_ALPHABET, CONFIRMATION_CODE_LENGTH
+from voice_agent_restaurant.managers.models.reservation_models import (
+    CONFIRMATION_CODE_ALPHABET,
+    CONFIRMATION_CODE_LENGTH,
+    NATIONAL_PHONE_NUMBER_LENGTH,
+    STORED_CONFIRMATION_CODE_PATTERN,
+    STORED_PHONE_NUMBER_PATTERN,
+)
 from voice_agent_restaurant.managers.models.restaurant_models import (
     ClosedWeekday,
     Closure,
@@ -20,7 +26,6 @@ from voice_agent_restaurant.managers.models.restaurant_models import (
     Weekday,
     WeekdayHours,
 )
-from voice_agent_restaurant.managers.validators.value_parsing.reservation_value_parsing import ReservationValueParsing
 
 
 @dataclass(frozen=True)
@@ -65,6 +70,7 @@ class SeedDataReader:
     DISH_ID_KEY: Final[str] = "dish_id"
     CONFIRMATION_CODE_KEY: Final[str] = "confirmation_code"
     PHONE_NUMBER_KEY: Final[str] = "phone_number"
+    WEEKDAY_KEY: Final[str] = "weekday"
     MINUTES_PER_HOUR: Final[int] = 60
 
     @classmethod
@@ -92,7 +98,8 @@ class SeedDataReader:
     def _load_seed_file(seed_directory: Traversable, file_name: str) -> SeedFile:
         try:
             seed_file_text: str = seed_directory.joinpath(file_name).read_text(encoding="utf-8")
-        except OSError as read_error:
+        # A file saved in another encoding cannot be decoded, which is as unusable as one that cannot be read.
+        except (OSError, UnicodeDecodeError) as read_error:
             raise RestaurantSeedDataInvalidException(
                 message=f"Seed file '{file_name}' cannot be read: {read_error}",
                 contextual_data_by_name={SeedFile.FILE_NAME_CONTEXT_KEY: file_name},
@@ -136,21 +143,7 @@ class SeedDataReader:
             ),
             large_party_guidance=restaurant_seed_file.get_text(reservation_policy_object, "large_party_guidance", reservation_policy_path),
         )
-        if reservation_policy.maximum_party_size < reservation_policy.minimum_party_size:
-            raise restaurant_seed_file.fail(
-                f"{reservation_policy_path}.maximum_party_size",
-                f"must be at least the minimum_party_size of {reservation_policy.minimum_party_size} but was {reservation_policy.maximum_party_size}",
-            )
-        # Bookable times step from each day's opening time, while a requested time is judged by its minute of the hour.
-        # The two agree only when the interval divides an hour and every opening time lies on that grid.
-        if cls.MINUTES_PER_HOUR % reservation_policy.slot_interval_minutes != 0:
-            raise restaurant_seed_file.fail(
-                f"{reservation_policy_path}.slot_interval_minutes",
-                (
-                    "must divide an hour evenly, so bookable times fall on the same minutes every hour, "
-                    f"but was {reservation_policy.slot_interval_minutes}"
-                ),
-            )
+        cls._verify_reservation_policy(restaurant_seed_file, reservation_policy, reservation_policy_path)
         return RestaurantProfile(
             name=restaurant_seed_file.get_text(root_object, "name", "$"),
             tagline=restaurant_seed_file.get_text(root_object, "tagline", "$"),
@@ -173,13 +166,17 @@ class SeedDataReader:
         for position, hours_object in enumerate(restaurant_seed_file.get_objects(restaurant_seed_file.root_object, "weekly_hours", "$")):
             weekly_hours.append(cls._read_weekday_hours(restaurant_seed_file, hours_object, f"$.weekly_hours[{position}]"))
         if sorted(weekday_hours.weekday for weekday_hours in weekly_hours) != sorted(Weekday):
-            raise restaurant_seed_file.fail("$.weekly_hours", "must list each weekday exactly once")
+            listed_weekdays: str = ", ".join(weekday_hours.weekday.value for weekday_hours in weekly_hours)
+            permitted_weekdays: str = ", ".join(weekday.value for weekday in Weekday)
+            raise restaurant_seed_file.fail(
+                "$.weekly_hours", f"must list each weekday exactly once ({permitted_weekdays}) but listed: {listed_weekdays}"
+            )
         return weekly_hours
 
-    @staticmethod
-    def _read_weekday_hours(restaurant_seed_file: SeedFile, hours_object: JsonObject, value_path: str) -> WeekdayHours:
+    @classmethod
+    def _read_weekday_hours(cls, restaurant_seed_file: SeedFile, hours_object: JsonObject, value_path: str) -> WeekdayHours:
         weekday: Weekday = restaurant_seed_file.get_choice(
-            Weekday, restaurant_seed_file.get_text(hours_object, "weekday", value_path), f"{value_path}.weekday"
+            Weekday, restaurant_seed_file.get_text(hours_object, cls.WEEKDAY_KEY, value_path), f"{value_path}.{cls.WEEKDAY_KEY}"
         )
         opens_at: time | None = restaurant_seed_file.get_optional_time(hours_object, "opens_at", value_path)
         closes_at: time | None = restaurant_seed_file.get_optional_time(hours_object, "closes_at", value_path)
@@ -190,7 +187,11 @@ class SeedDataReader:
         # Seatings are kept as times of one calendar day, so service must end before midnight of the day it starts.
         if closes_at <= opens_at:
             raise restaurant_seed_file.fail(
-                value_path, "must have 'closes_at' later than 'opens_at' on the same day; service cannot run past midnight"
+                value_path,
+                (
+                    f"must have 'closes_at' later than 'opens_at' on the same day but opens at {opens_at:%H:%M} and closes at "
+                    f"{closes_at:%H:%M}; service cannot run past midnight"
+                ),
             )
         return OpenWeekday(weekday=weekday, opens_at=opens_at, closes_at=closes_at)
 
@@ -275,7 +276,9 @@ class SeedDataReader:
                 SeedReservation(
                     confirmation_code=cls._get_confirmation_code(reservations_seed_file, reservation_object, value_path),
                     weekday=reservations_seed_file.get_choice(
-                        Weekday, reservations_seed_file.get_text(reservation_object, "weekday", value_path), f"{value_path}.weekday"
+                        Weekday,
+                        reservations_seed_file.get_text(reservation_object, cls.WEEKDAY_KEY, value_path),
+                        f"{value_path}.{cls.WEEKDAY_KEY}",
                     ),
                     starts_at=reservations_seed_file.get_time(reservation_object, "starts_at", value_path),
                     party_size=reservations_seed_file.get_positive_number(reservation_object, "party_size", value_path),
@@ -287,12 +290,12 @@ class SeedDataReader:
             )
         return seed_reservations
 
-    # Guests change and cancel a booking by its confirmation code and phone number, which the request validator puts
-    # into their stored form before the store matches them exactly. A seed value in any other form could never be found.
+    # Guests change and cancel a booking by its confirmation code and phone number, which the store matches exactly in
+    # their stored form. A seed value in any other form could never be found.
     @classmethod
     def _get_confirmation_code(cls, reservations_seed_file: SeedFile, reservation_object: JsonObject, value_path: str) -> str:
         confirmation_code: str = reservations_seed_file.get_text(reservation_object, cls.CONFIRMATION_CODE_KEY, value_path)
-        if not ReservationValueParsing.is_confirmation_code(confirmation_code):
+        if STORED_CONFIRMATION_CODE_PATTERN.fullmatch(confirmation_code) is None:
             raise reservations_seed_file.fail(
                 f"{value_path}.{cls.CONFIRMATION_CODE_KEY}",
                 (
@@ -305,10 +308,13 @@ class SeedDataReader:
     @classmethod
     def _get_phone_number(cls, reservations_seed_file: SeedFile, reservation_object: JsonObject, value_path: str) -> str:
         phone_number: str = reservations_seed_file.get_text(reservation_object, cls.PHONE_NUMBER_KEY, value_path)
-        if not ReservationValueParsing.is_phone_number(phone_number):
+        if STORED_PHONE_NUMBER_PATTERN.fullmatch(phone_number) is None:
             raise reservations_seed_file.fail(
                 f"{value_path}.{cls.PHONE_NUMBER_KEY}",
-                f"must be a 10-digit phone number written as digits alone, the form guests' numbers are matched in, but was '{phone_number}'",
+                (
+                    f"must be a {NATIONAL_PHONE_NUMBER_LENGTH}-digit phone number written as digits alone, the form guests' numbers are "
+                    f"matched in, but was '{phone_number}'"
+                ),
             )
         return phone_number
 
@@ -337,6 +343,24 @@ class SeedDataReader:
         )
         cls._verify_reservation_tables(seed_files.reservations_seed_file, restaurant_seed.seed_reservations, restaurant_seed.dining_tables)
         cls._verify_reservation_seating_times(seed_files.reservations_seed_file, restaurant_seed)
+
+    @classmethod
+    def _verify_reservation_policy(cls, restaurant_seed_file: SeedFile, reservation_policy: ReservationPolicy, reservation_policy_path: str) -> None:
+        if reservation_policy.maximum_party_size < reservation_policy.minimum_party_size:
+            raise restaurant_seed_file.fail(
+                f"{reservation_policy_path}.maximum_party_size",
+                f"must be at least the minimum_party_size of {reservation_policy.minimum_party_size} but was {reservation_policy.maximum_party_size}",
+            )
+        # Bookable times step from each day's opening time, while a requested time is judged by its minute of the hour.
+        # The two agree only when the interval divides an hour and every opening time lies on that grid.
+        if cls.MINUTES_PER_HOUR % reservation_policy.slot_interval_minutes != 0:
+            raise restaurant_seed_file.fail(
+                f"{reservation_policy_path}.slot_interval_minutes",
+                (
+                    "must divide an hour evenly, so bookable times fall on the same minutes every hour, "
+                    f"but was {reservation_policy.slot_interval_minutes}"
+                ),
+            )
 
     @staticmethod
     def _verify_unique_values(seed_file: SeedFile, list_path: str, key: str, key_texts: Sequence[str]) -> None:

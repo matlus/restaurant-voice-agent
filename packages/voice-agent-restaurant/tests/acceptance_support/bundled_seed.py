@@ -1,4 +1,9 @@
+"""The bundled seed files a new store is created from, read into typed records so a test derives its expectations from
+the seeded data itself."""
+
 import json
+from dataclasses import dataclass
+from datetime import date, time
 from importlib import resources
 from typing import Any, Final
 
@@ -7,7 +12,108 @@ TABLES_SEED_FILE_NAME: Final[str] = "tables.json"
 MENU_SEED_FILE_NAME: Final[str] = "menu.json"
 
 
-def read_bundled_seed_file(seed_file_name: str) -> dict[str, Any]:
-    """The bundled seed file a new store is created from, so a test derives its expectations from the seeded data itself."""
-    seed_file_text: str = resources.files("voice_agent_restaurant").joinpath("seed_data", seed_file_name).read_text(encoding="utf-8")
-    return json.loads(seed_file_text)
+@dataclass(frozen=True)
+class SeededWeekdayHours:
+    """One weekday's seeded hours; both times are None on a day the restaurant does not open."""
+
+    weekday: str
+    opens_at: time | None
+    closes_at: time | None
+
+
+@dataclass(frozen=True)
+class SeededClosure:
+    closed_on: date
+    reason: str
+
+
+@dataclass(frozen=True)
+class SeededReservationPolicy:
+    seating_duration_minutes: int
+    slot_interval_minutes: int
+    maximum_party_size: int
+    booking_window_days: int
+
+
+@dataclass(frozen=True)
+class SeededRestaurant:
+    name: str
+    time_zone: str
+    house_notes: list[str]
+    weekly_hours: list[SeededWeekdayHours]
+    closures: list[SeededClosure]
+    reservation_policy: SeededReservationPolicy
+
+
+@dataclass(frozen=True)
+class SeededTable:
+    table_id: str
+    seats: int
+
+
+@dataclass(frozen=True)
+class SeededDish:
+    dish_id: str
+    name: str
+    category: str
+    description: str
+    ingredients: list[str]
+    allergens: list[str]
+    contains_gluten: bool
+    diets: list[str]
+    calories: int
+
+
+def read_seeded_restaurant() -> SeededRestaurant:
+    restaurant_seed_object: dict[str, Any] = json.loads(_read_bundled_seed_text(RESTAURANT_SEED_FILE_NAME))
+    reservation_policy_object: dict[str, Any] = restaurant_seed_object["reservation_policy"]
+    return SeededRestaurant(
+        name=restaurant_seed_object["name"],
+        time_zone=restaurant_seed_object["time_zone"],
+        house_notes=list(restaurant_seed_object["house_notes"]),
+        weekly_hours=[
+            SeededWeekdayHours(
+                weekday=hours_object["weekday"],
+                opens_at=None if hours_object["opens_at"] is None else time.fromisoformat(hours_object["opens_at"]),
+                closes_at=None if hours_object["closes_at"] is None else time.fromisoformat(hours_object["closes_at"]),
+            )
+            for hours_object in restaurant_seed_object["weekly_hours"]
+        ],
+        closures=[
+            SeededClosure(closed_on=date.fromisoformat(closure_object["closed_on"]), reason=closure_object["reason"])
+            for closure_object in restaurant_seed_object["closures"]
+        ],
+        reservation_policy=SeededReservationPolicy(
+            seating_duration_minutes=reservation_policy_object["seating_duration_minutes"],
+            slot_interval_minutes=reservation_policy_object["slot_interval_minutes"],
+            maximum_party_size=reservation_policy_object["maximum_party_size"],
+            booking_window_days=reservation_policy_object["booking_window_days"],
+        ),
+    )
+
+
+def read_seeded_tables() -> list[SeededTable]:
+    tables_seed_object: dict[str, Any] = json.loads(_read_bundled_seed_text(TABLES_SEED_FILE_NAME))
+    return [SeededTable(table_id=table_object["table_id"], seats=table_object["seats"]) for table_object in tables_seed_object["tables"]]
+
+
+def read_seeded_dishes() -> list[SeededDish]:
+    menu_seed_object: dict[str, Any] = json.loads(_read_bundled_seed_text(MENU_SEED_FILE_NAME))
+    return [
+        SeededDish(
+            dish_id=dish_object["dish_id"],
+            name=dish_object["name"],
+            category=dish_object["category"],
+            description=dish_object["description"],
+            ingredients=list(dish_object["ingredients"]),
+            allergens=list(dish_object["allergens"]),
+            contains_gluten=dish_object["contains_gluten"],
+            diets=list(dish_object["diets"]),
+            calories=dish_object["nutrition"]["calories"],
+        )
+        for dish_object in menu_seed_object["dishes"]
+    ]
+
+
+def _read_bundled_seed_text(seed_file_name: str) -> str:
+    return resources.files("voice_agent_restaurant").joinpath("seed_data", seed_file_name).read_text(encoding="utf-8")

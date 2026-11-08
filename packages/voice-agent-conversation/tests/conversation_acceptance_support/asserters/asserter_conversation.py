@@ -55,9 +55,9 @@ class AsserterConversation:
     ) -> None:
         mismatch_messages: list[str] = []
         actual_session_settings: list[CapturedSessionSettings] = [
-            session_settings
+            captured_session_settings
             for actual_captured_realtime_session in actual_captured_realtime_sessions
-            for session_settings in actual_captured_realtime_session.session_settings
+            for captured_session_settings in actual_captured_realtime_session.session_settings
         ]
         if len(actual_session_settings) != 1:
             mismatch_messages.append(f"Session settings sent: expected 1; actual {len(actual_session_settings)}.")
@@ -87,7 +87,6 @@ class AsserterConversation:
     def find_provider_session_mismatches(
         expected_provider_session_count: int, actual_captured_realtime_sessions: Sequence[CapturedRealtimeSession]
     ) -> list[str]:
-        """How many provider sessions were opened, and any the domain left open for the service to drop when it stopped."""
         mismatch_messages: list[str] = []
         if len(actual_captured_realtime_sessions) != expected_provider_session_count:
             mismatch_messages.append(

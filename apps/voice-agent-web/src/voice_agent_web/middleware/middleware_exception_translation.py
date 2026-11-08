@@ -1,7 +1,5 @@
 import logging
-from dataclasses import dataclass
 from enum import Enum, auto
-from functools import partial
 
 from starlette.responses import Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -17,13 +15,6 @@ class ConnectionState(Enum):
     AWAITING_RESPONSE = auto()  # Nothing sent yet: an HTTP response or a WebSocket handshake answer can still be sent.
     OPEN = auto()  # The HTTP response has started, or the WebSocket is accepted and still open.
     ENDED = auto()  # The app closed the WebSocket, or the client disconnected or stopped taking frames; nothing more can reach it.
-
-
-@dataclass
-class ConnectionProgress:
-    """How far one HTTP exchange or WebSocket connection has gone. One per connection, owned by that connection's call."""
-
-    connection_state: ConnectionState = ConnectionState.AWAITING_RESPONSE
 
 
 class MiddlewareExceptionTranslation:
@@ -42,37 +33,48 @@ class MiddlewareExceptionTranslation:
         if scope["type"] not in {"http", "websocket"}:
             await self._app(scope, receive, send)
             return
-        connection_progress: ConnectionProgress = ConnectionProgress()
-        tracked_receive: Receive = partial(self._receive_noting_progress, receive, connection_progress)
-        tracked_send: Send = partial(self._send_noting_progress, send, connection_progress)
+        # Each connection's progress is an immutable state rebound in this call's own frame, so the one long-lived
+        # middleware instance holds nothing about any connection.
+        connection_state: ConnectionState = ConnectionState.AWAITING_RESPONSE
+
+        async def receive_noting_progress() -> Message:
+            nonlocal connection_state
+            received_message: Message = await receive()
+            connection_state = self._state_after_receiving(connection_state, received_message)
+            return received_message
+
+        async def send_noting_progress(sent_message: Message) -> None:
+            nonlocal connection_state
+            connection_state = self._state_after_sending(connection_state, sent_message)
+            try:
+                await send(sent_message)
+            except OSError:
+                # The server refuses a frame once the client has gone, before the app has read the disconnect.
+                connection_state = ConnectionState.ENDED
+                raise
+
         try:
-            await self._app(scope, tracked_receive, tracked_send)
+            await self._app(scope, receive_noting_progress, send_noting_progress)
         except Exception as escaped_exception:  # noqa: BLE001 - the host boundary: every escaped failure is logged once and translated here
             self._log_exception(escaped_exception, scope)
             if scope["type"] == "websocket":
-                await self._answer_websocket_failure(send, connection_progress.connection_state, escaped_exception)
-            elif connection_progress.connection_state is ConnectionState.AWAITING_RESPONSE:
+                await self._answer_websocket_failure(send, connection_state, escaped_exception)
+            elif connection_state is ConnectionState.AWAITING_RESPONSE:
                 await self._send_problem_details(scope, receive, send, escaped_exception)
 
     @staticmethod
-    async def _receive_noting_progress(receive: Receive, connection_progress: ConnectionProgress) -> Message:
-        received_message: Message = await receive()
+    def _state_after_receiving(connection_state: ConnectionState, received_message: Message) -> ConnectionState:
         if received_message["type"] == "websocket.disconnect":
-            connection_progress.connection_state = ConnectionState.ENDED
-        return received_message
+            return ConnectionState.ENDED
+        return connection_state
 
     @staticmethod
-    async def _send_noting_progress(send: Send, connection_progress: ConnectionProgress, sent_message: Message) -> None:
+    def _state_after_sending(connection_state: ConnectionState, sent_message: Message) -> ConnectionState:
         if sent_message["type"] in {"http.response.start", "websocket.accept"}:
-            connection_progress.connection_state = ConnectionState.OPEN
-        elif sent_message["type"] == "websocket.close":
-            connection_progress.connection_state = ConnectionState.ENDED
-        try:
-            await send(sent_message)
-        except OSError:
-            # The server refuses a frame once the client has gone, before the app has read the disconnect.
-            connection_progress.connection_state = ConnectionState.ENDED
-            raise
+            return ConnectionState.OPEN
+        if sent_message["type"] == "websocket.close":
+            return ConnectionState.ENDED
+        return connection_state
 
     def _log_exception(self, escaped_exception: Exception, scope: Scope) -> None:
         request_description: str = f"{scope['type']} {scope['path']}"

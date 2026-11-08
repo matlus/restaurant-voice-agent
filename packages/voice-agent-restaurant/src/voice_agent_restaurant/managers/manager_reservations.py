@@ -107,12 +107,12 @@ class ManagerReservations:
         seating_plan: _SeatingPlan = await self._plan_seating(validated_reservation_request.requested_seating, booking_context)
         new_reservation: NewReservation = self._to_new_reservation(validated_reservation_request, seating_plan.ends_at)
         try:
-            recorded_reservation: Reservation = await self._data_manager_reservations.record_reservation(
+            reservation: Reservation = await self._data_manager_reservations.record_reservation(
                 new_reservation, [fitting_table.table_id for fitting_table in seating_plan.fitting_tables], self._clock.now_utc()
             )
         except CandidateTablesTakenException as candidate_tables_taken_exception:
             raise await self._create_no_table_exception(seating_plan, None) from candidate_tables_taken_exception
-        return recorded_reservation
+        return reservation
 
     async def find_reservations(self, reservation_search_request: ReservationSearchRequest) -> list[Reservation]:
         phone_number: str = ValidatorReservationRequests.validate_search_request(reservation_search_request)

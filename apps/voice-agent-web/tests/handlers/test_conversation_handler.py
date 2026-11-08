@@ -1,8 +1,8 @@
 # Handler tests for the browser's front door. They start at a handler method and end at its domain Hook, which
 # ConversationHandlerForTest scripts, so no domain runs beneath them. They prove only what the handler owns: the wire
 # request becomes the typed domain request, the guest's binary frames become the guest audio stream, the domain's
-# answer becomes the browser's wire messages, a browser that hangs up ends the call quietly, and a frame that cannot
-# be sent fails onward to the middleware untouched.
+# answer becomes the browser's wire messages, a browser that hangs up ends the call quietly, and a domain failure or a
+# frame that cannot be sent fails onward to the middleware untouched.
 
 import json
 from typing import Final
@@ -24,16 +24,21 @@ from voice_agent_conversation import (
     ConversationStarted,
     GuestStartedSpeaking,
     PresentedGender,
+    RealtimeVoiceProviderUnavailableException,
     SpeechProvider,
     VoiceOption,
 )
+from voice_agent_conversation.managers.exceptions.realtime_voice_exceptions import LogEventRealtimeVoice
 
 CEDAR_VOICE_OPTION: Final[VoiceOption] = VoiceOption("openai-cedar", SpeechProvider.OPENAI, "cedar", PresentedGender.MALE, "Calm and grounded.")
 CORAL_VOICE_OPTION: Final[VoiceOption] = VoiceOption("openai-coral", SpeechProvider.OPENAI, "coral", PresentedGender.FEMALE, "Bright and friendly.")
-AUDIO_FORMAT: Final[ConversationAudioFormat] = ConversationAudioFormat(guest_audio_sample_rate_hz=16_000, agent_audio_sample_rate_hz=24_000)
+CONVERSATION_AUDIO_FORMAT: Final[ConversationAudioFormat] = ConversationAudioFormat(
+    guest_audio_sample_rate_hz=16_000, agent_audio_sample_rate_hz=24_000
+)
 AGENT_SPEECH: Final[bytes] = b"agent speech pcm"
 NORMAL_CLOSURE_CODE: Final[int] = 1000
 GOING_AWAY_CLOSE_CODE: Final[int] = 1001
+ABNORMAL_CLOSURE_CODE: Final[int] = 1006
 
 
 def create_voices_request() -> Request:
@@ -93,7 +98,7 @@ class TestConversationHandlerHoldConversation:
 
     async def test_HoldConversation_WhenTheDomainYieldsEveryKindOfEvent_ThenTheBrowserGetsEachAsItsWireFrameInOrderAndThenTheClose(self) -> None:
         scripted_conversation_events: list[ConversationEvent] = [
-            ConversationStarted(audio_format=AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+            ConversationStarted(audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
             AgentSpeechChunk(pcm_audio=AGENT_SPEECH),
             GuestStartedSpeaking(),
             AgentTurnFinished(),
@@ -125,7 +130,7 @@ class TestConversationHandlerHoldConversation:
 
     async def test_HoldConversation_WhenTheBrowserHangsUpBeforeTheFirstFrame_ThenNothingMoreIsSentAndTheCallEndsWithoutAFailure(self) -> None:
         scripted_conversation_events: list[ConversationEvent] = [
-            ConversationStarted(audio_format=AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+            ConversationStarted(audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
             AgentSpeechChunk(pcm_audio=AGENT_SPEECH),
             AgentTurnFinished(),
         ]
@@ -144,15 +149,40 @@ class TestConversationHandlerHoldConversation:
 
     async def test_HoldConversation_WhenAFrameCannotBeSent_ThenTheFailurePassesUntouchedToTheMiddleware(self) -> None:
         # The connection is gone but no disconnect has been read, so the handler still believes the browser is there.
-        scripted_conversation_events: list[ConversationEvent] = [ConversationStarted(audio_format=AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION)]
+        scripted_conversation_events: list[ConversationEvent] = [
+            ConversationStarted(audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION)
+        ]
         scripted_browser: ScriptedBrowser = ScriptedBrowser(query_string=b"voice=openai-cedar", connection_is_lost=True)
         conversation_handler_for_test: ConversationHandlerForTest = ConversationHandlerForTest(
             scripted_conversation_events=scripted_conversation_events
         )
         expected_refused_message_types: list[str] = ["websocket.send"]
+        expected_close_code: int = ABNORMAL_CLOSURE_CODE
 
-        with pytest.raises(WebSocketDisconnect):
+        with pytest.raises(WebSocketDisconnect) as raised:
             await conversation_handler_for_test.hold_conversation(scripted_browser.create_websocket())
 
         actual_refused_message_types: list[str] = [refused_message["type"] for refused_message in scripted_browser.refused_messages]
-        assert actual_refused_message_types == expected_refused_message_types
+        assert (actual_refused_message_types, raised.value.code) == (expected_refused_message_types, expected_close_code)
+
+    async def test_HoldConversation_WhenTheDomainFailsMidCall_ThenThatSameFailurePassesUntouchedToTheMiddleware(self) -> None:
+        scripted_conversation_failure: RealtimeVoiceProviderUnavailableException = RealtimeVoiceProviderUnavailableException(
+            "The provider dropped the session mid-call.", LogEventRealtimeVoice.EVENT_RECEIPT, {"RealtimeVoice.Operation": "receiving events"}
+        )
+        scripted_browser: ScriptedBrowser = ScriptedBrowser(query_string=b"voice=openai-cedar")
+        conversation_handler_for_test: ConversationHandlerForTest = ConversationHandlerForTest(
+            scripted_conversation_events=[ConversationStarted(audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION)],
+            scripted_conversation_failure=scripted_conversation_failure,
+        )
+        expected_contextual_data_by_name: dict[str, str | int | float | bool] = dict(scripted_conversation_failure.contextual_data_by_name)
+        expected_delivered_message_types: list[str] = ["websocket.accept", "websocket.send"]
+
+        with pytest.raises(RealtimeVoiceProviderUnavailableException) as raised:
+            await conversation_handler_for_test.hold_conversation(scripted_browser.create_websocket())
+
+        actual_delivered_message_types: list[str] = [delivered_message["type"] for delivered_message in scripted_browser.delivered_messages]
+        assert (raised.value is scripted_conversation_failure, raised.value.contextual_data_by_name, actual_delivered_message_types) == (
+            True,
+            expected_contextual_data_by_name,
+            expected_delivered_message_types,
+        )

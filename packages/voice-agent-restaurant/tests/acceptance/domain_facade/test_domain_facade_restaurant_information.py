@@ -4,14 +4,14 @@
 
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Final
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from acceptance_support.asserters.asserter_exception import AsserterException, ExpectedExceptionMetadata
 from acceptance_support.asserters.asserter_restaurant_profile import AsserterRestaurantProfile
-from acceptance_support.bundled_seed import RESTAURANT_SEED_FILE_NAME, read_bundled_seed_file
+from acceptance_support.bundled_seed import SeededRestaurant, SeededWeekdayHours, read_seeded_restaurant
 from acceptance_support.generated_guests import GeneratedGuest, create_generated_guest
 from acceptance_support.service_locator_testing import (
     DATABASE_PATH_VARIABLE_NAME,
@@ -37,6 +37,8 @@ from voice_agent_restaurant import (
     WeekdayHours,
 )
 
+ENVIRONMENT_VARIABLE_NAME_CONTEXT_NAME: Final[str] = "Configuration.EnvironmentVariableName"
+
 
 @pytest.fixture
 def foreign_file_database_path(restaurant_database_path: Path) -> Path:
@@ -45,13 +47,11 @@ def foreign_file_database_path(restaurant_database_path: Path) -> Path:
     return restaurant_database_path
 
 
-def to_weekday_hours(seeded_hours_object: dict[str, Any]) -> WeekdayHours:
-    weekday: Weekday = Weekday(seeded_hours_object["weekday"])
-    if seeded_hours_object["opens_at"] is None:
+def to_weekday_hours(seeded_weekday_hours: SeededWeekdayHours) -> WeekdayHours:
+    weekday: Weekday = Weekday(seeded_weekday_hours.weekday)
+    if seeded_weekday_hours.opens_at is None or seeded_weekday_hours.closes_at is None:
         return ClosedWeekday(weekday=weekday)
-    return OpenWeekday(
-        weekday=weekday, opens_at=time.fromisoformat(seeded_hours_object["opens_at"]), closes_at=time.fromisoformat(seeded_hours_object["closes_at"])
-    )
+    return OpenWeekday(weekday=weekday, opens_at=seeded_weekday_hours.opens_at, closes_at=seeded_weekday_hours.closes_at)
 
 
 def create_configuration_refusal_metadata() -> ExpectedExceptionMetadata:
@@ -67,17 +67,17 @@ class TestRestaurantInformation:
     async def test_GetRestaurantProfile_WhenTheStoreIsNew_ThenTheSeededProfileAndBookingPolicyAreReturned(
         self, restaurant_database_path: Path
     ) -> None:
-        restaurant_seed_object: dict[str, Any] = read_bundled_seed_file(RESTAURANT_SEED_FILE_NAME)
+        seeded_restaurant: SeededRestaurant = read_seeded_restaurant()
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
             actual_restaurant_profile: RestaurantProfile = await domain_facade.get_restaurant_profile()
 
         AsserterRestaurantProfile.assert_seeded_profile_obligations_hold(
-            expected_restaurant_name=restaurant_seed_object["name"],
-            expected_time_zone=restaurant_seed_object["time_zone"],
-            expected_seating_duration_minutes=restaurant_seed_object["reservation_policy"]["seating_duration_minutes"],
-            expected_maximum_party_size=restaurant_seed_object["reservation_policy"]["maximum_party_size"],
-            expected_house_notes=restaurant_seed_object["house_notes"],
+            expected_restaurant_name=seeded_restaurant.name,
+            expected_time_zone=seeded_restaurant.time_zone,
+            expected_seating_duration_minutes=seeded_restaurant.reservation_policy.seating_duration_minutes,
+            expected_maximum_party_size=seeded_restaurant.reservation_policy.maximum_party_size,
+            expected_house_notes=seeded_restaurant.house_notes,
             actual_restaurant_profile=actual_restaurant_profile,
         )
 
@@ -94,23 +94,22 @@ class TestRestaurantInformation:
     async def test_GetOpeningHours_WhenAsked_ThenEveryWeekdayIsListedAndOnlyTheClosuresInsideTheBookingWindow(
         self, restaurant_database_path: Path
     ) -> None:
-        restaurant_seed_object: dict[str, Any] = read_bundled_seed_file(RESTAURANT_SEED_FILE_NAME)
-        restaurant_today: date = WEDNESDAY_AFTERNOON_UTC.astimezone(ZoneInfo(restaurant_seed_object["time_zone"])).date()
-        last_bookable_date: date = restaurant_today + timedelta(days=restaurant_seed_object["reservation_policy"]["booking_window_days"])
+        seeded_restaurant: SeededRestaurant = read_seeded_restaurant()
+        restaurant_today: date = WEDNESDAY_AFTERNOON_UTC.astimezone(ZoneInfo(seeded_restaurant.time_zone)).date()
+        last_bookable_date: date = restaurant_today + timedelta(days=seeded_restaurant.reservation_policy.booking_window_days)
         seeded_closures: list[Closure] = [
-            Closure(closed_on=date.fromisoformat(closure_object["closed_on"]), reason=closure_object["reason"])
-            for closure_object in restaurant_seed_object["closures"]
+            Closure(closed_on=seeded_closure.closed_on, reason=seeded_closure.reason) for seeded_closure in seeded_restaurant.closures
         ]
         expected_opening_hours: OpeningHours = OpeningHours(
             weekly_hours=sorted(
-                (to_weekday_hours(hours_object) for hours_object in restaurant_seed_object["weekly_hours"]),
+                (to_weekday_hours(seeded_weekday_hours) for seeded_weekday_hours in seeded_restaurant.weekly_hours),
                 key=lambda weekday_hours: list(Weekday).index(weekday_hours.weekday),
             ),
             upcoming_closures=sorted(
                 (seeded_closure for seeded_closure in seeded_closures if restaurant_today <= seeded_closure.closed_on <= last_bookable_date),
                 key=lambda upcoming_closure: upcoming_closure.closed_on,
             ),
-            last_seating_minutes_before_close=restaurant_seed_object["reservation_policy"]["seating_duration_minutes"],
+            last_seating_minutes_before_close=seeded_restaurant.reservation_policy.seating_duration_minutes,
         )
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
@@ -143,13 +142,17 @@ class TestRestaurantInformation:
     async def test_GetRestaurantProfile_WhenTheStoreFileIsNotASqliteDatabase_ThenTheFailureIsReportedAsPermanent(
         self, foreign_file_database_path: Path
     ) -> None:
-        expected_message_phrases: list[str] = ["read the restaurant profile", "retrying will not help"]
+        store_operation: str = "read the restaurant profile"
+        expected_message_phrases: list[str] = [store_operation, "retrying will not help"]
         expected_exception_metadata: ExpectedExceptionMetadata = ExpectedExceptionMetadata(
             http_status_code=500,
             exception_action=ExceptionAction.DEVELOPER_ACTION_REQUIRED,
             reason="The restaurant store breaks a contract the domain relies on",
             severity=Severity.ERROR,
         )
+        expected_contextual_data_by_name: dict[str, str] = {"RestaurantStore.Operation": store_operation}
+        # The driver's error type and text are its own; that they are recorded is what the diagnosis needs.
+        expected_present_contextual_data_names: list[str] = ["RestaurantStore.ErrorType", "RestaurantStore.Error"]
 
         async with create_domain_facade(foreign_file_database_path) as domain_facade:
             with pytest.raises(RestaurantStoreContractViolationException) as raised:
@@ -158,12 +161,18 @@ class TestRestaurantInformation:
         AsserterException.assert_message_and_metadata_are_as_expected(
             expected_message_phrases=expected_message_phrases,
             expected_exception_metadata=expected_exception_metadata,
+            expected_contextual_data_by_name=expected_contextual_data_by_name,
             actual_voice_agent_restaurant_exception=raised.value,
+            expected_present_contextual_data_names=expected_present_contextual_data_names,
         )
 
     def test_DomainFacade_WhenTheDatabasePathSettingIsMissing_ThenConstructionFailsNamingTheSetting(self) -> None:
         expected_message_phrases: list[str] = [DATABASE_PATH_VARIABLE_NAME, "empty or whitespace"]
         expected_exception_metadata: ExpectedExceptionMetadata = create_configuration_refusal_metadata()
+        expected_contextual_data_by_name: dict[str, str | bool] = {
+            ENVIRONMENT_VARIABLE_NAME_CONTEXT_NAME: DATABASE_PATH_VARIABLE_NAME,
+            "Configuration.SettingWasMissing": False,
+        }
 
         with pytest.raises(ConfigurationSettingException) as raised:
             DomainFacade(ServiceLocatorTesting({DATABASE_PATH_VARIABLE_NAME: "   "}, WEDNESDAY_AFTERNOON_UTC))
@@ -171,6 +180,7 @@ class TestRestaurantInformation:
         AsserterException.assert_message_and_metadata_are_as_expected(
             expected_message_phrases=expected_message_phrases,
             expected_exception_metadata=expected_exception_metadata,
+            expected_contextual_data_by_name=expected_contextual_data_by_name,
             actual_voice_agent_restaurant_exception=raised.value,
         )
 
@@ -178,6 +188,7 @@ class TestRestaurantInformation:
         unusable_database_path: str = "data/restaurant" + chr(0) + ".sqlite3"
         expected_message_phrases: list[str] = [DATABASE_PATH_VARIABLE_NAME, "NUL character"]
         expected_exception_metadata: ExpectedExceptionMetadata = create_configuration_refusal_metadata()
+        expected_contextual_data_by_name: dict[str, str] = {ENVIRONMENT_VARIABLE_NAME_CONTEXT_NAME: DATABASE_PATH_VARIABLE_NAME}
 
         with pytest.raises(ConfigurationSettingException) as raised:
             DomainFacade(ServiceLocatorTesting({DATABASE_PATH_VARIABLE_NAME: unusable_database_path}, WEDNESDAY_AFTERNOON_UTC))
@@ -185,5 +196,6 @@ class TestRestaurantInformation:
         AsserterException.assert_message_and_metadata_are_as_expected(
             expected_message_phrases=expected_message_phrases,
             expected_exception_metadata=expected_exception_metadata,
+            expected_contextual_data_by_name=expected_contextual_data_by_name,
             actual_voice_agent_restaurant_exception=raised.value,
         )

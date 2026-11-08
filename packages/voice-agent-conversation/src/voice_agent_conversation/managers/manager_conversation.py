@@ -95,8 +95,17 @@ class ManagerConversation:
             # re-raises a forwarding failure. Before that it would wait for guest audio forever, so it is cancelled.
             if not guest_audio_ended.is_set():
                 guest_audio_forwarding.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await guest_audio_forwarding
+            except asyncio.CancelledError:
+                # Only the cancellation the relay requested ends here; one aimed at the task holding the call goes on.
+                if ManagerConversation._is_current_task_being_cancelled():
+                    raise
+
+    @staticmethod
+    def _is_current_task_being_cancelled() -> bool:
+        current_task: asyncio.Task[object] | None = asyncio.current_task()
+        return current_task is not None and current_task.cancelling() > 0
 
     @staticmethod
     async def _forward_guest_audio(

@@ -55,7 +55,7 @@ class ManagerRestaurant:
             return matching_dishes[0]
         raise DishNotFoundException(
             dish_name=dish_name,
-            close_match_names=DishNameMatching.get_suggested_names(dishes, matching_dishes, dish_name),
+            close_match_names=DishNameMatching.find_suggested_names(dishes, matching_dishes, dish_name),
             contextual_data_by_name={"Menu.RequestedDishName": dish_name, "Menu.MatchingDishCount": len(matching_dishes)},
         )
 

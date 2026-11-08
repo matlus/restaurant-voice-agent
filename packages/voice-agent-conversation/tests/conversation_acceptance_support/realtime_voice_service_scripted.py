@@ -222,7 +222,7 @@ class RealtimeVoiceServiceScripted:
                 self._hold_realtime_session,
                 SERVICE_HOST,
                 0,
-                process_request=self._process_handshake,
+                process_request=self._answer_handshake,
                 close_timeout=CONNECTION_CLOSE_TIMEOUT_SECONDS,
             ) as server:
                 self._port = next(iter(server.sockets)).getsockname()[1]
@@ -231,7 +231,7 @@ class RealtimeVoiceServiceScripted:
         finally:
             self._is_ready.set()
 
-    def _process_handshake(self, server_connection: ServerConnection, request: Request) -> Response | None:
+    def _answer_handshake(self, server_connection: ServerConnection, request: Request) -> Response | None:
         self.captured_handshake_count += 1
         if self._handshake_refusal_status is None:
             return None
