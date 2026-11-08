@@ -14,8 +14,6 @@ MENU_SEED_FILE_NAME: Final[str] = "menu.json"
 
 @dataclass(frozen=True)
 class SeededOpenWeekday:
-    """A seeded weekday on which the restaurant opens, with the hours it keeps."""
-
     weekday: str
     opens_at: time
     closes_at: time
@@ -23,8 +21,6 @@ class SeededOpenWeekday:
 
 @dataclass(frozen=True)
 class SeededClosedWeekday:
-    """A seeded weekday on which the restaurant does not open at all."""
-
     weekday: str
 
 
@@ -81,7 +77,10 @@ def read_seeded_restaurant() -> SeededRestaurant:
         name=restaurant_seed_object["name"],
         time_zone=restaurant_seed_object["time_zone"],
         house_notes=list(restaurant_seed_object["house_notes"]),
-        weekly_hours=[_to_seeded_weekday_hours(hours_object) for hours_object in restaurant_seed_object["weekly_hours"]],
+        weekly_hours=[
+            _to_seeded_weekday_hours(hours_object["weekday"], hours_object["opens_at"], hours_object["closes_at"])
+            for hours_object in restaurant_seed_object["weekly_hours"]
+        ],
         closures=[
             SeededClosure(closed_on=date.fromisoformat(closure_object["closed_on"]), reason=closure_object["reason"])
             for closure_object in restaurant_seed_object["closures"]
@@ -118,15 +117,11 @@ def read_seeded_dishes() -> list[SeededDish]:
     ]
 
 
-def _to_seeded_weekday_hours(hours_object: dict[str, Any]) -> SeededWeekdayHours:
+def _to_seeded_weekday_hours(weekday: str, opens_at: str | None, closes_at: str | None) -> SeededWeekdayHours:
     # The seed gives a closed day as null hours; the reader refuses a day with only one of the two.
-    if hours_object["opens_at"] is None:
-        return SeededClosedWeekday(weekday=hours_object["weekday"])
-    return SeededOpenWeekday(
-        weekday=hours_object["weekday"],
-        opens_at=time.fromisoformat(hours_object["opens_at"]),
-        closes_at=time.fromisoformat(hours_object["closes_at"]),
-    )
+    if opens_at is None or closes_at is None:
+        return SeededClosedWeekday(weekday=weekday)
+    return SeededOpenWeekday(weekday=weekday, opens_at=time.fromisoformat(opens_at), closes_at=time.fromisoformat(closes_at))
 
 
 def _read_bundled_seed_text(seed_file_name: str) -> str:

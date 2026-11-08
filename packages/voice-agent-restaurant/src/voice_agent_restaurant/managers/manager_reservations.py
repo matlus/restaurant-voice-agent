@@ -130,11 +130,10 @@ class ManagerReservations:
         current_reservation: Reservation = await self._retrieve_changeable_reservation(
             validated_reservation_change.reservation_identity, booking_context.booking_window.restaurant_now
         )
-        changed_requested_seating: RequestedSeating = SeatingRules.apply_seating_change(
-            self._to_current_seating(current_reservation), validated_reservation_change.seating_change
-        )
-        ValidatorReservationRequests.validate_requested_seating(
-            changed_requested_seating, booking_context.reservation_policy, booking_context.booking_window
+        current_seating: RequestedSeating = self._to_current_seating(current_reservation)
+        changed_requested_seating: RequestedSeating = SeatingRules.apply_seating_change(current_seating, validated_reservation_change.seating_change)
+        ValidatorReservationRequests.validate_changed_seating(
+            current_seating, changed_requested_seating, booking_context.reservation_policy, booking_context.booking_window
         )
         seating_plan: _SeatingPlan = await self._plan_seating(changed_requested_seating, booking_context)
         reservation_reschedule: ReservationReschedule = self._to_reservation_reschedule(

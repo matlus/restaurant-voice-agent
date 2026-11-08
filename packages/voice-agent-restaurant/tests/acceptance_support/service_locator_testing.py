@@ -10,6 +10,8 @@ DATABASE_PATH_VARIABLE_NAME: Final[str] = "VOICE_AGENT_RESTAURANT_DATABASE_PATH"
 # Wednesday 2026-11-04 at 15:00 in Riverton (America/Chicago, UTC-6 after daylight saving ends).
 # The seed places its bookings on the next Friday, Saturday and Sunday: 2026-11-06, 07 and 08.
 WEDNESDAY_AFTERNOON_UTC: Final[datetime] = datetime(2026, 11, 4, 21, 0, tzinfo=UTC)
+# Friday 2026-11-06 at 18:45 in Riverton, a quarter of an hour before the busiest seating.
+FRIDAY_BEFORE_SEATING_UTC: Final[datetime] = datetime(2026, 11, 7, 0, 45, tzinfo=UTC)
 # Friday 2026-11-06 at 19:10 in Riverton, ten minutes into the busiest seating.
 FRIDAY_EVENING_UTC: Final[datetime] = datetime(2026, 11, 7, 1, 10, tzinfo=UTC)
 

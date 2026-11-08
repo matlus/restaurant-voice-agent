@@ -111,8 +111,8 @@ class TestConversation:
         async with (
             RealtimeVoiceServiceScripted() as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
-            aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_audio())) as conversation,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_audio())) as conversation,
         ):
             actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(conversation, GUEST_AUDIO_CHUNKS)
 
@@ -138,8 +138,8 @@ class TestConversation:
         async with (
             RealtimeVoiceServiceScripted() as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
-            aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_audio())) as conversation,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_audio())) as conversation,
         ):
             await guest_microphone.take_part(conversation, [])
 
@@ -162,8 +162,8 @@ class TestConversation:
         async with (
             RealtimeVoiceServiceScripted(events_after_each_guest_audio=[create_speech_started_event()]) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
-            aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_audio())) as conversation,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_audio())) as conversation,
         ):
             actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
                 conversation, GUEST_AUDIO_CHUNKS[:1], hang_up_after_event_count=len(expected_conversation_events)
@@ -183,8 +183,8 @@ class TestConversation:
         async with (
             RealtimeVoiceServiceScripted() as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
-            aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_audio())) as conversation,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_audio())) as conversation,
         ):
             actual_conversation_started: ConversationEvent = await anext(conversation)
 
@@ -277,8 +277,8 @@ class TestConversation:
         async with (
             RealtimeVoiceServiceScripted() as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
-            aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_audio())) as conversation,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_audio())) as conversation,
         ):
             await anext(conversation)
 

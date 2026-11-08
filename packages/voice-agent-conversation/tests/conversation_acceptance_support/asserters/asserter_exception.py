@@ -161,14 +161,14 @@ class AsserterException:
     ) -> list[str]:
         mismatch_messages: list[str] = []
         expected_absent_phrase: str
+        contextual_data_name: str
+        contextual_data_value: ContextualDataValue
         for expected_absent_phrase in expected_absent_phrases:
             if expected_absent_phrase in actual_voice_agent_conversation_exception.message:
                 mismatch_messages.append(f"Message discloses {expected_absent_phrase!r}, which must be absent.")
-            mismatch_messages.extend(
-                f"Context {contextual_data_name!r} discloses {expected_absent_phrase!r}, which must be absent."
-                for contextual_data_name, contextual_data_value in actual_voice_agent_conversation_exception.contextual_data_by_name.items()
-                if expected_absent_phrase in str(contextual_data_value)
-            )
+            for contextual_data_name, contextual_data_value in actual_voice_agent_conversation_exception.contextual_data_by_name.items():
+                if expected_absent_phrase in str(contextual_data_value):
+                    mismatch_messages.append(f"Context {contextual_data_name!r} discloses {expected_absent_phrase!r}, which must be absent.")
         return mismatch_messages
 
     @staticmethod

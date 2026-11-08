@@ -3,13 +3,15 @@
 
 import json
 from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta
 from importlib import resources
 from pathlib import Path
 from typing import Any, Final
 
 import pytest
 
-from voice_agent_restaurant import ExceptionAction, RestaurantSeedDataInvalidException, Severity
+from voice_agent_restaurant import ExceptionAction, LogEventRestaurantStore, RestaurantSeedDataInvalidException, Severity
 from voice_agent_restaurant.managers.data_managers.store.initialization.seed_data.seed_data_reader import RestaurantSeed, SeedDataReader
 from voice_agent_restaurant.managers.data_managers.store.initialization.seed_data.seed_values.seed_file import SeedFile
 
@@ -61,6 +63,7 @@ def assert_seed_refusal_is_as_expected(
         ("HTTP status", SEED_DATA_INVALID_HTTP_STATUS_CODE, actual_restaurant_seed_data_invalid_exception.http_status_code),
         ("Reason", SEED_DATA_INVALID_REASON, actual_restaurant_seed_data_invalid_exception.reason),
         ("Severity", Severity.ERROR, actual_restaurant_seed_data_invalid_exception.severity),
+        ("Log event", LogEventRestaurantStore.RESTAURANT_STORE_INITIALIZATION, actual_restaurant_seed_data_invalid_exception.log_event),
     ]
     mismatch_messages: list[str] = []
     obligation_name: str
@@ -91,8 +94,11 @@ def set_a_slot_interval_that_does_not_divide_an_hour(restaurant_object: dict[str
     restaurant_object["reservation_policy"]["slot_interval_minutes"] = 25
 
 
-def open_friday_off_the_slot_grid(restaurant_object: dict[str, Any]) -> None:
-    restaurant_object["weekly_hours"][4]["opens_at"] = "17:10"
+def create_friday_opening_change(friday_opens_at: str) -> SeedChange:
+    def open_friday_at(restaurant_object: dict[str, Any]) -> None:
+        restaurant_object["weekly_hours"][4]["opens_at"] = friday_opens_at
+
+    return open_friday_at
 
 
 def cap_parties_below_the_minimum(restaurant_object: dict[str, Any]) -> None:
@@ -112,8 +118,11 @@ def seat_two_bookings_at_one_table(reservations_object: dict[str, Any]) -> None:
     reservations_object["reservations"][1]["table_id"] = reservations_object["reservations"][0]["table_id"]
 
 
-def seat_a_booking_off_the_slot_grid(reservations_object: dict[str, Any]) -> None:
-    reservations_object["reservations"][0]["starts_at"] = "19:10"
+def create_first_booking_start_change(booking_starts_at: str) -> SeedChange:
+    def start_the_first_booking_at(reservations_object: dict[str, Any]) -> None:
+        reservations_object["reservations"][0]["starts_at"] = booking_starts_at
+
+    return start_the_first_booking_at
 
 
 def create_party_size_change(seeded_party_size: int) -> SeedChange:
@@ -123,8 +132,46 @@ def create_party_size_change(seeded_party_size: int) -> SeedChange:
     return give_the_first_booking_the_party_size
 
 
-def read_seed_file_object(seed_directory: Path, file_name: str) -> dict[str, Any]:
-    return json.loads((seed_directory / file_name).read_text(encoding="utf-8"))
+@dataclass(frozen=True)
+class SeededBookingPlacement:
+    confirmation_code: str
+    table_id: str
+    starts_at: str
+
+
+@dataclass(frozen=True)
+class SeededPolicyLimits:
+    slot_interval_minutes: int
+    seating_duration_minutes: int
+    maximum_party_size: int
+
+
+def read_seeded_booking_placements(seed_directory: Path) -> list[SeededBookingPlacement]:
+    reservations_object: dict[str, Any] = json.loads((seed_directory / SeedDataReader.RESERVATIONS_FILE_NAME).read_text(encoding="utf-8"))
+    return [
+        SeededBookingPlacement(
+            confirmation_code=reservation_object["confirmation_code"],
+            table_id=reservation_object["table_id"],
+            starts_at=reservation_object["starts_at"],
+        )
+        for reservation_object in reservations_object["reservations"]
+    ]
+
+
+def read_seeded_policy_limits(seed_directory: Path) -> SeededPolicyLimits:
+    restaurant_object: dict[str, Any] = json.loads((seed_directory / SeedDataReader.RESTAURANT_FILE_NAME).read_text(encoding="utf-8"))
+    reservation_policy_object: dict[str, Any] = restaurant_object["reservation_policy"]
+    return SeededPolicyLimits(
+        slot_interval_minutes=reservation_policy_object["slot_interval_minutes"],
+        seating_duration_minutes=reservation_policy_object["seating_duration_minutes"],
+        maximum_party_size=reservation_policy_object["maximum_party_size"],
+    )
+
+
+def to_off_grid_time(on_grid_time: str, slot_interval_minutes: int) -> str:
+    # Half an interval past a bookable time falls between two bookable times.
+    off_grid_moment: datetime = datetime.combine(date.min, time.fromisoformat(on_grid_time)) + timedelta(minutes=slot_interval_minutes // 2)
+    return f"{off_grid_moment:%H:%M}"
 
 
 def create_confirmation_code_change(seeded_confirmation_code: str) -> SeedChange:
@@ -144,18 +191,19 @@ def create_phone_number_change(seeded_phone_number: str) -> SeedChange:
 class TestSeedDataReaderBundledSeed:
     def test_ReadRestaurantSeed_WhenTheBundledSeedIsCopied_ThenEveryBookingIsRead(self, tmp_path: Path) -> None:
         seed_directory: Path = copy_bundled_seed(tmp_path / "seed_data")
-        expected_seed_bookings: list[tuple[str, str, str]] = [
-            (reservation_object["confirmation_code"], reservation_object["table_id"], reservation_object["starts_at"])
-            for reservation_object in read_seed_file_object(seed_directory, SeedDataReader.RESERVATIONS_FILE_NAME)["reservations"]
-        ]
+        expected_seeded_booking_placements: list[SeededBookingPlacement] = read_seeded_booking_placements(seed_directory)
 
         actual_restaurant_seed: RestaurantSeed = SeedDataReader.read_restaurant_seed(seed_directory)
 
-        actual_seed_bookings: list[tuple[str, str, str]] = [
-            (seed_reservation.confirmation_code, seed_reservation.table_id, f"{seed_reservation.starts_at:%H:%M}")
+        actual_seeded_booking_placements: list[SeededBookingPlacement] = [
+            SeededBookingPlacement(
+                confirmation_code=seed_reservation.confirmation_code,
+                table_id=seed_reservation.table_id,
+                starts_at=f"{seed_reservation.starts_at:%H:%M}",
+            )
             for seed_reservation in actual_restaurant_seed.seed_reservations
         ]
-        assert actual_seed_bookings == expected_seed_bookings
+        assert actual_seeded_booking_placements == expected_seeded_booking_placements
 
     def test_ReadRestaurantSeed_WhenASeedFileIsMissing_ThenTheRefusalNamesTheFile(self, tmp_path: Path) -> None:
         seed_directory: Path = copy_bundled_seed(tmp_path / "seed_data")
@@ -212,10 +260,13 @@ class TestSeedDataReaderOpeningHours:
         )
 
     def test_ReadRestaurantSeed_WhenADayOpensOffTheSlotGrid_ThenTheRefusalNamesTheOpeningTime(self, tmp_path: Path) -> None:
-        seed_directory: Path = create_broken_seed(tmp_path, SeedDataReader.RESTAURANT_FILE_NAME, open_friday_off_the_slot_grid)
+        seed_directory: Path = copy_bundled_seed(tmp_path / "seed_data")
+        seeded_policy_limits: SeededPolicyLimits = read_seeded_policy_limits(seed_directory)
+        off_grid_opening_time: str = to_off_grid_time("17:00", seeded_policy_limits.slot_interval_minutes)
+        change_seed_file(seed_directory, SeedDataReader.RESTAURANT_FILE_NAME, create_friday_opening_change(off_grid_opening_time))
         expected_file_name: str = SeedDataReader.RESTAURANT_FILE_NAME
         expected_value_path: str = "$.weekly_hours[4].opens_at"
-        expected_message_phrase: str = "must fall on the 15-minute slot grid"
+        expected_message_phrase: str = f"'{off_grid_opening_time}' must fall on the {seeded_policy_limits.slot_interval_minutes}-minute slot grid"
 
         with pytest.raises(RestaurantSeedDataInvalidException) as raised:
             SeedDataReader.read_restaurant_seed(seed_directory)
@@ -299,9 +350,10 @@ class TestSeedDataReaderTables:
 class TestSeedDataReaderReservations:
     def test_ReadRestaurantSeed_WhenABookingCannotFinishBeforeClosing_ThenTheRefusalNamesItsStart(self, tmp_path: Path) -> None:
         seed_directory: Path = create_broken_seed(tmp_path, SeedDataReader.RESERVATIONS_FILE_NAME, seat_a_booking_too_late_to_finish)
+        seeded_policy_limits: SeededPolicyLimits = read_seeded_policy_limits(seed_directory)
         expected_file_name: str = SeedDataReader.RESERVATIONS_FILE_NAME
         expected_value_path: str = "$.reservations[0].starts_at"
-        expected_message_phrase: str = "leaves no full 90-minute"
+        expected_message_phrase: str = f"leaves no full {seeded_policy_limits.seating_duration_minutes}-minute"
 
         with pytest.raises(RestaurantSeedDataInvalidException) as raised:
             SeedDataReader.read_restaurant_seed(seed_directory)
@@ -330,10 +382,13 @@ class TestSeedDataReaderReservations:
         )
 
     def test_ReadRestaurantSeed_WhenABookingStartsOffTheSlotGrid_ThenTheRefusalNamesItsStart(self, tmp_path: Path) -> None:
-        seed_directory: Path = create_broken_seed(tmp_path, SeedDataReader.RESERVATIONS_FILE_NAME, seat_a_booking_off_the_slot_grid)
+        seed_directory: Path = copy_bundled_seed(tmp_path / "seed_data")
+        seeded_policy_limits: SeededPolicyLimits = read_seeded_policy_limits(seed_directory)
+        off_grid_starts_at: str = to_off_grid_time("19:00", seeded_policy_limits.slot_interval_minutes)
+        change_seed_file(seed_directory, SeedDataReader.RESERVATIONS_FILE_NAME, create_first_booking_start_change(off_grid_starts_at))
         expected_file_name: str = SeedDataReader.RESERVATIONS_FILE_NAME
         expected_value_path: str = "$.reservations[0].starts_at"
-        expected_message_phrase: str = "'19:10' must fall on the 15-minute slot grid"
+        expected_message_phrase: str = f"'{off_grid_starts_at}' must fall on the {seeded_policy_limits.slot_interval_minutes}-minute slot grid"
 
         with pytest.raises(RestaurantSeedDataInvalidException) as raised:
             SeedDataReader.read_restaurant_seed(seed_directory)
@@ -347,10 +402,7 @@ class TestSeedDataReaderReservations:
 
     def test_ReadRestaurantSeed_WhenABookingIsForALargerPartyThanThePolicyAllows_ThenTheRefusalNamesItsPartySize(self, tmp_path: Path) -> None:
         seed_directory: Path = copy_bundled_seed(tmp_path / "seed_data")
-        maximum_party_size: int = read_seed_file_object(seed_directory, SeedDataReader.RESTAURANT_FILE_NAME)["reservation_policy"][
-            "maximum_party_size"
-        ]
-        oversized_party_size: int = maximum_party_size + 1
+        oversized_party_size: int = read_seeded_policy_limits(seed_directory).maximum_party_size + 1
         change_seed_file(seed_directory, SeedDataReader.RESERVATIONS_FILE_NAME, create_party_size_change(oversized_party_size))
         expected_file_name: str = SeedDataReader.RESERVATIONS_FILE_NAME
         expected_value_path: str = "$.reservations[0].party_size"

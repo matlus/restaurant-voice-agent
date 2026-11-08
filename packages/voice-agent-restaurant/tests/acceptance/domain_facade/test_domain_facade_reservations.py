@@ -6,7 +6,7 @@
 # alone, read it first and derive their expectations from what they read; the open times a refusal must offer are worked
 # out from the restaurant's own availability answers for every other bookable time that day.
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Final
@@ -17,7 +17,7 @@ from acceptance_support.asserters.asserter_exception import AsserterException, E
 from acceptance_support.asserters.asserter_reservation import AsserterReservation, ExpectedNewReservation
 from acceptance_support.bundled_seed import SeededOpenWeekday, SeededRestaurant, SeededTable, read_seeded_restaurant, read_seeded_tables
 from acceptance_support.generated_guests import GeneratedGuest, create_generated_guest, create_generated_note
-from acceptance_support.service_locator_testing import FRIDAY_EVENING_UTC, create_domain_facade
+from acceptance_support.service_locator_testing import FRIDAY_BEFORE_SEATING_UTC, FRIDAY_EVENING_UTC, create_domain_facade
 from voice_agent_restaurant import (
     AvailabilityRequest,
     AvailabilityResult,
@@ -33,6 +33,7 @@ from voice_agent_restaurant import (
     ReservationCancellationRequest,
     ReservationChangeRequest,
     ReservationNotFoundException,
+    ReservationPolicy,
     ReservationRequest,
     ReservationRequestValidationException,
     ReservationSearchRequest,
@@ -104,10 +105,62 @@ def create_validation_refusal_metadata() -> ExpectedExceptionMetadata:
     )
 
 
+@dataclass(frozen=True)
+class BookingWindowBreach:
+    requested_start: datetime
+    expected_problem_phrase: str
+
+
 async def read_seeded_booking(domain_facade: DomainFacade, phone_number: str) -> Reservation:
     found_reservations: list[Reservation] = await domain_facade.find_reservations(ReservationSearchRequest(phone_number=phone_number))
     assert len(found_reservations) == 1, f"The seed must hold exactly one upcoming booking for {phone_number}; found {found_reservations!r}"
     return found_reservations[0]
+
+
+async def read_unstarted_seeded_booking(domain_facade: DomainFacade, phone_number: str, scenario: str) -> Reservation:
+    """The seeded booking for the phone number, guarded to start after the restaurant's local now, because a booking
+    that has started can no longer be changed or cancelled."""
+    seeded_reservation: Reservation = await read_seeded_booking(domain_facade, phone_number)
+    restaurant_local_now: datetime = await domain_facade.get_restaurant_local_now()
+    seeded_start: datetime = datetime.combine(seeded_reservation.reservation_date, seeded_reservation.starts_at, tzinfo=restaurant_local_now.tzinfo)
+    assert seeded_start > restaurant_local_now, (
+        f"{scenario} needs booking {seeded_reservation.confirmation_code} to start after {restaurant_local_now}, but it starts at "
+        f"{seeded_start}; the seeded data no longer supports this scenario"
+    )
+    return seeded_reservation
+
+
+def derive_booking_window_breach(
+    booking_window_edge: str, restaurant_local_now: datetime, reservation_policy: ReservationPolicy
+) -> BookingWindowBreach:
+    """A bookable-looking start that breaks the booking window at the given edge, with the problem the refusal must name."""
+    if booking_window_edge == "already passed":
+        return BookingWindowBreach(
+            requested_start=datetime.combine(restaurant_local_now.date() - timedelta(days=1), time(19, 0), tzinfo=restaurant_local_now.tzinfo),
+            expected_problem_phrase="has already passed",
+        )
+    if booking_window_edge == "beyond the booking window":
+        return BookingWindowBreach(
+            requested_start=datetime.combine(
+                restaurant_local_now.date() + timedelta(days=reservation_policy.booking_window_days + 1),
+                time(19, 0),
+                tzinfo=restaurant_local_now.tzinfo,
+            ),
+            expected_problem_phrase=f"more than {reservation_policy.booking_window_days} days ahead",
+        )
+    current_slot_minutes: int = (
+        to_minutes(restaurant_local_now.time()) // reservation_policy.slot_interval_minutes * reservation_policy.slot_interval_minutes
+    )
+    next_slot_start: datetime = datetime.combine(
+        restaurant_local_now.date(), to_time(current_slot_minutes + reservation_policy.slot_interval_minutes), tzinfo=restaurant_local_now.tzinfo
+    )
+    assert next_slot_start < restaurant_local_now + timedelta(minutes=reservation_policy.minimum_lead_time_minutes), (
+        f"The next bookable time {next_slot_start:%H:%M} must fall inside the {reservation_policy.minimum_lead_time_minutes}-minute lead time; "
+        "the seeded data no longer supports this scenario"
+    )
+    return BookingWindowBreach(
+        requested_start=next_slot_start, expected_problem_phrase=f"less than {reservation_policy.minimum_lead_time_minutes} minutes away"
+    )
 
 
 async def derive_offered_open_times(domain_facade: DomainFacade, reservation_date: date, requested_time: time, party_size: int) -> list[time]:
@@ -436,25 +489,25 @@ class TestCreateReservation:
             actual_validation_exception=raised.value,
         )
 
-    @pytest.mark.parametrize(
-        ("reservation_date", "reservation_time", "expected_problem_phrase"),
-        [
-            ("2026-11-04", "15:15", "less than 30 minutes away"),
-            ("2026-11-03", "19:00", "has already passed"),
-            ("2027-01-06", "19:00", "more than 60 days ahead"),
-        ],
-    )
+    @pytest.mark.parametrize("booking_window_edge", ["inside the minimum lead time", "already passed", "beyond the booking window"])
     async def test_CreateReservation_WhenTheTimeIsOutsideTheBookingWindow_ThenTheRequestIsRefused(
-        self, restaurant_database_path: Path, reservation_date: str, reservation_time: str, expected_problem_phrase: str
+        self, restaurant_database_path: Path, booking_window_edge: str
     ) -> None:
-        expected_problem_phrases: list[str] = [expected_problem_phrase]
         expected_exception_metadata: ExpectedExceptionMetadata = create_validation_refusal_metadata()
-        expected_contextual_data_by_name: dict[str, int] = {RESERVATION_PROBLEM_COUNT_CONTEXT_NAME: len(expected_problem_phrases)}
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
+            reservation_policy: ReservationPolicy = (await domain_facade.get_restaurant_profile()).reservation_policy
+            restaurant_local_now: datetime = await domain_facade.get_restaurant_local_now()
+            booking_window_breach: BookingWindowBreach = derive_booking_window_breach(booking_window_edge, restaurant_local_now, reservation_policy)
+            expected_problem_phrases: list[str] = [booking_window_breach.expected_problem_phrase]
+            expected_contextual_data_by_name: dict[str, int] = {RESERVATION_PROBLEM_COUNT_CONTEXT_NAME: len(expected_problem_phrases)}
             with pytest.raises(ReservationRequestValidationException) as raised:
                 await domain_facade.create_reservation(
-                    create_reservation_request(create_generated_guest(), reservation_date=reservation_date, reservation_time=reservation_time)
+                    create_reservation_request(
+                        create_generated_guest(),
+                        reservation_date=f"{booking_window_breach.requested_start:%Y-%m-%d}",
+                        reservation_time=f"{booking_window_breach.requested_start:%H:%M}",
+                    )
                 )
 
         AsserterException.assert_validation_problems_are_as_expected(
@@ -540,7 +593,9 @@ class TestChangeReservation:
         requested_notes: str = create_generated_note()
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
-            current_reservation: Reservation = await read_seeded_booking(domain_facade, SEEDED_PRIYA_PHONE)
+            current_reservation: Reservation = await read_unstarted_seeded_booking(
+                domain_facade, SEEDED_PRIYA_PHONE, "Changing a booking by its spoken confirmation code"
+            )
             confirmation_code: str = current_reservation.confirmation_code
             spoken_confirmation_code: str = f"{confirmation_code[:3].lower()} {confirmation_code[3:].lower()}"
             expected_reservation: Reservation = replace(current_reservation, notes=requested_notes)
@@ -648,6 +703,28 @@ class TestChangeReservation:
             actual_validation_exception=raised.value,
         )
 
+    async def test_ChangeReservation_WhenOnlyTheNotesChangeWithinTheLeadTime_ThenTheChangeIsAccepted(self, restaurant_database_path: Path) -> None:
+        # The minimum lead time governs choosing a time; a booking kept at its time can still take a note before the meal.
+        requested_notes: str = create_generated_note()
+
+        async with create_domain_facade(restaurant_database_path, FRIDAY_BEFORE_SEATING_UTC) as domain_facade:
+            reservation_policy: ReservationPolicy = (await domain_facade.get_restaurant_profile()).reservation_policy
+            restaurant_local_now: datetime = await domain_facade.get_restaurant_local_now()
+            current_reservation: Reservation = await read_seeded_booking(domain_facade, SEEDED_PRIYA_PHONE)
+            current_start: datetime = datetime.combine(
+                current_reservation.reservation_date, current_reservation.starts_at, tzinfo=restaurant_local_now.tzinfo
+            )
+            assert restaurant_local_now < current_start < restaurant_local_now + timedelta(minutes=reservation_policy.minimum_lead_time_minutes), (
+                f"Booking {current_reservation.confirmation_code} must start within the {reservation_policy.minimum_lead_time_minutes}-minute "
+                f"lead time after {restaurant_local_now}, but it starts at {current_start}; the seeded data no longer supports this scenario"
+            )
+            expected_reservation: Reservation = replace(current_reservation, notes=requested_notes)
+            actual_changed_reservation: Reservation = await domain_facade.change_reservation(
+                create_change_request(current_reservation.confirmation_code, SEEDED_PRIYA_PHONE, notes=requested_notes)
+            )
+
+        assert actual_changed_reservation == expected_reservation
+
     async def test_ChangeReservation_WhenTheBookingHasAlreadyStarted_ThenItCanNoLongerBeChanged(self, restaurant_database_path: Path) -> None:
         expected_exception_metadata: ExpectedExceptionMetadata = ExpectedExceptionMetadata(
             http_status_code=409,
@@ -728,7 +805,9 @@ class TestCancelReservation:
         )
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
-            current_reservation: Reservation = await read_seeded_booking(domain_facade, SEEDED_PRIYA_PHONE)
+            current_reservation: Reservation = await read_unstarted_seeded_booking(
+                domain_facade, SEEDED_PRIYA_PHONE, "Cancelling a booking a second time"
+            )
             reservation_cancellation_request: ReservationCancellationRequest = ReservationCancellationRequest(
                 confirmation_code=current_reservation.confirmation_code, phone_number=SEEDED_PRIYA_PHONE
             )

@@ -26,7 +26,8 @@ class ValidatorReservationRequests:
     Values arrive as a voice model transcribed them. Each is trimmed and put into its stored form first (phone
     numbers to digits, confirmation codes to upper case) and then judged; a valid request comes back as typed
     values. Each request is judged in two stages: first on its own, before anything is read from the store, then
-    by validate_requested_seating against the restaurant's booking policy and booking window. Whether the
+    against the restaurant's booking policy and booking window, by validate_requested_seating for a new seating or
+    validate_changed_seating for a change. Whether the
     restaurant is open and whether a table is free are decided later, by the manager.
     """
 
@@ -91,7 +92,7 @@ class ValidatorReservationRequests:
 
     @classmethod
     def validate_change_request(cls, reservation_change_request: ReservationChangeRequest) -> ValidatedReservationChange:
-        """Judges the change request on its own. The changed seating is judged by validate_requested_seating once the
+        """Judges the change request on its own. The changed seating is judged by validate_changed_seating once the
         current booking supplies the values left unchanged."""
         confirmation_code: str | None = cls._as_confirmation_code(reservation_change_request.confirmation_code)
         phone_number: str | None = cls._as_phone_number(reservation_change_request.phone_number)
@@ -130,6 +131,28 @@ class ValidatorReservationRequests:
         validation_problems.extend(
             cls._collect_booking_window_problems(requested_seating.reservation_date, requested_seating.starts_at, booking_window)
         )
+        if validation_problems:
+            raise cls._create_validation_exception(validation_problems)
+
+    @classmethod
+    def validate_changed_seating(
+        cls,
+        current_seating: RequestedSeating,
+        changed_seating: RequestedSeating,
+        reservation_policy: ReservationPolicy,
+        booking_window: BookingWindow,
+    ) -> None:
+        """Judges only what a change moves. A new date or time must be bookable now and a new party size must be allowed;
+        a booking left at its time and size keeps what it was booked under, so a guest can still add a note shortly before
+        the meal."""
+        validation_problems: list[str] = []
+        if (changed_seating.reservation_date, changed_seating.starts_at) != (current_seating.reservation_date, current_seating.starts_at):
+            validation_problems.extend(cls._collect_slot_boundary_problems(changed_seating.starts_at, reservation_policy.slot_interval_minutes))
+            validation_problems.extend(
+                cls._collect_booking_window_problems(changed_seating.reservation_date, changed_seating.starts_at, booking_window)
+            )
+        if changed_seating.party_size != current_seating.party_size:
+            validation_problems.extend(cls._collect_party_size_problems(changed_seating.party_size, reservation_policy))
         if validation_problems:
             raise cls._create_validation_exception(validation_problems)
 

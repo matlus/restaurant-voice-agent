@@ -84,7 +84,9 @@ class TestRestaurantInformation:
     async def test_GetRestaurantLocalNow_WhenTheClockIsInUtc_ThenTheTimeIsExpressedInTheRestaurantTimeZone(
         self, restaurant_database_path: Path
     ) -> None:
-        expected_local_date_and_time: tuple[date, time] = (date(2026, 11, 4), time(15, 0))
+        seeded_restaurant: SeededRestaurant = read_seeded_restaurant()
+        expected_restaurant_local_now: datetime = WEDNESDAY_AFTERNOON_UTC.astimezone(ZoneInfo(seeded_restaurant.time_zone))
+        expected_local_date_and_time: tuple[date, time] = (expected_restaurant_local_now.date(), expected_restaurant_local_now.time())
 
         async with create_domain_facade(restaurant_database_path, WEDNESDAY_AFTERNOON_UTC) as domain_facade:
             actual_restaurant_local_now: datetime = await domain_facade.get_restaurant_local_now()

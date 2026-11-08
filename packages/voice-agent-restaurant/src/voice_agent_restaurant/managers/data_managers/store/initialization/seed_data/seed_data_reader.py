@@ -385,13 +385,12 @@ class SeedDataReader:
         position: int
         weekday_hours: WeekdayHours
         for position, weekday_hours in enumerate(weekly_hours):
-            if isinstance(weekday_hours, OpenWeekday) and cls._to_minutes(weekday_hours.opens_at) % slot_interval_minutes != 0:
-                raise restaurant_seed_file.fail(
-                    f"$.weekly_hours[{position}].opens_at",
-                    f"'{weekday_hours.opens_at:%H:%M}' must fall on the {slot_interval_minutes}-minute slot grid that bookable times follow",
+            if isinstance(weekday_hours, OpenWeekday):
+                cls._verify_time_on_slot_grid(
+                    restaurant_seed_file, f"$.weekly_hours[{position}].opens_at", weekday_hours.opens_at, slot_interval_minutes
                 )
 
-    # A guest's change is checked against the booking policy as a whole, so a seed booking outside it could never be changed.
+    # Seed bookings stand for bookings guests made by phone, so they keep to the policy a phone booking is held to.
     @staticmethod
     def _verify_reservation_party_sizes(
         reservations_seed_file: SeedFile, seed_reservations: Sequence[SeedReservation], reservation_policy: ReservationPolicy
@@ -426,8 +425,6 @@ class SeedDataReader:
 
     @classmethod
     def _verify_reservation_seating_times(cls, reservations_seed_file: SeedFile, restaurant_seed: RestaurantSeed) -> None:
-        """Each seed booking must start on the slot grid, be seated within its weekday's hours, finish by closing, and share its
-        table with no other booking."""
         seating_duration_minutes: int = restaurant_seed.restaurant_profile.reservation_policy.seating_duration_minutes
         slot_interval_minutes: int = restaurant_seed.restaurant_profile.reservation_policy.slot_interval_minutes
         weekday_hours_by_weekday: dict[Weekday, WeekdayHours] = {
@@ -440,7 +437,7 @@ class SeedDataReader:
             weekday_hours: WeekdayHours = weekday_hours_by_weekday[seed_reservation.weekday]
             if not isinstance(weekday_hours, OpenWeekday):
                 raise reservations_seed_file.fail(starts_at_path, f"falls on a {seed_reservation.weekday.value}, when the restaurant does not open")
-            cls._verify_seating_on_slot_grid(reservations_seed_file, starts_at_path, seed_reservation.starts_at, slot_interval_minutes)
+            cls._verify_time_on_slot_grid(reservations_seed_file, starts_at_path, seed_reservation.starts_at, slot_interval_minutes)
             cls._verify_seating_fits_weekday_hours(
                 reservations_seed_file, starts_at_path, seed_reservation.starts_at, weekday_hours, seating_duration_minutes
             )
@@ -456,12 +453,11 @@ class SeedDataReader:
                     ),
                 )
 
-    # A guest's change keeps the booking's start time, which must still be a bookable time for the change to be accepted.
     @classmethod
-    def _verify_seating_on_slot_grid(cls, reservations_seed_file: SeedFile, starts_at_path: str, starts_at: time, slot_interval_minutes: int) -> None:
-        if cls._to_minutes(starts_at) % slot_interval_minutes != 0:
-            raise reservations_seed_file.fail(
-                starts_at_path, f"'{starts_at:%H:%M}' must fall on the {slot_interval_minutes}-minute slot grid that bookable times follow"
+    def _verify_time_on_slot_grid(cls, seed_file: SeedFile, value_path: str, time_of_day: time, slot_interval_minutes: int) -> None:
+        if cls._to_minutes(time_of_day) % slot_interval_minutes != 0:
+            raise seed_file.fail(
+                value_path, f"'{time_of_day:%H:%M}' must fall on the {slot_interval_minutes}-minute slot grid that bookable times follow"
             )
 
     @classmethod
@@ -470,18 +466,18 @@ class SeedDataReader:
         reservations_seed_file: SeedFile,
         starts_at_path: str,
         starts_at: time,
-        weekday_hours: OpenWeekday,
+        open_weekday: OpenWeekday,
         seating_duration_minutes: int,
     ) -> None:
         starts_at_minutes: int = cls._to_minutes(starts_at)
-        if starts_at_minutes < cls._to_minutes(weekday_hours.opens_at) or (
-            starts_at_minutes + seating_duration_minutes > cls._to_minutes(weekday_hours.closes_at)
+        if starts_at_minutes < cls._to_minutes(open_weekday.opens_at) or (
+            starts_at_minutes + seating_duration_minutes > cls._to_minutes(open_weekday.closes_at)
         ):
             raise reservations_seed_file.fail(
                 starts_at_path,
                 (
                     f"'{starts_at:%H:%M}' leaves no full {seating_duration_minutes}-minute seating between "
-                    f"{weekday_hours.opens_at:%H:%M} and {weekday_hours.closes_at:%H:%M} on {weekday_hours.weekday.value}"
+                    f"{open_weekday.opens_at:%H:%M} and {open_weekday.closes_at:%H:%M} on {open_weekday.weekday.value}"
                 ),
             )
 

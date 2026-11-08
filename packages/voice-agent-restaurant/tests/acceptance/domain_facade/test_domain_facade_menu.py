@@ -180,7 +180,15 @@ class TestMenuSearch:
     async def test_SearchMenu_WhenUnknownLabelsAndABadCalorieCeilingArrive_ThenEveryProblemIsReportedTogether(
         self, restaurant_database_path: Path
     ) -> None:
-        expected_problem_phrases: list[str] = ["'raw'", "'mustard'", "'brunch'", "'maximum_calories' must be at least 1"]
+        unknown_diet_label: str = "raw"
+        unknown_excluded_allergen: str = "mustard"
+        unknown_category: str = "brunch"
+        expected_problem_phrases: list[str] = [
+            f"'{unknown_diet_label}'",
+            f"'{unknown_excluded_allergen}'",
+            f"'{unknown_category}'",
+            "'maximum_calories' must be at least 1",
+        ]
         expected_exception_metadata: ExpectedExceptionMetadata = ExpectedExceptionMetadata(
             http_status_code=400,
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,
@@ -192,7 +200,12 @@ class TestMenuSearch:
         async with create_domain_facade(restaurant_database_path) as domain_facade:
             with pytest.raises(MenuSearchValidationException) as raised:
                 await domain_facade.search_menu(
-                    create_menu_search_request(diet_labels=["raw"], excluded_allergens=["mustard"], category="brunch", maximum_calories=0)
+                    create_menu_search_request(
+                        diet_labels=[unknown_diet_label],
+                        excluded_allergens=[unknown_excluded_allergen],
+                        category=unknown_category,
+                        maximum_calories=0,
+                    )
                 )
 
         AsserterException.assert_validation_problems_are_as_expected(
@@ -205,19 +218,23 @@ class TestMenuSearch:
 
 class TestDietAndAllergenConsistency:
     async def test_SearchMenu_WhenAllDishesAreListed_ThenFreeFromLabelsAgreeWithTheAllergens(self, restaurant_database_path: Path) -> None:
-        expected_disagreeing_dish_ids: list[str] = []
+        expected_disagreeing_dish_labels: list[str] = []
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
             dishes: list[Dish] = await domain_facade.search_menu(create_menu_search_request())
 
-        actual_disagreeing_dish_ids: list[str] = [
-            dish.dish_id
-            for dish in dishes
-            if (DietLabel.DAIRY_FREE in dish.diet_labels) == (Allergen.MILK in dish.allergens)
-            or (DietLabel.NUT_FREE in dish.diet_labels) == (Allergen.TREE_NUTS in dish.allergens or Allergen.PEANUTS in dish.allergens)
-            or (DietLabel.GLUTEN_FREE in dish.diet_labels and Allergen.WHEAT in dish.allergens)
-        ]
-        assert actual_disagreeing_dish_ids == expected_disagreeing_dish_ids
+        actual_disagreeing_dish_labels: list[str] = []
+        for dish in dishes:
+            if (DietLabel.DAIRY_FREE in dish.diet_labels) == (Allergen.MILK in dish.allergens):
+                actual_disagreeing_dish_labels.append(f"{dish.dish_id}: dairy_free")
+            if (DietLabel.NUT_FREE in dish.diet_labels) == (Allergen.TREE_NUTS in dish.allergens or Allergen.PEANUTS in dish.allergens):
+                actual_disagreeing_dish_labels.append(f"{dish.dish_id}: nut_free")
+            if DietLabel.GLUTEN_FREE in dish.diet_labels and Allergen.WHEAT in dish.allergens:
+                actual_disagreeing_dish_labels.append(f"{dish.dish_id}: gluten_free")
+        assert actual_disagreeing_dish_labels == expected_disagreeing_dish_labels, (
+            f"Every free-from label on the {len(dishes)} seeded dishes must agree with that dish's allergens; "
+            f"{len(actual_disagreeing_dish_labels)} labels disagree:\n" + "\n".join(actual_disagreeing_dish_labels)
+        )
 
     async def test_SearchMenu_WhenAllDishesAreListed_ThenEveryLifestyleDietLabelIsConsistentWithTheRecipe(
         self, restaurant_database_path: Path
@@ -245,7 +262,10 @@ class TestDietAndAllergenConsistency:
                 actual_inconsistent_dishes.append(f"{dish.dish_id}: carnivore")
             if DietLabel.PALEO in diet_labels and (paleo_excluded_allergens & set(dish.allergens) or DietLabel.GLUTEN_FREE not in diet_labels):
                 actual_inconsistent_dishes.append(f"{dish.dish_id}: paleo")
-        assert actual_inconsistent_dishes == expected_inconsistent_dishes
+        assert actual_inconsistent_dishes == expected_inconsistent_dishes, (
+            f"Every lifestyle diet label on the {len(dishes)} seeded dishes must agree with that dish's recipe; "
+            f"{len(actual_inconsistent_dishes)} labels disagree:\n" + "\n".join(actual_inconsistent_dishes)
+        )
 
 
 class TestDishLookup:

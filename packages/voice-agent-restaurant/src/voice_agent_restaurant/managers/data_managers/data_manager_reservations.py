@@ -192,16 +192,28 @@ class DataManagerReservations:
     def _seat_new_reservation(
         self, connection: sqlite3.Connection, new_reservation: NewReservation, candidate_table_ids: Sequence[str], now_utc: datetime
     ) -> Reservation:
-        confirmation_code: str = self._create_unused_confirmation_code(connection)
-        table_slot: _TableSlot = _TableSlot(
-            reservation_date=new_reservation.reservation_date,
-            starts_at=new_reservation.starts_at,
-            ends_at=new_reservation.ends_at,
-            confirmation_code=confirmation_code,
+        # The confirmation code's primary key decides whether a generated code is unused. A table is chosen afresh for
+        # each code, because a code that happens to name another booking would hide that booking's seating.
+        for _ in range(self.MAXIMUM_CONFIRMATION_CODE_ATTEMPTS):
+            candidate_code: str = "".join(secrets.choice(CONFIRMATION_CODE_ALPHABET) for _ in range(CONFIRMATION_CODE_LENGTH))
+            table_slot: _TableSlot = _TableSlot(
+                reservation_date=new_reservation.reservation_date,
+                starts_at=new_reservation.starts_at,
+                ends_at=new_reservation.ends_at,
+                confirmation_code=candidate_code,
+            )
+            free_table_id: str = self._retrieve_first_free_table_id(connection, table_slot, candidate_table_ids)
+            try:
+                self._insert_reservation(connection, new_reservation, candidate_code, free_table_id, now_utc)
+            except sqlite3.IntegrityError as integrity_error:
+                if integrity_error.sqlite_errorcode != sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY:
+                    raise
+                continue
+            return self._read_reservation(connection, candidate_code)
+        raise RestaurantStoreContractViolationException(
+            message=f"No unused confirmation code was found in {self.MAXIMUM_CONFIRMATION_CODE_ATTEMPTS} attempts",
+            contextual_data_by_name={"Reservation.ConfirmationCodeAttempts": self.MAXIMUM_CONFIRMATION_CODE_ATTEMPTS},
         )
-        free_table_id: str = self._retrieve_first_free_table_id(connection, table_slot, candidate_table_ids)
-        self._insert_reservation(connection, new_reservation, confirmation_code, free_table_id, now_utc)
-        return self._read_reservation(connection, confirmation_code)
 
     def _move_booked_reservation(
         self, connection: sqlite3.Connection, reservation_reschedule: ReservationReschedule, candidate_table_ids: Sequence[str], now_utc: datetime
@@ -224,16 +236,6 @@ class DataManagerReservations:
         if cancel_cursor.rowcount != 1:
             raise ReservationNotFoundException(confirmation_code, {self._CONFIRMATION_CODE_CONTEXT_KEY: confirmation_code})
         return self._read_reservation(connection, confirmation_code)
-
-    def _create_unused_confirmation_code(self, connection: sqlite3.Connection) -> str:
-        for _ in range(self.MAXIMUM_CONFIRMATION_CODE_ATTEMPTS):
-            candidate_code: str = "".join(secrets.choice(CONFIRMATION_CODE_ALPHABET) for _ in range(CONFIRMATION_CODE_LENGTH))
-            if connection.execute("SELECT 1 FROM reservations WHERE confirmation_code = ?", (candidate_code,)).fetchone() is None:
-                return candidate_code
-        raise RestaurantStoreContractViolationException(
-            message=f"No unused confirmation code was found in {self.MAXIMUM_CONFIRMATION_CODE_ATTEMPTS} attempts",
-            contextual_data_by_name={"Reservation.ConfirmationCodeAttempts": self.MAXIMUM_CONFIRMATION_CODE_ATTEMPTS},
-        )
 
     def _retrieve_first_free_table_id(self, connection: sqlite3.Connection, table_slot: _TableSlot, candidate_table_ids: Iterable[str]) -> str:
         for candidate_table_id in candidate_table_ids:
