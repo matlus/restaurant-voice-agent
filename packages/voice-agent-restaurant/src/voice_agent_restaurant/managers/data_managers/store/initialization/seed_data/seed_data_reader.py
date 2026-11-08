@@ -290,8 +290,8 @@ class SeedDataReader:
             )
         return seed_reservations
 
-    # Guests change and cancel a booking by its confirmation code and phone number, which the store matches exactly in
-    # their stored form. A seed value in any other form could never be found.
+    # Guests change and cancel a booking by its confirmation code, and may give its phone number, which the store matches
+    # exactly in their stored form. A seed value in any other form could never be found.
     @classmethod
     def _get_confirmation_code(cls, reservations_seed_file: SeedFile, reservation_object: JsonObject, value_path: str) -> str:
         confirmation_code: str = reservations_seed_file.get_text(reservation_object, cls.CONFIRMATION_CODE_KEY, value_path)

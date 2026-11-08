@@ -75,9 +75,9 @@ class DomainFacade:
         return await self._manager_reservations.find_reservations(reservation_search_request)
 
     async def change_reservation(self, reservation_change_request: ReservationChangeRequest) -> Reservation:
-        """Changes the date, time, party size or notes of a booking identified by confirmation code and phone number."""
+        """Changes the date, time, party size or notes of a booking found by its confirmation code."""
         return await self._manager_reservations.change_reservation(reservation_change_request)
 
     async def cancel_reservation(self, reservation_cancellation_request: ReservationCancellationRequest) -> Reservation:
-        """Cancels a booking identified by confirmation code and phone number, returning it in its cancelled state."""
+        """Cancels a booking found by its confirmation code, returning it in its cancelled state."""
         return await self._manager_reservations.cancel_reservation(reservation_cancellation_request)
