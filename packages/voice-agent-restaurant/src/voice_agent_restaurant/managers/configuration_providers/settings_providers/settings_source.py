@@ -22,5 +22,4 @@ class SettingsSource:
 
     @staticmethod
     def is_setting_present(setting_raw_value: str | None) -> TypeGuard[str]:
-        # Absent, empty, and whitespace-only all mean the setting was not provided.
         return setting_raw_value is not None and setting_raw_value.strip() != ""

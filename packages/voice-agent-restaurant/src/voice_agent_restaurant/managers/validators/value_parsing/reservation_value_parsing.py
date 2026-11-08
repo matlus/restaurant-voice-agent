@@ -2,28 +2,29 @@ import re
 from datetime import date, time
 from typing import Final
 
-from voice_agent_restaurant.managers.models.reservation_models import CONFIRMATION_CODE_ALPHABET, CONFIRMATION_CODE_LENGTH
+from voice_agent_restaurant.managers.models.reservation_models import (
+    NATIONAL_PHONE_NUMBER_LENGTH,
+    STORED_CONFIRMATION_CODE_PATTERN,
+    STORED_PHONE_NUMBER_PATTERN,
+)
 
 # [0-9] rather than \d: in a str pattern \d also matches non-ASCII digits, which would be stored but never found again.
 _DATE_PATTERN: Final[re.Pattern[str]] = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _TIME_PATTERN: Final[re.Pattern[str]] = re.compile(r"([0-9]{1,2}):([0-9]{2})")
 _PHONE_DIGITS_PATTERN: Final[re.Pattern[str]] = re.compile(r"[0-9]+")
-_PHONE_PATTERN: Final[re.Pattern[str]] = re.compile(r"[0-9]{10}")
 _PHONE_SEPARATORS_PATTERN: Final[re.Pattern[str]] = re.compile(r"[\s().+-]")
 _CONFIRMATION_CODE_SEPARATORS_PATTERN: Final[re.Pattern[str]] = re.compile(r"[\s-]")
 _NORTH_AMERICAN_COUNTRY_CODE: Final[str] = "1"
-_NATIONAL_PHONE_NUMBER_LENGTH: Final[int] = 10
 
 
 class ReservationValueParsing:
     """The accepted text forms of reservation values, and how spoken forms are put into them."""
 
     @staticmethod
-    def as_provided(field_value: str | None) -> str | None:
-        """The trimmed value, or None when nothing but whitespace arrived."""
-        if field_value is None or field_value.strip() == "":
+    def as_provided(spoken_field_text: str | None) -> str | None:
+        if spoken_field_text is None or spoken_field_text.strip() == "":
             return None
-        return field_value.strip()
+        return spoken_field_text.strip()
 
     @staticmethod
     def parse_date(date_text: str) -> date | None:
@@ -51,13 +52,13 @@ class ReservationValueParsing:
         phone_digits: str = _PHONE_SEPARATORS_PATTERN.sub("", phone_number)
         if not _PHONE_DIGITS_PATTERN.fullmatch(phone_digits):
             return phone_number
-        if len(phone_digits) == _NATIONAL_PHONE_NUMBER_LENGTH + 1 and phone_digits.startswith(_NORTH_AMERICAN_COUNTRY_CODE):
+        if len(phone_digits) == NATIONAL_PHONE_NUMBER_LENGTH + 1 and phone_digits.startswith(_NORTH_AMERICAN_COUNTRY_CODE):
             return phone_digits[1:]
         return phone_digits
 
     @staticmethod
     def is_phone_number(phone_number: str) -> bool:
-        return _PHONE_PATTERN.fullmatch(phone_number) is not None
+        return STORED_PHONE_NUMBER_PATTERN.fullmatch(phone_number) is not None
 
     @staticmethod
     def normalize_confirmation_code(confirmation_code: str) -> str:
@@ -66,6 +67,4 @@ class ReservationValueParsing:
 
     @staticmethod
     def is_confirmation_code(confirmation_code: str) -> bool:
-        return len(confirmation_code) == CONFIRMATION_CODE_LENGTH and all(
-            code_character in CONFIRMATION_CODE_ALPHABET for code_character in confirmation_code
-        )
+        return STORED_CONFIRMATION_CODE_PATTERN.fullmatch(confirmation_code) is not None

@@ -46,7 +46,6 @@ class ValidatorMenuRequests:
 
     @classmethod
     def validate_dish_lookup_request(cls, dish_lookup_request: DishLookupRequest) -> str:
-        """Returns the dish name to look up, trimmed."""
         dish_name: str | None = cls._as_provided(dish_lookup_request.dish_name)
         validation_problems: list[str] = cls._collect_dish_name_problems(dish_name)
         if dish_name is None or validation_problems:
@@ -55,13 +54,13 @@ class ValidatorMenuRequests:
 
     @staticmethod
     def _collect_unknown_choice_problems(
-        field_name: str, provided_values: Iterable[str], choice_type: type[DietLabel | Allergen | MenuCategory]
+        field_name: str, provided_choice_texts: Iterable[str], choice_type: type[DietLabel | Allergen | MenuCategory]
     ) -> list[str]:
-        known_values: list[str] = [choice.value for choice in choice_type]
+        known_choice_texts: list[str] = [choice.value for choice in choice_type]
         return [
-            f"'{field_name}' value '{provided_value}' is not recognized; the recognized values are {', '.join(known_values)}"
-            for provided_value in provided_values
-            if provided_value not in known_values
+            f"'{field_name}' value '{provided_choice_text}' is not recognized; the recognized values are {', '.join(known_choice_texts)}"
+            for provided_choice_text in provided_choice_texts
+            if provided_choice_text not in known_choice_texts
         ]
 
     @staticmethod
@@ -86,7 +85,6 @@ class ValidatorMenuRequests:
 
     @classmethod
     def _as_labels(cls, label_texts: Iterable[str]) -> list[str]:
-        """Each provided label in its stored form; blank entries are dropped."""
         return [cls._as_label(label_text) for label_text in label_texts if cls._as_provided(label_text) is not None]
 
     @staticmethod

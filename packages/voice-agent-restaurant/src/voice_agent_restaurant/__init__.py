@@ -1,27 +1,32 @@
 from voice_agent_restaurant.domain_facade import DomainFacade
 from voice_agent_restaurant.managers.clocks.clock_base import ClockBase
 from voice_agent_restaurant.managers.configuration_providers.configuration_provider import ConfigurationProvider
-from voice_agent_restaurant.managers.exceptions.configuration_exceptions import ConfigurationSettingException
+from voice_agent_restaurant.managers.exceptions.configuration_exceptions import ConfigurationSettingException, LogEventConfiguration
 from voice_agent_restaurant.managers.exceptions.menu_exceptions import (
     DishLookupValidationException,
     DishNotFoundException,
+    LogEventMenu,
     MenuSearchValidationException,
 )
 from voice_agent_restaurant.managers.exceptions.reservation_exceptions import (
+    LogEventReservation,
     NoTableAvailableException,
     OutsideSeatingHoursException,
     ReservationAlreadyStartedException,
+    ReservationChangedConcurrentlyException,
     ReservationNotFoundException,
     ReservationRequestValidationException,
     RestaurantClosedOnDateException,
 )
 from voice_agent_restaurant.managers.exceptions.restaurant_store_exceptions import (
+    LogEventRestaurantStore,
     RestaurantSeedDataInvalidException,
     RestaurantStoreContractViolationException,
     RestaurantStoreUnavailableException,
 )
 from voice_agent_restaurant.managers.exceptions.voice_agent_restaurant_exceptions import (
     ExceptionAction,
+    LogEventBase,
     Severity,
     VoiceAgentRestaurantBaseException,
     VoiceAgentRestaurantBusinessBaseException,
@@ -74,6 +79,11 @@ __all__ = [
     "DishNotFoundException",
     "DomainFacade",
     "ExceptionAction",
+    "LogEventBase",
+    "LogEventConfiguration",
+    "LogEventMenu",
+    "LogEventReservation",
+    "LogEventRestaurantStore",
     "MenuCategory",
     "MenuSearchRequest",
     "MenuSearchValidationException",
@@ -86,6 +96,7 @@ __all__ = [
     "ReservationAlreadyStartedException",
     "ReservationCancellationRequest",
     "ReservationChangeRequest",
+    "ReservationChangedConcurrentlyException",
     "ReservationNotFoundException",
     "ReservationPolicy",
     "ReservationRequest",

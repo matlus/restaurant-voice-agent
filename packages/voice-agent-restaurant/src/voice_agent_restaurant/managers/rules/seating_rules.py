@@ -46,26 +46,21 @@ class SeatingRules:
         return list(Weekday)[calendar_date.weekday()]
 
     @staticmethod
-    def get_booking_window(restaurant_now: datetime, minimum_lead_time_minutes: int, booking_window_days: int) -> BookingWindow:
-        return BookingWindow(
-            restaurant_now=restaurant_now,
-            earliest_start=restaurant_now + timedelta(minutes=minimum_lead_time_minutes),
-            last_date=restaurant_now.date() + timedelta(days=booking_window_days),
-        )
+    def get_booking_window(restaurant_now: datetime, booking_window_days: int) -> BookingWindow:
+        return BookingWindow(restaurant_now=restaurant_now, last_date=restaurant_now.date() + timedelta(days=booking_window_days))
 
     @classmethod
     def get_seating_window(cls, weekday_hours: WeekdayHours, seating_duration_minutes: int) -> SeatingWindow | None:
         """The day's seating window, or None when the restaurant does not open or no full seating fits before closing."""
         if not isinstance(weekday_hours, OpenWeekday):
             return None
-        last_seating_time: time = cls._shift(weekday_hours.closes_at, -seating_duration_minutes)
-        if last_seating_time < weekday_hours.opens_at:
+        last_seating_minutes: int = cls._to_minutes(weekday_hours.closes_at) - seating_duration_minutes
+        if last_seating_minutes < cls._to_minutes(weekday_hours.opens_at):
             return None
-        return SeatingWindow(first_seating_time=weekday_hours.opens_at, last_seating_time=last_seating_time)
+        return SeatingWindow(first_seating_time=weekday_hours.opens_at, last_seating_time=cls._from_minutes(last_seating_minutes))
 
     @staticmethod
     def apply_seating_change(current_seating: RequestedSeating, seating_change: SeatingChange) -> RequestedSeating:
-        """The seating after the change: each value asked to change replaces the current one; the rest stay."""
         return RequestedSeating(
             reservation_date=current_seating.reservation_date if seating_change.reservation_date is None else seating_change.reservation_date,
             starts_at=current_seating.starts_at if seating_change.starts_at is None else seating_change.starts_at,
@@ -113,23 +108,30 @@ class SeatingRules:
 
     @classmethod
     def get_alternative_times(
-        cls, seating_day: SeatingDay, requested_time: time, seating_rhythm: SeatingRhythm, earliest_start: datetime
+        cls, seating_day: SeatingDay, requested_time: time, seating_rhythm: SeatingRhythm, restaurant_now: datetime
     ) -> list[time]:
         """Up to MAXIMUM_ALTERNATIVE_TIMES other bookable times with a free fitting table, nearest to the requested time, in time order."""
-        requested_minutes: int = cls._to_minutes(requested_time)
-        open_slot_times: list[time] = [
+        open_slot_times: list[time] = cls._get_open_slot_times(seating_day, requested_time, seating_rhythm, restaurant_now)
+        return sorted(cls._get_nearest_slot_times(open_slot_times, requested_time))
+
+    @classmethod
+    def _get_open_slot_times(
+        cls, seating_day: SeatingDay, requested_time: time, seating_rhythm: SeatingRhythm, restaurant_now: datetime
+    ) -> list[time]:
+        return [
             slot_time
             for slot_time in cls._get_slot_times(seating_day.seating_window, seating_rhythm.slot_interval_minutes)
             if slot_time != requested_time
-            and datetime.combine(seating_day.reservation_date, slot_time, tzinfo=earliest_start.tzinfo) >= earliest_start
+            and datetime.combine(seating_day.reservation_date, slot_time, tzinfo=restaurant_now.tzinfo) >= restaurant_now
             and cls.has_free_table(
                 seating_day.fitting_tables, seating_day.seatings, slot_time, cls.get_ends_at(slot_time, seating_rhythm.seating_duration_minutes)
             )
         ]
-        nearest_slot_times: list[time] = sorted(open_slot_times, key=lambda slot_time: abs(cls._to_minutes(slot_time) - requested_minutes))[
-            : cls.MAXIMUM_ALTERNATIVE_TIMES
-        ]
-        return sorted(nearest_slot_times)
+
+    @classmethod
+    def _get_nearest_slot_times(cls, open_slot_times: Sequence[time], requested_time: time) -> list[time]:
+        requested_minutes: int = cls._to_minutes(requested_time)
+        return sorted(open_slot_times, key=lambda slot_time: abs(cls._to_minutes(slot_time) - requested_minutes))[: cls.MAXIMUM_ALTERNATIVE_TIMES]
 
     @classmethod
     def _get_slot_times(cls, seating_window: SeatingWindow, slot_interval_minutes: int) -> list[time]:
@@ -142,7 +144,8 @@ class SeatingRules:
 
     @classmethod
     def _shift(cls, time_of_day: time, minutes: int) -> time:
-        # Wraps at midnight; callers only shift within one service day, where no wrap occurs.
+        # Wraps at midnight. No wrap occurs in practice: the seed reader refuses opening hours that close at or after
+        # midnight, so every seating window, and every seating it holds, lies inside one calendar day.
         return cls._from_minutes((cls._to_minutes(time_of_day) + minutes) % MINUTES_PER_DAY)
 
     @staticmethod

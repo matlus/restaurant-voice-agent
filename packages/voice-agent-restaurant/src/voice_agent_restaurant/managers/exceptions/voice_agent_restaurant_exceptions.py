@@ -119,21 +119,9 @@ class VoiceAgentRestaurantBaseException(Exception, ABC):
     def add_contextual_data(self, contextual_data_by_name: ContextualDataDict) -> None:
         self._additional_contextual_data_by_name.update(contextual_data_by_name)
 
-    def _get_complete_exception_data(self, *, include_traceback: bool) -> ContextualDataDict:
-        complete_exception_data: ContextualDataDict = self.contextual_data_by_name
-
-        exception_cause: ExceptionCause | None = self.cause
-        if exception_cause:
-            complete_exception_data["CausedBy"] = exception_cause.exception_type
-            complete_exception_data["Cause"] = exception_cause.message
-
-        if include_traceback and self.__traceback__:
-            complete_exception_data[self.TRACEBACK_KEY] = "".join(traceback.format_tb(self.__traceback__))
-
-        return complete_exception_data
-
-    def to_string(self, *, include_traceback: bool = True) -> str:
-        complete_exception_data: ContextualDataDict = self._get_complete_exception_data(include_traceback=include_traceback)
+    def to_string(self) -> str:
+        """Every contextual value and the cause on its own line, then the traceback, for a log entry."""
+        complete_exception_data: ContextualDataDict = self._get_exception_data_with_traceback()
 
         lines: list[str] = []
         exception_data_name: str
@@ -142,13 +130,29 @@ class VoiceAgentRestaurantBaseException(Exception, ABC):
             if exception_data_name != self.TRACEBACK_KEY:
                 lines.append(f"{exception_data_name}: {exception_data_value}")
 
-        if include_traceback and self.TRACEBACK_KEY in complete_exception_data:
+        if self.TRACEBACK_KEY in complete_exception_data:
             lines.extend(["", str(complete_exception_data[self.TRACEBACK_KEY])])
 
         return "\n".join(lines)
 
     def to_json(self) -> str:
-        return json.dumps(self._get_complete_exception_data(include_traceback=True), indent=2)
+        return json.dumps(self._get_exception_data_with_traceback(), indent=2)
+
+    def _get_exception_data(self) -> ContextualDataDict:
+        complete_exception_data: ContextualDataDict = self.contextual_data_by_name
+
+        exception_cause: ExceptionCause | None = self.cause
+        if exception_cause:
+            complete_exception_data["CausedBy"] = exception_cause.exception_type
+            complete_exception_data["Cause"] = exception_cause.message
+
+        return complete_exception_data
+
+    def _get_exception_data_with_traceback(self) -> ContextualDataDict:
+        complete_exception_data: ContextualDataDict = self._get_exception_data()
+        if self.__traceback__:
+            complete_exception_data[self.TRACEBACK_KEY] = "".join(traceback.format_tb(self.__traceback__))
+        return complete_exception_data
 
 
 class VoiceAgentRestaurantBusinessBaseException(VoiceAgentRestaurantBaseException, ABC):

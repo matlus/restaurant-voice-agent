@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ember &amp; Sprout</title>
+  <style>
+    :root {
+      --background: #f6f1ea;
+      --surface: #fffaf3;
+      --text: #2b2420;
+      --muted: #75685e;
+      --accent: #b8502a;
+      --accent-live: #2f7d4f;
+      --ring: rgba(184, 80, 42, 0.25);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --background: #1d1916;
+        --surface: #27211d;
+        --text: #f1e9e1;
+        --muted: #b3a597;
+        --accent: #e0774c;
+        --accent-live: #5cbf85;
+        --ring: rgba(224, 119, 76, 0.3);
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: var(--background);
+      color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      padding: 16px;
+    }
+    main { display: grid; justify-items: center; gap: 28px; text-align: center; }
+    h1 { margin: 0; font-size: 1.6rem; font-weight: 600; letter-spacing: 0.01em; }
+    .tagline { margin: 6px 0 0; color: var(--muted); font-size: 0.95rem; }
+    #call-button {
+      width: 132px;
+      height: 132px;
+      border-radius: 50%;
+      border: none;
+      background: var(--accent);
+      color: #fff;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      box-shadow: 0 0 0 0 var(--ring);
+      transition: background 160ms ease, transform 120ms ease;
+    }
+    #call-button:hover { transform: scale(1.03); }
+    #call-button:focus-visible { outline: 3px solid var(--text); outline-offset: 4px; }
+    #call-button[data-state="live"] { background: var(--accent-live); animation: pulse 1.8s ease-out infinite; }
+    #call-button[data-state="connecting"] { opacity: 0.75; cursor: progress; }
+    #call-button svg { width: 52px; height: 52px; }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 var(--ring); }
+      100% { box-shadow: 0 0 0 28px rgba(0, 0, 0, 0); }
+    }
+    label { color: var(--muted); font-size: 0.9rem; }
+    select {
+      margin-left: 8px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--muted);
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+    }
+    #status { min-height: 1.4em; margin: 0; color: var(--muted); font-size: 0.95rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <div>
+      <h1>Ember &amp; Sprout</h1>
+      <p class="tagline">Modern grill and garden. Press the button and talk to our host.</p>
+    </div>
+    <button id="call-button" type="button" data-state="idle" aria-label="Start the call">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="9" y="2" width="6" height="12" rx="3"></rect>
+        <path d="M5 10a7 7 0 0 0 14 0"></path>
+        <line x1="12" y1="17" x2="12" y2="22"></line>
+      </svg>
+    </button>
+    <label>Host voice<select id="voice-select" aria-label="Host voice"></select></label>
+    <p id="status" role="status">Loading voices…</p>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

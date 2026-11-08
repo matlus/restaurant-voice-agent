@@ -5,20 +5,29 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "voice-agent-web"
 version = "0.1.0"
-description = "Voice Agent Web application."
+description = "Web host for the restaurant voice agent: a microphone page and a WebSocket that relays audio to the conversation domain."
 readme = "README.md"
 requires-python = ">=3.14"
 license = "MIT"
 authors = [{ name = "Shiv Kumar" }]
 dependencies = [
-    "voice-agent-restaurant",
+    "fastapi>=0.120.0",
+    "python-dotenv>=1.1.0",
+    "uvicorn[standard]>=0.38.0",
+    "voice-agent-conversation",
+]
+
+[dependency-groups]
+dev = [
+    # Starlette's TestClient is built on httpx2.
+    "httpx2>=2.16.0",
 ]
 
 [tool.uv.sources]
-voice-agent-restaurant = { workspace = true }
+voice-agent-conversation = { workspace = true }
 
 [project.scripts]
-voice_agent_web = "voice_agent_web.main:main"
+voice_agent_web = "voice_agent_web.entry_point:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -26,7 +35,7 @@ include = ["voice_agent_web*"]
 namespaces = false
 
 [tool.setuptools.package-data]
-"voice_agent_web" = ["py.typed"]
+"voice_agent_web" = ["py.typed", "static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -34,5 +43,6 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra --strict-config --strict-markers --import-mode=importlib"
-pythonpath = ["src", "../../packages/voice-agent-restaurant/src"]
+pythonpath = ["src", "tests", "../../packages/voice-agent-conversation/src", "../../packages/voice-agent-conversation/tests", "../../packages/voice-agent-restaurant/src"]

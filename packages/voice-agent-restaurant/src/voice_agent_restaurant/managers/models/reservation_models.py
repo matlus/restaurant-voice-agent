@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from enum import StrEnum
@@ -6,6 +7,11 @@ from typing import Final
 # Confirmation codes avoid letters and digits that sound or look alike when read aloud (B/D/P, I/1, O/0, S/5, Z/2).
 CONFIRMATION_CODE_ALPHABET: Final[str] = "ACDEFGHJKMNPQRTUVWXY34679"
 CONFIRMATION_CODE_LENGTH: Final[int] = 6
+NATIONAL_PHONE_NUMBER_LENGTH: Final[int] = 10
+# The stored forms the store matches guests' codes and numbers in exactly; validation puts spoken values into these forms.
+# [0-9] rather than \d: in a str pattern \d also matches non-ASCII digits, which would be stored but never found again.
+STORED_CONFIRMATION_CODE_PATTERN: Final[re.Pattern[str]] = re.compile(f"[{re.escape(CONFIRMATION_CODE_ALPHABET)}]{{{CONFIRMATION_CODE_LENGTH}}}")
+STORED_PHONE_NUMBER_PATTERN: Final[re.Pattern[str]] = re.compile(f"[0-9]{{{NATIONAL_PHONE_NUMBER_LENGTH}}}")
 
 
 class ReservationStatus(StrEnum):
@@ -64,7 +70,8 @@ class ReservationSearchRequest:
 
 @dataclass(frozen=True)
 class ReservationChangeRequest:
-    """A change to a booking. A field left as None keeps its current value."""
+    """A change to a booking, found by its confirmation code. A phone number, when given, must be the booking's own.
+    Any other field left as None keeps its current value."""
 
     confirmation_code: str | None
     phone_number: str | None
@@ -82,10 +89,9 @@ class ReservationCancellationRequest:
 
 @dataclass(frozen=True)
 class BookingWindow:
-    """When a booking may start, judged at restaurant_now: no earlier than earliest_start and on or before last_date."""
+    """When a booking may start, judged at restaurant_now: not in the past and on or before last_date."""
 
     restaurant_now: datetime
-    earliest_start: datetime
     last_date: date
 
 
@@ -100,10 +106,10 @@ class RequestedSeating:
 
 @dataclass(frozen=True)
 class ReservationIdentity:
-    """What identifies a booking to a caller: its confirmation code and the phone number it was made with."""
+    """What identifies a booking to a caller: its confirmation code, and the phone number it was made with when the caller gives it."""
 
     confirmation_code: str
-    phone_number: str
+    phone_number: str | None
 
 
 @dataclass(frozen=True)
@@ -156,10 +162,27 @@ class NewReservation:
 
 
 @dataclass(frozen=True)
+class BookedSchedule:
+    """Everything about a booking that a change can rewrite: when and where it sits, for how many, and its notes."""
+
+    party_size: int
+    reservation_date: date
+    starts_at: time
+    ends_at: time
+    table_id: str
+    notes: str | None
+
+
+@dataclass(frozen=True)
 class ReservationReschedule:
-    """New seating details for an existing booking, which the store moves to the first free candidate table."""
+    """New seating details for an existing booking, which the store moves to the first free candidate table.
+
+    current_booked_schedule is the booking as it stood when the change was decided; the store applies the change only while
+    the booking still stands that way.
+    """
 
     confirmation_code: str
+    current_booked_schedule: BookedSchedule
     party_size: int
     reservation_date: date
     starts_at: time

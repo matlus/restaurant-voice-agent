@@ -33,7 +33,7 @@ class ManagerRestaurant:
         restaurant_profile: RestaurantProfile = await self._data_manager_restaurant.get_restaurant_profile()
         restaurant_today: date = self._get_restaurant_now(restaurant_profile.time_zone).date()
         weekly_hours: list[WeekdayHours] = await self._data_manager_restaurant.get_weekly_hours()
-        upcoming_closures: list[Closure] = await self._data_manager_restaurant.get_closures_between(
+        upcoming_closures: list[Closure] = await self._data_manager_restaurant.find_closures_between(
             restaurant_today, restaurant_today + timedelta(days=restaurant_profile.reservation_policy.booking_window_days)
         )
         return OpeningHours(
@@ -55,7 +55,7 @@ class ManagerRestaurant:
             return matching_dishes[0]
         raise DishNotFoundException(
             dish_name=dish_name,
-            close_match_names=DishNameMatching.get_suggested_names(dishes, matching_dishes, dish_name),
+            close_match_names=DishNameMatching.find_suggested_names(dishes, matching_dishes, dish_name),
             contextual_data_by_name={"Menu.RequestedDishName": dish_name, "Menu.MatchingDishCount": len(matching_dishes)},
         )
 

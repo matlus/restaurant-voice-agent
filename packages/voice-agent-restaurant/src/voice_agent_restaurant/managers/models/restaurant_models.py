@@ -47,7 +47,6 @@ class ReservationPolicy:
     minimum_party_size: int
     maximum_party_size: int
     booking_window_days: int
-    minimum_lead_time_minutes: int
     late_arrival_hold_minutes: int
     large_party_guidance: str
 

@@ -50,6 +50,18 @@ class SeedFile:
             raise self.fail(f"{value_path}.{key}", f"must be a whole number but was {value!r}")
         return value
 
+    def get_positive_number(self, source_object: JsonObject, key: str, value_path: str) -> int:
+        value: int = self.get_whole_number(source_object, key, value_path)
+        if value < 1:
+            raise self.fail(f"{value_path}.{key}", f"must be at least 1 but was {value}")
+        return value
+
+    def get_non_negative_number(self, source_object: JsonObject, key: str, value_path: str) -> int:
+        value: int = self.get_whole_number(source_object, key, value_path)
+        if value < 0:
+            raise self.fail(f"{value_path}.{key}", f"must not be negative but was {value}")
+        return value
+
     def get_flag(self, source_object: JsonObject, key: str, value_path: str) -> bool:
         value: JsonValue = self.get_value(source_object, key, value_path)
         if not isinstance(value, bool):

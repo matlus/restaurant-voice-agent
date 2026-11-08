@@ -1,7 +1,12 @@
+from collections.abc import Sequence
+from typing import Final
+
 from voice_agent_restaurant import RestaurantProfile
 
 
 class AsserterRestaurantProfile:
+    CHECKED_OBLIGATION_COUNT: Final[int] = 5
+
     @staticmethod
     def assert_seeded_profile_obligations_hold(
         *,
@@ -9,7 +14,7 @@ class AsserterRestaurantProfile:
         expected_time_zone: str,
         expected_seating_duration_minutes: int,
         expected_maximum_party_size: int,
-        expected_house_note_phrase: str,
+        expected_house_notes: Sequence[str],
         actual_restaurant_profile: RestaurantProfile,
     ) -> None:
         assertion_failures: list[str] = []
@@ -27,9 +32,11 @@ class AsserterRestaurantProfile:
                 f"Maximum party size: expected {expected_maximum_party_size}; "
                 f"actual {actual_restaurant_profile.reservation_policy.maximum_party_size}."
             )
-        if not any(expected_house_note_phrase in house_note for house_note in actual_restaurant_profile.house_notes):
-            assertion_failures.append(
-                f"House notes: expected one mentioning {expected_house_note_phrase!r}; actual {actual_restaurant_profile.house_notes!r}."
-            )
+        if actual_restaurant_profile.house_notes != list(expected_house_notes):
+            assertion_failures.append(f"House notes: expected {list(expected_house_notes)!r}; actual {actual_restaurant_profile.house_notes!r}.")
         failure_report: str = "\n".join(assertion_failures)
-        assert not failure_report, f"Restaurant profile assertions failed:\n{failure_report}"
+        assert not failure_report, (
+            f"The profile of {expected_restaurant_name!r} must hold the seeded values the agent tells a guest: its name, time zone, "
+            f"seating duration, largest party bookable by phone and house notes; {len(assertion_failures)} of "
+            f"{AsserterRestaurantProfile.CHECKED_OBLIGATION_COUNT} profile obligations unmet:\n{failure_report}"
+        )
