@@ -12,8 +12,8 @@ The restaurant domain for the voice agent. Everything goes through `DomainFacade
 | `check_availability` | Whether a table fits the party at a time, with up to three nearby open times when it does not. |
 | `create_reservation` | Books the smallest free table that fits and returns a six-character confirmation code. |
 | `find_reservations` | Upcoming bookings for a phone number. |
-| `change_reservation` | Changes date, time, party size or notes, given the confirmation code and phone number. |
-| `cancel_reservation` | Cancels a booking, given the confirmation code and phone number. |
+| `change_reservation` | Changes date, time, party size or notes, found by its confirmation code; a phone number given with it must match. |
+| `cancel_reservation` | Cancels a booking, found by its confirmation code; a phone number given with it must match. |
 
 Requests arrive as plain values (dates as `YYYY-MM-DD`, times as 24-hour `HH:MM`), the way a voice model's tool call
 supplies them. The validators normalize them (phone numbers to digits, confirmation codes to upper case, diet labels like

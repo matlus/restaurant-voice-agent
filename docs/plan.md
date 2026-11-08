@@ -15,7 +15,7 @@ has one microphone button and no transcript. You press it, talk, and hear the ag
 | Restaurant | Ember & Sprout, a "modern grill and garden" with one location and 32 dishes. |
 | Diet labels | Vegan, vegetarian, pescatarian, keto, carnivore and paleo from the recipe. Gluten-free, dairy-free and nut-free derived from allergens. |
 | Allergens | The nine major US allergens. |
-| Reservations | The full lifecycle: check, book, look up by phone, change and cancel. Changing or cancelling needs the confirmation code and the phone number. |
+| Reservations | The full lifecycle: check, book, look up by phone, change and cancel. Changing or cancelling needs only the confirmation code; a caller without it is looked up by phone. |
 | Storage | A local SQLite file, seeded from JSON on first use. |
 | Secrets | API keys in a gitignored `.env`. `.env.example` is committed. |
 | Practice | PWI (see `AGENTS.md`). |
@@ -49,10 +49,11 @@ For Vapi, the same facade operations are exposed as HTTP endpoints, and Vapi cal
 | Scaffold the repo and adopt PWI | Done |
 | Seed data: restaurant, hours, closures, tables, menu, existing bookings | Done |
 | Restaurant domain with acceptance tests (46 tests), PWI review findings fixed | Done |
-| OpenAI Realtime adapter and browser audio, end to end (conversation package, web host, microphone page) | Built; live call not yet tried |
-| Connect the tools: menu questions and bookings by voice | Next |
-| Gemini Live adapter and the voice catalog | |
-| Interruption polish, a latency check, README | |
+| OpenAI Realtime adapter and browser audio, end to end (conversation package, web host, microphone page) | Done |
+| Connect the tools: menu questions and bookings by voice | Done |
+| Voice catalog (four OpenAI voices) | Done |
+| Gemini Live adapter | Next |
+| Interruption, a latency check (turn detection), README | Done |
 | Phase 2: HTTP tool endpoints and hosting on Vapi | |
 
 ## Voices

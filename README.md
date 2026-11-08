@@ -1,55 +1,223 @@
 # Restaurant Voice Agent
 
-A real-time voice agent for a fictional restaurant, **Ember & Sprout**. You press a microphone button in a
-browser, talk, and hear the agent answer in real time. It can describe the menu, answer ingredient, allergen,
-calorie and diet questions, give opening hours, and check, book, change and cancel reservations.
+A voice agent that answers the phone for a fictional restaurant, **Ember & Sprout**. You open a page in your browser,
+press the call button and talk. The agent answers out loud, in real time, like a host picking up the phone. It answers
+questions about the menu, diets, allergens and opening hours, and it checks availability and books, finds, changes and
+cancels reservations. Every answer comes from the restaurant's own data, never from the model's imagination.
 
-The voice side will support two providers, chosen per session: the OpenAI Realtime API and the Gemini Live API.
-See [docs/plan.md](docs/plan.md) for the full plan and what is built so far.
+It runs locally today, on the OpenAI Realtime API. Support for a second voice provider and for hosting on a telephony
+platform are planned (see [What's next](#whats-next)).
 
-## Layout
+## What a caller can do
+
+### Ask about the food
+
+- **Find dishes for a diet:** vegan, vegetarian, pescatarian, keto, carnivore or paleo, plus gluten-free, dairy-free
+  and nut-free. Ask "What do you have that's keto?" and the agent names two or three that fit best, then offers more.
+- **Avoid allergens:** the nine major US allergens (milk, eggs, fish, shellfish, tree nuts, peanuts, wheat, soy and
+  sesame). Ask for dishes without sesame, or whether a dish has nuts.
+- **Narrow it down:** by menu section (starters, garden, mains, sides, desserts, drinks), by a calorie limit, or by a
+  word such as "salmon" or "mushroom".
+- **Hear about one dish:** what's in it, its price, calories, protein, carbohydrate and fat, its allergens and any
+  shared-kitchen (cross-contact) note. A dish can be named loosely, like "the ribeye" or "your scallops".
+
+### Ask about hours
+
+The agent gives the weekly hours and any holiday closures in the coming weeks. It says times the way people do on the
+phone, like "5 to 10 PM", not "17:00".
+
+### Book a table
+
+- **Check availability** for a date, time and party size. If nothing fits, the agent offers up to three of the nearest
+  open times that day. If the day is fully booked, it says so.
+- **Book** with a name and phone number. Before booking, the agent checks the details in one short line and waits for
+  a yes. It then gives a six-character confirmation code, slowly, one character at a time.
+- **Find bookings** by phone number, for a caller who doesn't have their code.
+- **Change** the date, time, party size or notes of a booking.
+- **Cancel** a booking.
+
+To change or cancel, the confirmation code alone is enough. A caller who doesn't have it gives their phone number, and
+the agent looks the booking up. If a request can't be done, for example because the restaurant is closed that day or
+the time is too close to closing, the agent explains why in plain words and offers what the restaurant suggests.
+
+### How the agent talks
+
+The agent is meant to sound like a relaxed person who works there, not a call center. Replies are short, usually one
+sentence. It uses everyday words, avoids stiff phrases like "Certainly!" or "I'd be happy to assist", and asks one
+thing at a time. A caller can interrupt at any point, and the agent stops talking and listens.
+
+The agent knows the restaurant's current local date and time, so "tonight" or "this Friday" resolve to the right date.
+
+Four voices are available, picked on the page before a call: Marin and Coral (female), and Cedar and Ash (male).
+
+## Try it: test scenarios
+
+The seed data sets up situations worth calling about. Seed bookings land on the next occurrence of their weekday after
+the store is created (today counts), so the scenarios stay in the future.
+
+| Scenario | What to try |
+| --- | --- |
+| Busy Friday evening | Every 4-person table is taken around 7 PM. Ask for four at 7 and hear other times offered. A party of two still fits. |
+| Fully booked Tuesday | Every table is taken all evening. Any request gets "nothing available that day". |
+| Nearly full Wednesday | Only 6:30 PM and 8:30 PM are left, for up to four people. Ask for 7 and hear those two offered. |
+| Closed Monday | The restaurant doesn't open on Mondays. |
+| Holidays | Closed on Thanksgiving, Christmas Eve, Christmas Day and New Year's Day. |
+| Existing booking | Priya Raman has a Friday booking under phone number 555-010-1001, confirmation code `KX4TPA`. Change or cancel it. |
+| Large party | Parties over eight are pointed to the private dining room instead. |
+
+To start over with fresh data, stop the app and delete the SQLite file (`data/restaurant.sqlite3` by default). It is
+created and seeded again on the next run.
+
+## The restaurant
+
+Ember & Sprout is "a modern grill and garden kitchen" at 418 Juniper Street, Riverton, Illinois, in the Central time
+zone. It opens Tuesday to Thursday 5–10 PM, Friday 5–11 PM, Saturday noon–11 PM and Sunday 11 AM–9 PM.
+
+- **Menu:** 32 dishes across starters, garden plates, mains, sides, desserts and drinks. Every dish lists its
+  ingredients, nutrition, allergens and the diets it suits.
+- **Diet labels:** the lifestyle diets (vegan, vegetarian, pescatarian, keto, carnivore, paleo) come from the recipe.
+  The free-from labels (gluten-free, dairy-free, nut-free) are derived from the allergen data, so the two can never
+  disagree. A test checks the whole menu for consistency: for example, every vegan dish is also vegetarian and
+  contains no milk or eggs, and every keto dish has at most 15 g of carbohydrate.
+- **Tables:** 15 tables, from 2 to 8 seats, in the window, main room and garden room.
+- **Reservation rules:** a seating lasts 90 minutes. Bookable times fall every 15 minutes, and a seating must end by
+  closing time. Parties are 1 to 8 people, and bookings open up to 60 days ahead. A booking takes the smallest free
+  table that fits the party.
+
+## How it works
+
+```text
+Browser page: call button, voice choice, microphone audio
+   |  WebSocket /conversation: 16-bit PCM audio up; agent audio and JSON events down
+Web host (apps/voice-agent-web, FastAPI)
+   |
+Conversation domain (packages/voice-agent-conversation)
+   |  realtime voice gateway                 agent toolbox (8 tools)
+   +--> OpenAI Realtime API                  +--> Restaurant domain (packages/voice-agent-restaurant)
+        speech in, speech out                          |
+        asks for tool calls                       SQLite, seeded from JSON
+```
+
+A call goes like this:
+
+1. The page opens a WebSocket to the host with the chosen voice. The host calls the conversation domain once and
+   relays everything in both directions.
+2. The conversation domain opens a session with the speech model. The session carries the agent's instructions (its
+   role, how to talk, the restaurant's local date and time) and the eight tool definitions.
+3. Audio streams both ways as it is spoken. Turn detection decides when the caller has finished: the turn ends after
+   half a second of silence. When the caller talks over the agent, the page stops playback at once ("barge-in").
+4. When the model needs a fact, it asks for a **tool call**, which means it names a tool and passes arguments as JSON.
+   The toolbox checks the arguments, runs the tool against the restaurant domain, and sends the result back. The model
+   then answers out loud.
+
+### The tools
+
+| Tool | What it does |
+| --- | --- |
+| `search_menu` | Dishes matching diets, excluded allergens, section, calorie limit and search words. |
+| `describe_dish` | One dish in full, found by a loose name. |
+| `get_opening_hours` | Weekly hours and upcoming holiday closures. |
+| `check_availability` | Whether a table fits, with nearby open times when it doesn't. |
+| `book_table` | Books a table and returns the confirmation code. |
+| `find_bookings` | Upcoming bookings for a phone number. |
+| `change_booking` | Changes date, time, party size or notes. |
+| `cancel_booking` | Cancels a booking. |
+
+Each tool is a standalone class with a Pydantic input model. Pydantic is a validation library, and here it also
+produces the JSON schema that tells the model what arguments the tool takes. The toolbox treats three outcomes
+differently:
+
+- **A refusal from the restaurant**, such as "closed that day" or "no table free", comes back to the model as an
+  answer with the reason, which the agent relays to the caller. It is not an error.
+- **A malformed call**, such as an unknown tool or bad arguments, goes back to the model with what was wrong so it can
+  correct itself. A call allows three such corrections; the next malformed call ends the conversation with an error.
+- **A technical failure**, such as a database error, ends the conversation and is logged.
+
+## Repository layout
+
+This is a [uv](https://docs.astral.sh/uv/) workspace: one repository holding several Python packages that are
+developed together.
 
 | Path | What it is |
 | --- | --- |
-| `packages/voice-agent-restaurant` | The restaurant domain: profile, hours, menu, allergens, diets and reservations, behind one `DomainFacade`. No voice or web code. |
-| `packages/voice-agent-restaurant/src/voice_agent_restaurant/seed_data` | The fictional restaurant: 32 dishes, hours, holiday closures, 15 tables and a few existing bookings. |
-| `apps/voice-agent-web` | The web host (FastAPI and a one-button page). Not built yet. |
+| `packages/voice-agent-restaurant` | The restaurant domain: profile, hours, menu, diets, allergens and reservations, behind one `DomainFacade`. Knows nothing about voice or the web. Includes the seed data in `seed_data/`. |
+| `packages/voice-agent-conversation` | Voice conversations: the speech-provider gateway, the agent's instructions, the voice catalog and the agent tools, behind one `DomainFacade`. |
+| `apps/voice-agent-web` | The web host: a FastAPI app with the page, `GET /voices` and the `/conversation` WebSocket. |
+| `docs/plan.md` | The original plan and design decisions. |
 
-## The restaurant data
-
-Every dish lists its ingredients, nutrition (calories, protein, carbohydrate, fat), the nine major US allergens it
-contains (milk, eggs, fish, shellfish, tree nuts, peanuts, wheat, soy, sesame), and the diets it suits:
-
-- **Lifestyle diets**, set by the recipe: vegan, vegetarian, pescatarian, keto, carnivore, paleo.
-- **Free-from labels**, derived from the allergen data so they can never disagree with it: gluten-free, dairy-free,
-  nut-free.
-
-A test checks the whole menu for consistency, for example that every vegan dish is also vegetarian and contains no
-milk or eggs, and that every keto dish stays at or under 15 g of carbohydrate.
-
-The data lives in a local SQLite file. It is created and seeded the first time it is used. The seeded bookings land
-on the coming Friday, Saturday and Sunday, and every 4-top is taken around 19:00 on Friday, so you can try a booking
-that does not fit and hear the agent offer other times. Delete the file to start over.
+Each package has its own README with more detail.
 
 ## Getting started
 
-You need [uv](https://docs.astral.sh/uv/) and Python 3.14.
+You need [uv](https://docs.astral.sh/uv/), Python 3.14 and an OpenAI API key with access to the Realtime API.
 
-```powershell
+```bash
 uv sync --all-packages --all-groups
-Copy-Item .env.example .env
+cp .env.example .env
 ```
 
-## Checks
+Put your OpenAI key in `.env` as `OPENAI_API_KEY`. `.env` is gitignored; never put a real key in `.env.example`. Then
+start the app:
+
+```bash
+uv run --all-packages voice_agent_web
+```
+
+Open http://127.0.0.1:8000, choose a voice and press the call button. The browser asks for microphone access once.
+
+### Settings
+
+| Variable | Required | What it sets |
+| --- | --- | --- |
+| `OPENAI_API_KEY` | Yes | Your OpenAI API key. |
+| `VOICE_AGENT_RESTAURANT_DATABASE_PATH` | Yes | Where the SQLite store lives, such as `data/restaurant.sqlite3`. Created and seeded if missing. |
+| `VOICE_AGENT_OPENAI_REALTIME_MODEL` | No | The speech model. Defaults to `gpt-realtime-2.1`. `gpt-realtime-2.1-mini` costs less. |
+| `VOICE_AGENT_OPENAI_REALTIME_WEBSOCKET_BASE_URL` | No | Another Realtime address. Tests use this to point at a scripted service. |
+| `VOICE_AGENT_WEB_HOST` / `VOICE_AGENT_WEB_PORT` | No | Where the web app listens. Defaults to `127.0.0.1` and `8000`. |
+
+## Development
+
+### Checks
 
 Run these from the repository root before committing:
 
-```powershell
-uv run ruff check packages apps
-uv run ruff format --check packages apps
-uv run pyright
-uv run pytest -q
+```bash
+uv run --all-packages --all-groups ruff check .
+uv run --all-packages --all-groups ruff format --check .
+uv run --all-packages --all-groups pyright
+uv run --all-packages --all-groups pytest -q
 ```
+
+### Tests
+
+There are 122 tests, and they never call OpenAI. Most are acceptance tests: they drive each package through its
+public `DomainFacade` the way a real caller would, against a real SQLite store seeded from the bundled data. For voice,
+the real OpenAI gateway connects over a real WebSocket to a scripted Realtime service that the tests run on the local
+machine. That service plays back the events a real session would send, including tool calls, and records what the
+gateway sent in reply.
+
+### How the code is organized
+
+The code follows Programming with Intent (PWI), a set of design and review guidelines. In short:
+
+- Each package exposes one `DomainFacade` as its only public entry point. Hosts stay thin: the web app reads the
+  request, calls the facade once and relays the result. Business rules never live in the host.
+- Inside a package, managers coordinate the work, validators check every input first, and data managers and gateways
+  talk to SQLite and to OpenAI. A service locator wires these together, and tests swap in their own pieces through it.
+- Every exception derives from a business or technical base exception. Exceptions are logged only at the host's
+  boundary, and a technical error's details never reach the caller.
+- Everything from the host down is async.
+
+## What's next
+
+- **Restaurant details by voice:** the address, phone number, parking and accessibility notes are in the data, but no
+  tool exposes them to the agent yet.
+- **Gemini Live** as a second speech provider, chosen per call.
+- **Hosting on a telephony platform** (Vapi), so the agent answers a real phone number, with the same restaurant
+  operations exposed as HTTP tool endpoints.
+
+Today the app is a local demo. It has no sign-in, sends no confirmation texts or emails, and keeps its data in a local
+SQLite file.
 
 ## License
 
