@@ -12,6 +12,7 @@ license = "MIT"
 authors = [{ name = "Shiv Kumar" }]
 dependencies = [
     "openai[realtime]>=3.46.0",
+    "pydantic>=2.14.3",
     "voice-agent-restaurant",
 ]
 

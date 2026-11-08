@@ -70,7 +70,8 @@ class ReservationSearchRequest:
 
 @dataclass(frozen=True)
 class ReservationChangeRequest:
-    """A change to a booking. A field left as None keeps its current value."""
+    """A change to a booking, found by its confirmation code. A phone number, when given, must be the booking's own.
+    Any other field left as None keeps its current value."""
 
     confirmation_code: str | None
     phone_number: str | None
@@ -105,10 +106,10 @@ class RequestedSeating:
 
 @dataclass(frozen=True)
 class ReservationIdentity:
-    """What identifies a booking to a caller: its confirmation code and the phone number it was made with."""
+    """What identifies a booking to a caller: its confirmation code, and the phone number it was made with when the caller gives it."""
 
     confirmation_code: str
-    phone_number: str
+    phone_number: str | None
 
 
 @dataclass(frozen=True)

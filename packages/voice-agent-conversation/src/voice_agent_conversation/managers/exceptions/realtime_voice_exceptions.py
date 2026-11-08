@@ -13,6 +13,7 @@ class LogEventRealtimeVoice(LogEventBase):
     SESSION_CONFIGURATION = "RealtimeVoiceSessionConfiguration"
     GUEST_AUDIO_SEND = "RealtimeVoiceGuestAudioSend"
     AGENT_RESPONSE_REQUEST = "RealtimeVoiceAgentResponseRequest"
+    TOOL_RESULT_SEND = "RealtimeVoiceToolResultSend"
     EVENT_RECEIPT = "RealtimeVoiceEventReceipt"
     SESSION_CLOSE = "RealtimeVoiceSessionClose"
     CLIENT_CLOSE = "RealtimeVoiceClientClose"

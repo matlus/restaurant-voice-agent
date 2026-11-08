@@ -84,8 +84,8 @@ class ValidatorReservationRequests:
         phone_number: str | None = cls._as_phone_number(reservation_cancellation_request.phone_number)
         validation_problems: list[str] = []
         validation_problems.extend(cls._collect_confirmation_code_problems(confirmation_code))
-        validation_problems.extend(cls._collect_phone_number_problems(phone_number))
-        if confirmation_code is None or phone_number is None or validation_problems:
+        validation_problems.extend(cls._collect_optional_phone_number_problems(phone_number))
+        if confirmation_code is None or validation_problems:
             raise cls._create_validation_exception(validation_problems)
         return ReservationIdentity(confirmation_code=confirmation_code, phone_number=phone_number)
 
@@ -100,14 +100,14 @@ class ValidatorReservationRequests:
         notes: str | None = ReservationValueParsing.as_provided(reservation_change_request.notes)
         validation_problems: list[str] = []
         validation_problems.extend(cls._collect_confirmation_code_problems(confirmation_code))
-        validation_problems.extend(cls._collect_phone_number_problems(phone_number))
+        validation_problems.extend(cls._collect_optional_phone_number_problems(phone_number))
         validation_problems.extend(
             cls._collect_requested_change_problems(reservation_date_text, reservation_time_text, reservation_change_request.party_size, notes)
         )
         validation_problems.extend(cls._collect_optional_date_problems(reservation_date_text))
         validation_problems.extend(cls._collect_optional_time_problems(reservation_time_text))
         validation_problems.extend(cls._collect_notes_problems(notes))
-        if confirmation_code is None or phone_number is None or validation_problems:
+        if confirmation_code is None or validation_problems:
             raise cls._create_validation_exception(validation_problems)
         return ValidatedReservationChange(
             reservation_identity=ReservationIdentity(confirmation_code=confirmation_code, phone_number=phone_number),
@@ -256,6 +256,10 @@ class ValidatorReservationRequests:
         if len(guest_name) > cls.MAXIMUM_GUEST_NAME_LENGTH:
             return [f"'guest_name' must contain at most {cls.MAXIMUM_GUEST_NAME_LENGTH} characters"]
         return []
+
+    @classmethod
+    def _collect_optional_phone_number_problems(cls, phone_number: str | None) -> list[str]:
+        return [] if phone_number is None else cls._collect_phone_number_problems(phone_number)
 
     @staticmethod
     def _collect_phone_number_problems(phone_number: str | None) -> list[str]:

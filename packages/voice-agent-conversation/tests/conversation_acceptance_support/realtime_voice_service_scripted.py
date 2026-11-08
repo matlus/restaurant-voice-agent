@@ -71,13 +71,24 @@ class ResponseDoneEventMessage(TypedDict):
     response: ResponseMessage
 
 
+class FunctionCallArgumentsDoneEventMessage(TypedDict):
+    type: Literal["response.function_call_arguments.done"]
+    event_id: str
+    response_id: str
+    item_id: str
+    output_index: int
+    call_id: str
+    name: str
+    arguments: str
+
+
 class SessionEventMessage(TypedDict):
     type: Literal["session.created", "session.updated"]
     event_id: str
     session: dict[str, object]
 
 
-type ScriptedServerEventMessage = SpeechStartedEventMessage | ErrorEventMessage | ResponseDoneEventMessage
+type ScriptedServerEventMessage = SpeechStartedEventMessage | ErrorEventMessage | ResponseDoneEventMessage | FunctionCallArgumentsDoneEventMessage
 type ServerEventMessage = ScriptedServerEventMessage | OutputAudioDeltaEventMessage | SessionEventMessage
 
 
@@ -92,9 +103,17 @@ class AudioSettingsMessage(TypedDict):
     output: AudioOutputSettingsMessage
 
 
+class FunctionToolMessage(TypedDict):
+    type: Literal["function"]
+    name: str
+    description: str
+    parameters: dict[str, object]
+
+
 class SessionSettingsMessage(TypedDict):
     instructions: str
     audio: AudioSettingsMessage
+    tools: list[FunctionToolMessage]
 
 
 class SessionUpdateEventMessage(TypedDict):
@@ -105,6 +124,17 @@ class SessionUpdateEventMessage(TypedDict):
 class InputAudioBufferAppendEventMessage(TypedDict):
     type: Literal["input_audio_buffer.append"]
     audio: str
+
+
+class FunctionCallOutputItemMessage(TypedDict):
+    type: Literal["function_call_output"]
+    call_id: str
+    output: str
+
+
+class ConversationItemCreateEventMessage(TypedDict):
+    type: Literal["conversation.item.create"]
+    item: FunctionCallOutputItemMessage
 
 
 def create_speech_started_event() -> SpeechStartedEventMessage:
@@ -128,12 +158,42 @@ def create_failed_response_event(error_type: str, error_code: str | None, error_
     }
 
 
+def create_tool_call_events(call_id: str, tool_name: str, arguments_json: str) -> list[ScriptedServerEventMessage]:
+    """A reply in which the model calls one tool and says nothing, as OpenAI sends it."""
+    return [
+        {
+            "type": "response.function_call_arguments.done",
+            "event_id": f"event_{call_id}_arguments",
+            "response_id": f"response_{call_id}",
+            "item_id": f"item_{call_id}",
+            "output_index": 0,
+            "call_id": call_id,
+            "name": tool_name,
+            "arguments": arguments_json,
+        },
+        {
+            "type": "response.done",
+            "event_id": f"event_{call_id}_done",
+            "response": {"id": f"response_{call_id}", "object": "realtime.response", "status": "completed", "status_details": None},
+        },
+    ]
+
+
 @dataclass(frozen=True)
 class CapturedSessionSettings:
     """The session settings one session.update carried, as the service received them."""
 
     agent_instructions: str
     provider_voice_id: str
+    tool_names: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CapturedToolOutput:
+    """One answer to a tool call, as the client sent it back."""
+
+    call_id: str
+    output: str
 
 
 @dataclass
@@ -143,6 +203,7 @@ class CapturedRealtimeSession:
     model: str | None
     session_settings: list[CapturedSessionSettings] = field(default_factory=list[CapturedSessionSettings])
     guest_audio: list[bytes] = field(default_factory=list[bytes])
+    tool_outputs: list[CapturedToolOutput] = field(default_factory=list[CapturedToolOutput])
     agent_response_request_count: int = 0
     was_closed_by_client: bool = False
 
@@ -152,10 +213,10 @@ class RealtimeVoiceServiceScripted:
 
     The production gateway connects to it through its configured WebSocket base URL, so every line of the
     gateway, the session and its exception translator runs exactly as it does against OpenAI; only the far
-    end of the wire is scripted. It confirms session settings, greets when asked for a response, and answers
-    each piece of guest audio with the scripted events. It can also refuse the WebSocket handshake with an
-    HTTP status, refuse an accepted connection by closing it the way OpenAI does for an invalid API key, or
-    reject the session settings with a provider error event.
+    end of the wire is scripted. It confirms session settings, greets when asked for a response, answers
+    each piece of guest audio with the scripted events, and captures every tool answer the client sends.
+    It can also refuse the WebSocket handshake with an HTTP status, refuse an accepted connection by closing
+    it the way OpenAI does for an invalid API key, or reject the session settings with a provider error event.
 
     It runs on its own thread and event loop, so asynchronous acceptance tests and the synchronous web
     test client can both use it. Read what it captured after it has stopped: stopping waits for every
@@ -269,6 +330,12 @@ class RealtimeVoiceServiceScripted:
                 scripted_server_event_message: ScriptedServerEventMessage
                 for scripted_server_event_message in self._events_after_each_guest_audio:
                     await self._send_event(server_connection, scripted_server_event_message)
+            case "conversation.item.create":
+                conversation_item_create_event_message: ConversationItemCreateEventMessage = cast(ConversationItemCreateEventMessage, client_event)
+                function_call_output_item_message: FunctionCallOutputItemMessage = conversation_item_create_event_message["item"]
+                captured_realtime_session.tool_outputs.append(
+                    CapturedToolOutput(call_id=function_call_output_item_message["call_id"], output=function_call_output_item_message["output"])
+                )
             case _:
                 pass
 
@@ -281,7 +348,9 @@ class RealtimeVoiceServiceScripted:
         session_settings_message: SessionSettingsMessage = session_update_event_message["session"]
         captured_session_settings.append(
             CapturedSessionSettings(
-                agent_instructions=session_settings_message["instructions"], provider_voice_id=session_settings_message["audio"]["output"]["voice"]
+                agent_instructions=session_settings_message["instructions"],
+                provider_voice_id=session_settings_message["audio"]["output"]["voice"],
+                tool_names=tuple(function_tool_message["name"] for function_tool_message in session_settings_message["tools"]),
             )
         )
         if self._session_update_error_event_message is not None:

@@ -112,7 +112,7 @@ class TestDataManagerReservationsReschedule:
         async with create_domain_facade(restaurant_database_path) as domain_facade:
             read_reservation: Reservation = await read_seeded_booking(domain_facade, SEEDED_PRIYA_PHONE)
             stale_reservation_reschedule: ReservationReschedule = create_notes_reschedule(read_reservation, create_generated_note())
-            expected_message_phrases: list[str] = [read_reservation.confirmation_code, "No current reservation was found"]
+            expected_message_phrases: list[str] = [read_reservation.confirmation_code, "No current reservation matches confirmation code"]
             expected_contextual_data_by_name: dict[str, str] = {"Reservation.ConfirmationCode": read_reservation.confirmation_code}
             await domain_facade.cancel_reservation(
                 ReservationCancellationRequest(confirmation_code=read_reservation.confirmation_code, phone_number=SEEDED_PRIYA_PHONE)

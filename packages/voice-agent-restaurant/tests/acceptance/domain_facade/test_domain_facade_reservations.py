@@ -47,6 +47,10 @@ from voice_agent_restaurant import (
 BUSY_FRIDAY: Final[str] = "2026-11-06"
 QUIET_THURSDAY: Final[str] = "2026-11-05"
 CLOSED_MONDAY: Final[str] = "2026-11-09"
+# The seed books every table all evening on Tuesday, and leaves Wednesday, today, with only two times for up to four.
+FULLY_BOOKED_TUESDAY: Final[str] = "2026-11-10"
+NEARLY_FULL_WEDNESDAY: Final[str] = "2026-11-04"
+NEARLY_FULL_WEDNESDAY_OPEN_TIMES: Final[list[time]] = [time(18, 30), time(20, 30)]
 SEEDED_PRIYA_PHONE: Final[str] = "5550101001"
 SEEDED_SAM_PHONE: Final[str] = "5550101010"
 FULLWIDTH_DIGIT_ZERO_CODE_POINT: Final[int] = 0xFF10
@@ -238,6 +242,38 @@ class TestCheckAvailability:
             )
             actual_availability_result: AvailabilityResult = await domain_facade.check_availability(
                 AvailabilityRequest(reservation_date=BUSY_FRIDAY, reservation_time=f"{requested_time:%H:%M}", party_size=party_size)
+            )
+
+        assert actual_availability_result == expected_availability_result
+
+    async def test_CheckAvailability_WhenEveryTableIsTakenAllEvening_ThenNoOtherTimeIsOffered(self, restaurant_database_path: Path) -> None:
+        expected_availability_result: AvailabilityResult = AvailabilityResult(
+            reservation_date=date.fromisoformat(FULLY_BOOKED_TUESDAY),
+            requested_time=time(19, 0),
+            party_size=2,
+            is_available=False,
+            alternative_times=[],
+        )
+
+        async with create_domain_facade(restaurant_database_path) as domain_facade:
+            actual_availability_result: AvailabilityResult = await domain_facade.check_availability(
+                AvailabilityRequest(reservation_date=FULLY_BOOKED_TUESDAY, reservation_time="19:00", party_size=2)
+            )
+
+        assert actual_availability_result == expected_availability_result
+
+    async def test_CheckAvailability_WhenOnlyTwoTimesAreLeft_ThenThoseTwoAreOffered(self, restaurant_database_path: Path) -> None:
+        expected_availability_result: AvailabilityResult = AvailabilityResult(
+            reservation_date=date.fromisoformat(NEARLY_FULL_WEDNESDAY),
+            requested_time=time(19, 0),
+            party_size=2,
+            is_available=False,
+            alternative_times=NEARLY_FULL_WEDNESDAY_OPEN_TIMES,
+        )
+
+        async with create_domain_facade(restaurant_database_path) as domain_facade:
+            actual_availability_result: AvailabilityResult = await domain_facade.check_availability(
+                AvailabilityRequest(reservation_date=NEARLY_FULL_WEDNESDAY, reservation_time="19:00", party_size=2)
             )
 
         assert actual_availability_result == expected_availability_result
@@ -688,7 +724,7 @@ class TestChangeReservation:
             current_reservation: Reservation = await read_seeded_booking(domain_facade, SEEDED_PRIYA_PHONE)
             expected_message_phrases: list[str] = [
                 current_reservation.confirmation_code,
-                "and that phone number",
+                "Check the code",
                 "look the reservation up by phone number",
             ]
             expected_contextual_data_by_name: dict[str, str] = {CONFIRMATION_CODE_CONTEXT_NAME: current_reservation.confirmation_code}
@@ -792,6 +828,18 @@ class TestCancelReservation:
         assert actual_found_reservations == expected_found_reservations
         assert actual_availability_result == expected_availability_result
 
+    async def test_CancelReservation_WhenOnlyTheConfirmationCodeIsGiven_ThenTheBookingIsCancelled(self, restaurant_database_path: Path) -> None:
+        async with create_domain_facade(restaurant_database_path) as domain_facade:
+            current_reservation: Reservation = await read_unstarted_seeded_booking(
+                domain_facade, SEEDED_PRIYA_PHONE, "Cancelling a booking by its confirmation code alone"
+            )
+            expected_cancelled_reservation: Reservation = replace(current_reservation, reservation_status=ReservationStatus.CANCELLED)
+            actual_cancelled_reservation: Reservation = await domain_facade.cancel_reservation(
+                ReservationCancellationRequest(confirmation_code=current_reservation.confirmation_code, phone_number=None)
+            )
+
+        assert actual_cancelled_reservation == expected_cancelled_reservation
+
     async def test_CancelReservation_WhenTheBookingIsAlreadyCancelled_ThenItIsNotFound(self, restaurant_database_path: Path) -> None:
         expected_exception_metadata: ExpectedExceptionMetadata = ExpectedExceptionMetadata(
             http_status_code=404,
@@ -807,7 +855,7 @@ class TestCancelReservation:
             reservation_cancellation_request: ReservationCancellationRequest = ReservationCancellationRequest(
                 confirmation_code=current_reservation.confirmation_code, phone_number=SEEDED_PRIYA_PHONE
             )
-            expected_message_phrases: list[str] = [current_reservation.confirmation_code, "and that phone number"]
+            expected_message_phrases: list[str] = [current_reservation.confirmation_code, "Check the code"]
             expected_contextual_data_by_name: dict[str, str] = {CONFIRMATION_CODE_CONTEXT_NAME: current_reservation.confirmation_code}
             await domain_facade.cancel_reservation(reservation_cancellation_request)
             with pytest.raises(ReservationNotFoundException) as raised:

@@ -122,13 +122,12 @@ class NoTableAvailableException(VoiceAgentRestaurantBusinessBaseException):
 
 @final
 class ReservationNotFoundException(VoiceAgentRestaurantBusinessBaseException):
-    """No booked reservation has this confirmation code and phone number. Which of the two was wrong is never revealed."""
+    """No booked reservation matches the confirmation code, or the phone number given with it. Which was wrong is never revealed."""
 
     def __init__(self, confirmation_code: str, contextual_data_by_name: ContextualDataDict | None = None) -> None:
         super().__init__(
             message=(
-                f"No current reservation was found with confirmation code '{confirmation_code}' and that phone number. "
-                "Check both, or look the reservation up by phone number."
+                f"No current reservation matches confirmation code '{confirmation_code}'. Check the code, or look the reservation up by phone number."
             ),
             log_event=LogEventReservation.RESERVATION_LOOKUP,
             contextual_data_by_name=contextual_data_by_name,

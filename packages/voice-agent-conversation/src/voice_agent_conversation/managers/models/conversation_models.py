@@ -64,9 +64,35 @@ class AgentTurnFinished:
     """The agent finished, or abandoned, its current reply."""
 
 
+@dataclass(frozen=True)
+class AgentToolCallRequested:
+    """The speech model asks to run one of its tools. The answer goes back under the same call_id.
+
+    arguments_json is the model's arguments exactly as it sent them; the tool checks them against its input.
+    """
+
+    call_id: str
+    tool_name: str
+    arguments_json: str
+
+
 type ConversationEvent = ConversationStarted | AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished
 
-type VoiceSessionEvent = AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished
+type AgentSessionEvent = AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished
+
+type VoiceSessionEvent = AgentSessionEvent | AgentToolCallRequested
+
+# A JSON Schema document, as the speech model reads a tool's parameters.
+type JsonSchema = dict[str, object]
+
+
+@dataclass(frozen=True)
+class AgentToolDefinition:
+    """One tool the speech model may call, described in a provider-neutral way. Each gateway sends it in its provider's form."""
+
+    name: str
+    description: str
+    parameters_schema: JsonSchema
 
 
 @dataclass(frozen=True)
@@ -75,3 +101,4 @@ class VoiceSessionSettings:
 
     provider_voice_id: str
     agent_instructions: str
+    agent_tool_definitions: tuple[AgentToolDefinition, ...]

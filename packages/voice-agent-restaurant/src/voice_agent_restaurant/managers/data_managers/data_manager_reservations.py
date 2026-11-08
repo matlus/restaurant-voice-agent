@@ -158,8 +158,16 @@ class DataManagerReservations:
         try:
             with self._restaurant_store_connector.open_connection() as connection:
                 reservation_row: sqlite3.Row | None = connection.execute(
-                    f"SELECT {self._RESERVATION_COLUMNS} FROM reservations WHERE confirmation_code = ? AND phone_number = ? AND status = ?",  # noqa: S608 - constant column list
-                    (reservation_identity.confirmation_code, reservation_identity.phone_number, ReservationStatus.BOOKED.value),
+                    f"""
+                    SELECT {self._RESERVATION_COLUMNS} FROM reservations
+                    WHERE confirmation_code = ? AND (? IS NULL OR phone_number = ?) AND status = ?
+                    """,  # noqa: S608 - constant column list
+                    (
+                        reservation_identity.confirmation_code,
+                        reservation_identity.phone_number,
+                        reservation_identity.phone_number,
+                        ReservationStatus.BOOKED.value,
+                    ),
                 ).fetchone()
         except (sqlite3.Error, OSError) as store_error:
             raise TranslatorRestaurantStoreExceptions.translate(

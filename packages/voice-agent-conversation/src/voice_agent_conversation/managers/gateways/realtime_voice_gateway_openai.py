@@ -6,6 +6,7 @@ from typing import Final, NoReturn, final, override
 from openai import AsyncOpenAI, OpenAIError
 from openai.resources.realtime.realtime import AsyncRealtimeConnection
 from openai.types.realtime import RealtimeResponseStatus, RealtimeServerEvent
+from openai.types.realtime.realtime_function_tool_param import RealtimeFunctionToolParam
 from openai.types.realtime.realtime_response_status import Error as RealtimeResponseStatusError
 from openai.types.realtime.realtime_session_create_request_param import RealtimeSessionCreateRequestParam
 from websockets.exceptions import WebSocketException
@@ -19,6 +20,8 @@ from voice_agent_conversation.managers.gateways.exception_translators.translator
 from voice_agent_conversation.managers.gateways.realtime_voice_gateway_base import RealtimeVoiceGatewayBase, RealtimeVoiceSessionBase
 from voice_agent_conversation.managers.models.conversation_models import (
     AgentSpeechChunk,
+    AgentToolCallRequested,
+    AgentToolDefinition,
     AgentTurnFinished,
     ConversationAudioFormat,
     GuestStartedSpeaking,
@@ -95,16 +98,23 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
 
     The provider emits many more event types than a voice-only conversation needs, such as transcripts
     and item bookkeeping. Those are ignored by design, not by omission.
+
+    A reply in which the model calls tools ends without speech; the model speaks once it has the answers. So when that
+    reply ends with every call answered, the session asks for the next reply itself instead of reporting the turn as finished.
     """
 
     # The provider accepts only 24 kHz PCM, so the constant keeps its literal type for the SDK's typed session.
     SAMPLE_RATE_HZ: Final = 24_000
+    # The guest's turn ends after this much silence. Semantic turn detection waited 4 to 7 seconds after a guest stopped
+    # before the agent spoke, measured live; silence detection at half a second answers in about 1 to 2.
+    TURN_END_SILENCE_MILLISECONDS: Final[int] = 500
     SESSION_CONFIRMATION_TIMEOUT_SECONDS: Final[float] = 10.0
     CONFIGURE_OPERATION_DESCRIPTION: Final[str] = "configuring the session"
     CONVERSE_OPERATION_DESCRIPTION: Final[str] = "conversing"
 
     def __init__(self, connection: AsyncRealtimeConnection) -> None:
         self._connection: AsyncRealtimeConnection | None = connection
+        self._has_answered_tool_calls: bool = False
 
     @property
     @override
@@ -142,13 +152,25 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
             self._raise_connection_failure(provider_error, "requesting an agent response", LogEventRealtimeVoice.AGENT_RESPONSE_REQUEST)
 
     @override
+    async def send_tool_result(self, call_id: str, tool_output: str) -> None:
+        connection: AsyncRealtimeConnection = self._get_open_connection()
+        try:
+            await connection.conversation.item.create(item={"type": "function_call_output", "call_id": call_id, "output": tool_output})
+        except (OpenAIError, WebSocketException, OSError) as provider_error:
+            self._raise_connection_failure(provider_error, "answering a tool call", LogEventRealtimeVoice.TOOL_RESULT_SEND)
+        self._has_answered_tool_calls = True
+
+    @override
     async def receive_events(self) -> AsyncIterator[VoiceSessionEvent]:
         connection: AsyncRealtimeConnection = self._get_open_connection()
         server_event: RealtimeServerEvent
         try:
             async for server_event in connection:
                 voice_session_event: VoiceSessionEvent | None = self._to_voice_session_event(server_event)
-                if voice_session_event is not None:
+                if isinstance(voice_session_event, AgentTurnFinished) and self._has_answered_tool_calls:
+                    self._has_answered_tool_calls = False
+                    await self.request_agent_response()
+                elif voice_session_event is not None:
                     yield voice_session_event
         except (OpenAIError, WebSocketException, OSError) as provider_error:
             # close() makes the SDK raise out of this iteration. After close() that failure is the shutdown we asked for, not a fault.
@@ -183,13 +205,29 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
             "audio": {
                 "input": {
                     "format": {"type": "audio/pcm", "rate": cls.SAMPLE_RATE_HZ},
-                    "turn_detection": {"type": "semantic_vad", "create_response": True, "interrupt_response": True},
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "silence_duration_ms": cls.TURN_END_SILENCE_MILLISECONDS,
+                        "create_response": True,
+                        "interrupt_response": True,
+                    },
                 },
                 "output": {
                     "format": {"type": "audio/pcm", "rate": cls.SAMPLE_RATE_HZ},
                     "voice": voice_session_settings.provider_voice_id,
                 },
             },
+            "tools": [cls._to_function_tool(agent_tool_definition) for agent_tool_definition in voice_session_settings.agent_tool_definitions],
+            "tool_choice": "auto",
+        }
+
+    @staticmethod
+    def _to_function_tool(agent_tool_definition: AgentToolDefinition) -> RealtimeFunctionToolParam:
+        return {
+            "type": "function",
+            "name": agent_tool_definition.name,
+            "description": agent_tool_definition.description,
+            "parameters": agent_tool_definition.parameters_schema,
         }
 
     @classmethod
@@ -216,6 +254,8 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
                 return AgentSpeechChunk(pcm_audio=base64.b64decode(server_event.delta))
             case "input_audio_buffer.speech_started":
                 return GuestStartedSpeaking()
+            case "response.function_call_arguments.done":
+                return AgentToolCallRequested(call_id=server_event.call_id, tool_name=server_event.name, arguments_json=server_event.arguments)
             case "response.done":
                 if server_event.response.status == "failed":
                     status_details: RealtimeResponseStatus | None = server_event.response.status_details

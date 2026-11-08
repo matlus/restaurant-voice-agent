@@ -22,6 +22,10 @@ class RealtimeVoiceSessionBase(ABC):
         """Asks the agent to speak now without waiting for the guest, as it does to greet them."""
 
     @abstractmethod
+    async def send_tool_result(self, call_id: str, tool_output: str) -> None:
+        """Answers a tool call the session reported. The agent goes on speaking once every call in its reply is answered."""
+
+    @abstractmethod
     def receive_events(self) -> AsyncIterator[VoiceSessionEvent]:
         """Yields what happens in the conversation until the session is closed."""
 

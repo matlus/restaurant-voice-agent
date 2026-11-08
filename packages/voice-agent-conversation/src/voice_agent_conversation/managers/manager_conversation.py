@@ -5,11 +5,14 @@ from datetime import datetime
 from types import TracebackType
 from typing import Self
 
+from voice_agent_conversation.managers.agent_tools.agent_toolbox import AgentToolbox
 from voice_agent_conversation.managers.data_managers.data_manager_voice_catalog import DataManagerVoiceCatalog
 from voice_agent_conversation.managers.exceptions.conversation_exceptions import LogEventConversation, VoiceNotOfferedException
 from voice_agent_conversation.managers.gateways.realtime_voice_gateway_base import RealtimeVoiceGatewayBase, RealtimeVoiceSessionBase
 from voice_agent_conversation.managers.gateways.realtime_voice_gateway_openai import RealtimeVoiceGatewayOpenAI
 from voice_agent_conversation.managers.models.conversation_models import (
+    AgentSessionEvent,
+    AgentToolCallRequested,
     ConversationEvent,
     ConversationRequest,
     ConversationStarted,
@@ -24,7 +27,7 @@ from voice_agent_restaurant import DomainFacade as RestaurantDomainFacade, Resta
 
 
 class ManagerConversation:
-    """Runs voice conversations: chooses the voice, briefs the agent, and relays audio both ways."""
+    """Runs voice conversations: chooses the voice, briefs the agent, relays audio both ways and runs the tools the agent calls."""
 
     def __init__(self, service_locator: ServiceLocatorBase) -> None:
         self._restaurant_domain_facade: RestaurantDomainFacade = service_locator.create_restaurant_domain_facade()
@@ -49,17 +52,21 @@ class ManagerConversation:
     async def converse(self, conversation_request: ConversationRequest, guest_audio: AsyncIterable[bytes]) -> AsyncGenerator[ConversationEvent]:
         voice_key: str = ValidatorConversationRequests.validate_conversation_request(conversation_request)
         voice_option: VoiceOption = await self._retrieve_voice_option(voice_key)
+        # One toolbox per conversation: the corrections it allows for wrong tool calls are counted per call.
+        agent_toolbox: AgentToolbox = AgentToolbox(self._restaurant_domain_facade)
         voice_session_settings: VoiceSessionSettings = VoiceSessionSettings(
-            provider_voice_id=voice_option.provider_voice_id, agent_instructions=await self._compose_agent_instructions()
+            provider_voice_id=voice_option.provider_voice_id,
+            agent_instructions=await self._compose_agent_instructions(),
+            agent_tool_definitions=agent_toolbox.get_tool_definitions(),
         )
         async with await self._realtime_voice_gateway.open_session(voice_session_settings) as realtime_voice_session:
             yield ConversationStarted(audio_format=realtime_voice_session.audio_format, voice_option=voice_option)
             await realtime_voice_session.request_agent_response()
             # Closing the relay here, in this task, settles guest audio forwarding before the session closes.
-            async with contextlib.aclosing(self._relay_conversation(realtime_voice_session, guest_audio)) as session_events:
-                session_event: VoiceSessionEvent
-                async for session_event in session_events:
-                    yield session_event
+            async with contextlib.aclosing(self._relay_conversation(realtime_voice_session, guest_audio, agent_toolbox)) as agent_session_events:
+                agent_session_event: AgentSessionEvent
+                async for agent_session_event in agent_session_events:
+                    yield agent_session_event
 
     async def _retrieve_voice_option(self, voice_key: str) -> VoiceOption:
         voice_options: list[VoiceOption] = await self.get_voice_options()
@@ -79,9 +86,10 @@ class ManagerConversation:
 
     @staticmethod
     async def _relay_conversation(
-        realtime_voice_session: RealtimeVoiceSessionBase, guest_audio: AsyncIterable[bytes]
-    ) -> AsyncGenerator[VoiceSessionEvent]:
-        """Sends guest audio while yielding session events. Ends when either side does; a failure on either side escapes."""
+        realtime_voice_session: RealtimeVoiceSessionBase, guest_audio: AsyncIterable[bytes], agent_toolbox: AgentToolbox
+    ) -> AsyncGenerator[AgentSessionEvent]:
+        """Sends guest audio while yielding the agent's events and answering its tool calls. Ends when either side does;
+        a failure on either side escapes."""
         guest_audio_ended: asyncio.Event = asyncio.Event()
         guest_audio_forwarding: asyncio.Task[None] = asyncio.create_task(
             ManagerConversation._forward_guest_audio(guest_audio, realtime_voice_session, guest_audio_ended)
@@ -89,7 +97,11 @@ class ManagerConversation:
         try:
             session_event: VoiceSessionEvent
             async for session_event in realtime_voice_session.receive_events():
-                yield session_event
+                if isinstance(session_event, AgentToolCallRequested):
+                    tool_output: str = await agent_toolbox.run_tool_call(session_event)
+                    await realtime_voice_session.send_tool_result(session_event.call_id, tool_output)
+                else:
+                    yield session_event
         finally:
             # Once the guest audio has ended, forwarding is closing the session and finishes by itself; awaiting it
             # re-raises a forwarding failure. Before that it would wait for guest audio forever, so it is cancelled.

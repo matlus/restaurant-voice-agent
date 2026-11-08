@@ -759,12 +759,14 @@ version = "0.1.0"
 source = { editable = "packages/voice-agent-conversation" }
 dependencies = [
     { name = "openai", extra = ["realtime"] },
+    { name = "pydantic" },
     { name = "voice-agent-restaurant" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "openai", extras = ["realtime"], specifier = ">=3.46.0" },
+    { name = "pydantic", specifier = ">=2.14.3" },
     { name = "voice-agent-restaurant", editable = "packages/voice-agent-restaurant" },
 ]
 

@@ -71,8 +71,8 @@ class ManagerReservations:
     """Checks availability and books, finds, changes and cancels reservations.
 
     Every operation validates what arrived first, then decides whether the restaurant can seat the
-    party, then lets the store seat it atomically. Changes and cancellations require the confirmation
-    code and the phone number the booking was made with.
+    party, then lets the store seat it atomically. Changes and cancellations find the booking by its
+    confirmation code; a phone number given with it must be the one the booking was made with.
     """
 
     RESERVATION_DATE_CONTEXT_KEY: Final[str] = "Reservation.Date"
