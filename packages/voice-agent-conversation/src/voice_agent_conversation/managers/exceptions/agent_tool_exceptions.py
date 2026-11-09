@@ -38,7 +38,7 @@ class AgentToolCallRepairsExhaustedException(VoiceAgentConversationTechnicalBase
         self.tool_name: str = tool_name
         super().__init__(
             message=(
-                f"The agent called its tools wrongly more than {repair_limit} times in one conversation; "
+                f"The agent called its tools wrongly more than {repair_limit} times in a row; "
                 f"the last call, to '{tool_name}', failed with: {last_problem}"
             ),
             log_event=LogEventAgentTool.TOOL_CALL,

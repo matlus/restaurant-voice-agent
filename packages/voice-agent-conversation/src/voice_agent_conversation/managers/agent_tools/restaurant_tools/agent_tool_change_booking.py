@@ -33,6 +33,7 @@ class AgentToolChangeBooking(AgentToolBase[ChangeBookingInput, Reservation]):
     def description(self) -> str:
         return (
             "Changes the date, time, party size or notes of an existing booking, found by its confirmation code, and returns it. "
+            "The booking keeps its confirmation code. "
             "If the caller does not have the code, get it with find_bookings first. "
             "Only call it after the caller has confirmed the change you read back. "
             "If no table is free at the new time, nothing changes and the answer lists other free times."

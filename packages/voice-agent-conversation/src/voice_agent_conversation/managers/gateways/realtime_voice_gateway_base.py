@@ -18,8 +18,8 @@ class RealtimeVoiceSessionBase(ABC):
         """Passes on the next piece of the guest's speech. The provider detects turns itself."""
 
     @abstractmethod
-    async def request_agent_response(self) -> None:
-        """Asks the agent to speak now without waiting for the guest, as it does to greet them."""
+    async def request_greeting(self, greeting_instructions: str) -> None:
+        """Asks the agent to speak first and greet the guest. The greeting instructions apply to that one reply only."""
 
     @abstractmethod
     async def send_tool_result(self, call_id: str, tool_output: str) -> None:

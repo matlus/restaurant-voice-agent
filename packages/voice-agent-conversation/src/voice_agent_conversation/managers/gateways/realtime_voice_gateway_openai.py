@@ -115,6 +115,7 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
     def __init__(self, connection: AsyncRealtimeConnection) -> None:
         self._connection: AsyncRealtimeConnection | None = connection
         self._has_answered_tool_calls: bool = False
+        self._agent_instructions: str = ""
 
     @property
     @override
@@ -124,6 +125,7 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
     async def configure(self, voice_session_settings: VoiceSessionSettings) -> None:
         """Sends the session settings and returns once the provider has accepted them; a rejected setting raises here."""
         connection: AsyncRealtimeConnection = self._get_open_connection()
+        self._agent_instructions = voice_session_settings.agent_instructions
         try:
             await connection.session.update(session=self._build_session_configuration(voice_session_settings))
             async with asyncio.timeout(self.SESSION_CONFIRMATION_TIMEOUT_SECONDS):
@@ -144,7 +146,15 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
             self._raise_connection_failure(provider_error, "sending guest audio", LogEventRealtimeVoice.GUEST_AUDIO_SEND)
 
     @override
-    async def request_agent_response(self) -> None:
+    async def request_greeting(self, greeting_instructions: str) -> None:
+        # Instructions given with one reply replace the session's for that reply, so the standing ones go with them.
+        connection: AsyncRealtimeConnection = self._get_open_connection()
+        try:
+            await connection.response.create(response={"instructions": f"{self._agent_instructions}\n\n{greeting_instructions}"})
+        except (OpenAIError, WebSocketException, OSError) as provider_error:
+            self._raise_connection_failure(provider_error, "requesting the greeting", LogEventRealtimeVoice.AGENT_RESPONSE_REQUEST)
+
+    async def _request_next_reply(self) -> None:
         connection: AsyncRealtimeConnection = self._get_open_connection()
         try:
             await connection.response.create()
@@ -169,7 +179,7 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
                 voice_session_event: VoiceSessionEvent | None = self._to_voice_session_event(server_event)
                 if isinstance(voice_session_event, AgentTurnFinished) and self._has_answered_tool_calls:
                     self._has_answered_tool_calls = False
-                    await self.request_agent_response()
+                    await self._request_next_reply()
                 elif voice_session_event is not None:
                     yield voice_session_event
         except (OpenAIError, WebSocketException, OSError) as provider_error:

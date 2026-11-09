@@ -5,7 +5,7 @@ press the call button and talk. The agent answers out loud, in real time, like a
 questions about the menu, diets, allergens and opening hours, and it checks availability and books, finds, changes and
 cancels reservations. Every answer comes from the restaurant's own data, never from the model's imagination.
 
-It runs locally today, on the OpenAI Realtime API. Support for a second voice provider and for hosting on a telephony
+It runs locally or on Azure Container Apps, on the OpenAI Realtime API. Support for a second voice provider and for hosting on a telephony
 platform are planned (see [What's next](#whats-next)).
 
 ## What a caller can do
@@ -129,8 +129,9 @@ differently:
 
 - **A refusal from the restaurant**, such as "closed that day" or "no table free", comes back to the model as an
   answer with the reason, which the agent relays to the caller. It is not an error.
-- **A malformed call**, such as an unknown tool or bad arguments, goes back to the model with what was wrong so it can
-  correct itself. A call allows three such corrections; the next malformed call ends the conversation with an error.
+- **A malformed call**, such as an unknown tool, bad arguments or a value the restaurant can't read, goes back to the
+  model with what was wrong so it can correct itself without mentioning it to the caller. Three malformed calls in a
+  row are allowed; a fourth with nothing accepted in between ends the conversation with an error.
 - **A technical failure**, such as a database error, ends the conversation and is logged.
 
 ## Repository layout
@@ -208,6 +209,33 @@ The code follows Programming with Intent (PWI), a set of design and review guide
   boundary, and a technical error's details never reach the caller.
 - Everything from the host down is async.
 
+## Deploying to Azure
+
+The app runs on Azure Container Apps as a single container built from the `Dockerfile` at the root. Everything lives
+in one resource group, `rg-restaurant-voice-agent`, in Central US:
+
+| Resource | Name | Purpose |
+| --- | --- | --- |
+| Container registry (Basic) | `crrestaurantvoiceagent` | Holds the image. The app pulls it with its managed identity, so there are no registry passwords. |
+| Container Apps environment | `cae-restaurant-voice-agent` | The hosting environment, with a Log Analytics workspace for logs. |
+| Container app | `ca-restaurant-voice-agent` | The web host: 0.5 vCPU, 1 GiB, scales to zero when idle and to at most one replica. |
+| Entra app registration | `Restaurant Voice Agent` | Container Apps authentication sends visitors to Microsoft sign-in. Only users assigned to the app can get in. |
+
+The OpenAI key is a Container Apps secret, `openai-api-key`, and never goes into the image. The SQLite store lives
+inside the container, so it is seeded afresh whenever a new replica starts, for example after the app scales to zero.
+
+To ship a new version, build and push an image tagged with the commit, then point the app at it:
+
+```bash
+az acr login -n crrestaurantvoiceagent
+docker build -t crrestaurantvoiceagent.azurecr.io/voice-agent-web:$(git rev-parse --short HEAD) .
+docker push crrestaurantvoiceagent.azurecr.io/voice-agent-web:$(git rev-parse --short HEAD)
+az containerapp update -g rg-restaurant-voice-agent -n ca-restaurant-voice-agent --image crrestaurantvoiceagent.azurecr.io/voice-agent-web:$(git rev-parse --short HEAD)
+```
+
+To give someone else access, assign them to the `Restaurant Voice Agent` enterprise application in Entra ID. To tear
+everything down, delete the resource group and the app registration.
+
 ## What's next
 
 - **Restaurant details by voice:** the address, phone number, parking and accessibility notes are in the data, but no
@@ -216,8 +244,8 @@ The code follows Programming with Intent (PWI), a set of design and review guide
 - **Hosting on a telephony platform** (Vapi), so the agent answers a real phone number, with the same restaurant
   operations exposed as HTTP tool endpoints.
 
-Today the app is a local demo. It has no sign-in, sends no confirmation texts or emails, and keeps its data in a local
-SQLite file.
+Today the app is a demo. It sends no confirmation texts or emails, and keeps its data in a SQLite file that the hosted
+copy loses whenever it restarts.
 
 ## License
 

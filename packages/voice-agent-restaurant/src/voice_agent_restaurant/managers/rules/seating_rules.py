@@ -40,6 +40,7 @@ class SeatingRules:
     """When tables can be seated and which tables a party may take. Pure calculation; no store access."""
 
     MAXIMUM_ALTERNATIVE_TIMES: Final[int] = 3
+    _NOON_HOUR: Final[int] = 12
 
     @staticmethod
     def weekday_of(calendar_date: date) -> Weekday:
@@ -70,6 +71,15 @@ class SeatingRules:
     @staticmethod
     def is_within_window(requested_time: time, seating_window: SeatingWindow) -> bool:
         return seating_window.first_seating_time <= requested_time <= seating_window.last_seating_time
+
+    @classmethod
+    def read_as_seatable_time(cls, requested_time: time, seating_window: SeatingWindow) -> time:
+        """Callers rarely say AM or PM, so "6:30" can arrive as 06:30. A morning time the restaurant cannot seat is read
+        as the same time in the evening when that one can be seated; any other time is kept as it is."""
+        if requested_time.hour >= cls._NOON_HOUR or cls.is_within_window(requested_time, seating_window):
+            return requested_time
+        evening_time: time = requested_time.replace(hour=requested_time.hour + cls._NOON_HOUR)
+        return evening_time if cls.is_within_window(evening_time, seating_window) else requested_time
 
     @classmethod
     def get_ends_at(cls, starts_at: time, seating_duration_minutes: int) -> time:

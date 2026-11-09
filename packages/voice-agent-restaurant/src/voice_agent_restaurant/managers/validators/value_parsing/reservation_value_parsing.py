@@ -11,6 +11,9 @@ from voice_agent_restaurant.managers.models.reservation_models import (
 # [0-9] rather than \d: in a str pattern \d also matches non-ASCII digits, which would be stored but never found again.
 _DATE_PATTERN: Final[re.Pattern[str]] = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _TIME_PATTERN: Final[re.Pattern[str]] = re.compile(r"([0-9]{1,2}):([0-9]{2})")
+# The way a time is said aloud: "6 PM", "6:30pm", "6:30 p.m.".
+_TWELVE_HOUR_TIME_PATTERN: Final[re.Pattern[str]] = re.compile(r"([0-9]{1,2})(?::([0-9]{2}))?\s*([AaPp])\.?\s*[Mm]\.?")
+_HOURS_ON_A_TWELVE_HOUR_CLOCK: Final[int] = 12
 _PHONE_DIGITS_PATTERN: Final[re.Pattern[str]] = re.compile(r"[0-9]+")
 _PHONE_SEPARATORS_PATTERN: Final[re.Pattern[str]] = re.compile(r"[\s().+-]")
 _CONFIRMATION_CODE_SEPARATORS_PATTERN: Final[re.Pattern[str]] = re.compile(r"[\s-]")
@@ -35,13 +38,27 @@ class ReservationValueParsing:
         except ValueError:
             return None
 
-    @staticmethod
-    def parse_time(time_text: str) -> time | None:
+    @classmethod
+    def parse_time(cls, time_text: str) -> time | None:
+        """A 24-hour HH:MM time, or a 12-hour time with AM or PM as callers say it."""
         time_match: re.Match[str] | None = _TIME_PATTERN.fullmatch(time_text)
-        if time_match is None:
+        if time_match is not None:
+            return cls._to_time(int(time_match.group(1)), int(time_match.group(2)))
+        twelve_hour_match: re.Match[str] | None = _TWELVE_HOUR_TIME_PATTERN.fullmatch(time_text)
+        if twelve_hour_match is None:
             return None
+        hour: int = int(twelve_hour_match.group(1))
+        if not 1 <= hour <= _HOURS_ON_A_TWELVE_HOUR_CLOCK:
+            return None
+        hour_after_midnight: int = hour % _HOURS_ON_A_TWELVE_HOUR_CLOCK
+        if twelve_hour_match.group(3).upper() == "P":
+            hour_after_midnight += _HOURS_ON_A_TWELVE_HOUR_CLOCK
+        return cls._to_time(hour_after_midnight, int(twelve_hour_match.group(2) or 0))
+
+    @staticmethod
+    def _to_time(hour: int, minute: int) -> time | None:
         try:
-            return time(hour=int(time_match.group(1)), minute=int(time_match.group(2)))
+            return time(hour=hour, minute=minute)
         except ValueError:
             return None
 

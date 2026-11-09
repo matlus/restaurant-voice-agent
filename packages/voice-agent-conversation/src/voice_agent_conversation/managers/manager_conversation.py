@@ -54,14 +54,15 @@ class ManagerConversation:
         voice_option: VoiceOption = await self._retrieve_voice_option(voice_key)
         # One toolbox per conversation: the corrections it allows for wrong tool calls are counted per call.
         agent_toolbox: AgentToolbox = AgentToolbox(self._restaurant_domain_facade)
+        restaurant_profile: RestaurantProfile = await self._restaurant_domain_facade.get_restaurant_profile()
         voice_session_settings: VoiceSessionSettings = VoiceSessionSettings(
             provider_voice_id=voice_option.provider_voice_id,
-            agent_instructions=await self._compose_agent_instructions(),
+            agent_instructions=await self._compose_agent_instructions(restaurant_profile),
             agent_tool_definitions=agent_toolbox.get_tool_definitions(),
         )
         async with await self._realtime_voice_gateway.open_session(voice_session_settings) as realtime_voice_session:
             yield ConversationStarted(audio_format=realtime_voice_session.audio_format, voice_option=voice_option)
-            await realtime_voice_session.request_agent_response()
+            await realtime_voice_session.request_greeting(AgentInstructions.compose_greeting(restaurant_profile.name))
             # Closing the relay here, in this task, settles guest audio forwarding before the session closes.
             async with contextlib.aclosing(self._relay_conversation(realtime_voice_session, guest_audio, agent_toolbox)) as agent_session_events:
                 agent_session_event: AgentSessionEvent
@@ -79,8 +80,7 @@ class ManagerConversation:
             )
         return matching_voice_options[0]
 
-    async def _compose_agent_instructions(self) -> str:
-        restaurant_profile: RestaurantProfile = await self._restaurant_domain_facade.get_restaurant_profile()
+    async def _compose_agent_instructions(self, restaurant_profile: RestaurantProfile) -> str:
         restaurant_local_now: datetime = await self._restaurant_domain_facade.get_restaurant_local_now()
         return AgentInstructions.compose(restaurant_profile.name, restaurant_local_now)
 

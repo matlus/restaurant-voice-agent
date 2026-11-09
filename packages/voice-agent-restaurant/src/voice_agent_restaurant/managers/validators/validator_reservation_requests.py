@@ -195,7 +195,7 @@ class ValidatorReservationRequests:
     @staticmethod
     def _collect_optional_time_problems(reservation_time_text: str | None) -> list[str]:
         if reservation_time_text is not None and ReservationValueParsing.parse_time(reservation_time_text) is None:
-            return [f"'reservation_time' value '{reservation_time_text}' is not a 24-hour time in the form HH:MM"]
+            return [f"'reservation_time' value '{reservation_time_text}' is not a time such as 18:30 or 6:30 PM"]
         return []
 
     @staticmethod
