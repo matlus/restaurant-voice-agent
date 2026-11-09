@@ -1,0 +1,13 @@
+.env
+.git
+.venv
+.uv-cache
+.workspace_tmp
+.pytest_cache
+.ruff_cache
+.vscode
+data
+docs
+**/__pycache__
+**/.pytest_cache
+**/tests

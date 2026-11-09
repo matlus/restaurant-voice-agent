@@ -225,6 +225,19 @@ class TestCheckAvailability:
 
         assert actual_availability_result == expected_availability_result
 
+    @pytest.mark.parametrize("spoken_time", ["6:30 PM", "6:30pm", "6:30 p.m.", "6:30", "06:30"])
+    async def test_CheckAvailability_WhenADinnerTimeIsSaidAsCallersSayIt_ThenItIsReadAsTheEveningTime(
+        self, restaurant_database_path: Path, spoken_time: str
+    ) -> None:
+        expected_requested_time: time = time(18, 30)
+
+        async with create_domain_facade(restaurant_database_path) as domain_facade:
+            actual_availability_result: AvailabilityResult = await domain_facade.check_availability(
+                AvailabilityRequest(reservation_date=QUIET_THURSDAY, reservation_time=spoken_time, party_size=2)
+            )
+
+        assert actual_availability_result.requested_time == expected_requested_time
+
     async def test_CheckAvailability_WhenEveryFittingTableIsTaken_ThenTheThreeNearestOpenTimesAreOffered(
         self, restaurant_database_path: Path
     ) -> None:
@@ -408,6 +421,20 @@ class TestCreateReservation:
         AsserterReservation.assert_new_reservation_is_as_expected(expected_new_reservation, actual_reservation)
         assert actual_found_reservations == [actual_reservation]
 
+    async def test_CreateReservation_WhenTonightsDinnerTimeIsSaidWithoutPm_ThenTheEveningSeatingIsBookedNotRefusedAsPassed(
+        self, restaurant_database_path: Path
+    ) -> None:
+        # Today is NEARLY_FULL_WEDNESDAY, mid-afternoon, so read as morning, "6:30" would already have passed.
+        generated_guest: GeneratedGuest = create_generated_guest()
+        expected_booked_seating: tuple[date, time] = (date.fromisoformat(NEARLY_FULL_WEDNESDAY), NEARLY_FULL_WEDNESDAY_OPEN_TIMES[0])
+
+        async with create_domain_facade(restaurant_database_path) as domain_facade:
+            actual_reservation: Reservation = await domain_facade.create_reservation(
+                create_reservation_request(generated_guest, reservation_date=NEARLY_FULL_WEDNESDAY, reservation_time="6:30")
+            )
+
+        assert (actual_reservation.reservation_date, actual_reservation.starts_at) == expected_booked_seating
+
     async def test_CreateReservation_WhenATableIsFreeMinutesFromNow_ThenItIsBooked(self, restaurant_database_path: Path) -> None:
         generated_guest: GeneratedGuest = create_generated_guest()
         party_size: int = 2
@@ -486,13 +513,13 @@ class TestCreateReservation:
             "'guest_name' is required",
             "10-digit phone number",
             "YYYY-MM-DD",
-            "HH:MM",
+            "is not a time",
             "'party_size' is required",
         ]
         expected_exception_metadata: ExpectedExceptionMetadata = create_validation_refusal_metadata()
         expected_contextual_data_by_name: dict[str, int] = {RESERVATION_PROBLEM_COUNT_CONTEXT_NAME: len(expected_problem_phrases)}
         invalid_reservation_request: ReservationRequest = ReservationRequest(
-            guest_name=" ", phone_number="12345", party_size=None, reservation_date="next friday", reservation_time="7 pm", notes=None
+            guest_name=" ", phone_number="12345", party_size=None, reservation_date="next friday", reservation_time="around seven", notes=None
         )
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:

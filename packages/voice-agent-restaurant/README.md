@@ -15,9 +15,11 @@ The restaurant domain for the voice agent. Everything goes through `DomainFacade
 | `change_reservation` | Changes date, time, party size or notes, found by its confirmation code; a phone number given with it must match. |
 | `cancel_reservation` | Cancels a booking, found by its confirmation code; a phone number given with it must match. |
 
-Requests arrive as plain values (dates as `YYYY-MM-DD`, times as 24-hour `HH:MM`), the way a voice model's tool call
-supplies them. The validators normalize them (phone numbers to digits, confirmation codes to upper case, diet labels like
-`Gluten-Free` to `gluten_free`) and validate them before anything else, reporting every problem in one exception.
+Requests arrive as plain values (dates as `YYYY-MM-DD`, times as 24-hour `HH:MM` or as spoken, like `6:30 PM`), the
+way a voice model's tool call supplies them. The validators normalize them (phone numbers to digits, confirmation codes
+to upper case, diet labels like `Gluten-Free` to `gluten_free`) and validate them before anything else, reporting every
+problem in one exception. Callers rarely say AM or PM, so a morning time the restaurant can't seat is read as the same
+time in the evening when that one can be seated.
 
 A refusal raises a `VoiceAgentRestaurantBusinessBaseException` descendant whose message can be read to a guest.
 Store or configuration trouble raises a `VoiceAgentRestaurantTechnicalBaseException` descendant, whose message must not.

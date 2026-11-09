@@ -17,7 +17,13 @@ from voice_agent_conversation.managers.exceptions.agent_tool_exceptions import (
     AgentToolCallRepairsExhaustedException,
 )
 from voice_agent_conversation.managers.models.conversation_models import AgentToolCallRequested, AgentToolDefinition
-from voice_agent_restaurant import DomainFacade as RestaurantDomainFacade, VoiceAgentRestaurantBusinessBaseException
+from voice_agent_restaurant import (
+    DishLookupValidationException,
+    DomainFacade as RestaurantDomainFacade,
+    MenuSearchValidationException,
+    ReservationRequestValidationException,
+    VoiceAgentRestaurantBusinessBaseException,
+)
 
 
 @final
@@ -44,12 +50,17 @@ class AgentToolbox:
     """The tools one conversation's agent can call, run on its behalf.
 
     A refusal by the restaurant, such as a full evening or a closed day, comes back as an answer the agent passes on.
-    A wrong call by the agent, such as an unknown tool or arguments that do not fit, comes back as a correction it can
-    act on, a limited number of times per conversation. Anything else, such as the store being unreachable, ends the call.
+    A wrong call by the agent, such as an unknown tool, arguments that do not fit or a value the restaurant cannot read
+    (a time given as "6:30 PM"), comes back as a correction the agent acts on without troubling the caller. Only a run of
+    wrong calls with nothing accepted between them ends the call, because a misheard detail now and then is ordinary.
+    Anything else, such as the store being unreachable, ends the call.
     """
 
     MAXIMUM_CALL_REPAIRS: Final[int] = 3
-    CALL_AGAIN_INSTRUCTION: Final[str] = "Call the tool again with arguments that match its parameters, or use another tool."
+    CALL_AGAIN_INSTRUCTION: Final[str] = (
+        "Fix the call yourself and call the tool again, or use another tool. Don't mention this problem, formats or tools to "
+        "the caller; ask them only for a detail you don't have, in plain words."
+    )
 
     def __init__(self, restaurant_domain_facade: RestaurantDomainFacade) -> None:
         agent_tools: list[AgentToolProtocol] = [
@@ -63,7 +74,7 @@ class AgentToolbox:
             AgentToolCancelBooking(restaurant_domain_facade),
         ]
         self._agent_tools_by_name: dict[str, AgentToolProtocol] = {agent_tool.name: agent_tool for agent_tool in agent_tools}
-        self._call_repair_count: int = 0
+        self._consecutive_call_repair_count: int = 0
 
     def get_tool_definitions(self) -> tuple[AgentToolDefinition, ...]:
         return tuple(agent_tool.get_tool_definition() for agent_tool in self._agent_tools_by_name.values())
@@ -77,17 +88,23 @@ class AgentToolbox:
                 f"There is no tool named '{agent_tool_call_requested.tool_name}'. The tools are: {', '.join(self._agent_tools_by_name)}.",
             )
         try:
-            return await agent_tool.invoke(agent_tool_call_requested.arguments_json)
+            tool_output: str = await agent_tool.invoke(agent_tool_call_requested.arguments_json)
         except AgentToolArgumentsInvalidException as agent_tool_arguments_invalid_exception:
             return self._reject_call(agent_tool.name, agent_tool_arguments_invalid_exception.message)
+        except (ReservationRequestValidationException, MenuSearchValidationException, DishLookupValidationException) as request_validation_exception:
+            # The restaurant could not read what the agent sent. That is the agent's call to fix, not a refusal for the caller.
+            return self._reject_call(agent_tool.name, request_validation_exception.message)
         except VoiceAgentRestaurantBusinessBaseException as voice_agent_restaurant_business_exception:
             # Translated, not swallowed: the refusal becomes the answer the agent relays to the caller.
+            self._consecutive_call_repair_count = 0
             return pydantic_core.to_json(AgentToolRefusal(refused=True, reason=voice_agent_restaurant_business_exception.message)).decode("utf-8")
+        self._consecutive_call_repair_count = 0
+        return tool_output
 
     def _reject_call(self, tool_name: str, problem: str) -> str:
-        if self._call_repair_count >= self.MAXIMUM_CALL_REPAIRS:
+        if self._consecutive_call_repair_count >= self.MAXIMUM_CALL_REPAIRS:
             raise AgentToolCallRepairsExhaustedException(tool_name=tool_name, repair_limit=self.MAXIMUM_CALL_REPAIRS, last_problem=problem)
-        self._call_repair_count += 1
+        self._consecutive_call_repair_count += 1
         return pydantic_core.to_json(AgentToolCallRejection(call_rejected=True, problem=problem, instruction=self.CALL_AGAIN_INSTRUCTION)).decode(
             "utf-8"
         )

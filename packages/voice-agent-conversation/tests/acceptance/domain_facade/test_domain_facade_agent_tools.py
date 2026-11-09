@@ -168,6 +168,25 @@ class TestAgentTools:
             expected_agent_response_request_count,
         )
 
+    async def test_Converse_WhenTheAgentGoesOnAfterALookup_ThenOnlyItsFirstReplyWasToldToGreet(self, restaurant_database_path: Path) -> None:
+        # The greeting instruction once lived in the standing instructions the model reads before every reply, and the
+        # model greeted again when asked to go on after a lookup. Now only the first reply request carries it.
+        greeting_marker: str = "Greet the caller"
+        expected_greeting_placement: tuple[list[bool], bool] = ([True, False], False)
+
+        realtime_voice_service_scripted: RealtimeVoiceServiceScripted
+        _, realtime_voice_service_scripted = await hold_tool_call_conversation(restaurant_database_path, "search_menu", '{"diet_labels": ["keto"]}')
+
+        captured_realtime_session = realtime_voice_service_scripted.captured_realtime_sessions[0]
+        actual_greeting_placement: tuple[list[bool], bool] = (
+            [
+                reply_instructions is not None and greeting_marker in reply_instructions
+                for reply_instructions in captured_realtime_session.agent_response_instructions
+            ],
+            any(greeting_marker in session_settings.agent_instructions for session_settings in captured_realtime_session.session_settings),
+        )
+        assert actual_greeting_placement == expected_greeting_placement
+
     async def test_Converse_WhenTheRestaurantRefusesTheAgentsRequest_ThenTheAgentIsToldWhyAndTheCallGoesOn(
         self, restaurant_database_path: Path
     ) -> None:
@@ -202,6 +221,12 @@ class TestAgentTools:
         [
             pytest.param("check_availability", '{"party_size": "lots"}', "check_availability", id="arguments-that-do-not-fit"),
             pytest.param("order_pizza", "{}", "no tool named 'order_pizza'", id="unknown-tool"),
+            pytest.param(
+                "check_availability",
+                '{"reservation_date": "2026-11-06", "reservation_time": "half past six", "party_size": 2}',
+                "is not a time",
+                id="time-the-restaurant-cannot-read",
+            ),
         ],
     )
     async def test_Converse_WhenTheAgentCallsAToolWrongly_ThenItIsToldHowToCallAgainAndTheCallGoesOn(

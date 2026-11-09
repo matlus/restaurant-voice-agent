@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, time
 from pathlib import Path
 from typing import Final
@@ -84,8 +84,9 @@ class ManagerReservations:
         self._data_manager_reservations: DataManagerReservations = DataManagerReservations(database_path, self._clock)
 
     async def check_availability(self, availability_request: AvailabilityRequest) -> AvailabilityResult:
-        requested_seating: RequestedSeating = ValidatorReservationRequests.validate_availability_request(availability_request)
+        stated_seating: RequestedSeating = ValidatorReservationRequests.validate_availability_request(availability_request)
         booking_context: _BookingContext = await self._load_booking_context()
+        requested_seating: RequestedSeating = await self._read_as_seatable(stated_seating, booking_context)
         ValidatorReservationRequests.validate_requested_seating(requested_seating, booking_context.reservation_policy, booking_context.booking_window)
         seating_plan: _SeatingPlan = await self._plan_seating(requested_seating, booking_context)
         seatings: list[Seating] = await self._data_manager_reservations.find_seatings_on(requested_seating.reservation_date)
@@ -99,8 +100,12 @@ class ManagerReservations:
         )
 
     async def create_reservation(self, reservation_request: ReservationRequest) -> Reservation:
-        validated_reservation_request: ValidatedReservationRequest = ValidatorReservationRequests.validate_reservation_request(reservation_request)
+        stated_reservation_request: ValidatedReservationRequest = ValidatorReservationRequests.validate_reservation_request(reservation_request)
         booking_context: _BookingContext = await self._load_booking_context()
+        validated_reservation_request: ValidatedReservationRequest = replace(
+            stated_reservation_request,
+            requested_seating=await self._read_as_seatable(stated_reservation_request.requested_seating, booking_context),
+        )
         ValidatorReservationRequests.validate_requested_seating(
             validated_reservation_request.requested_seating, booking_context.reservation_policy, booking_context.booking_window
         )
@@ -131,7 +136,9 @@ class ManagerReservations:
             validated_reservation_change.reservation_identity, booking_context.booking_window.restaurant_now
         )
         current_seating: RequestedSeating = self._to_current_seating(current_reservation)
-        changed_requested_seating: RequestedSeating = SeatingRules.apply_seating_change(current_seating, validated_reservation_change.seating_change)
+        changed_requested_seating: RequestedSeating = await self._read_as_seatable(
+            SeatingRules.apply_seating_change(current_seating, validated_reservation_change.seating_change), booking_context
+        )
         ValidatorReservationRequests.validate_changed_seating(
             current_seating, changed_requested_seating, booking_context.reservation_policy, booking_context.booking_window
         )
@@ -179,6 +186,16 @@ class ManagerReservations:
                 current_reservation.confirmation_code, {"Reservation.ConfirmationCode": current_reservation.confirmation_code}
             )
         return current_reservation
+
+    async def _read_as_seatable(self, stated_seating: RequestedSeating, booking_context: _BookingContext) -> RequestedSeating:
+        # Resolved before any other check, so a dinner time said without PM is not refused as already passed or too early.
+        # A day the restaurant does not open keeps the stated time; planning refuses that day afterwards.
+        requested_weekday: Weekday = SeatingRules.weekday_of(stated_seating.reservation_date)
+        weekday_hours: WeekdayHours = await self._data_manager_restaurant.retrieve_weekday_hours(requested_weekday)
+        seating_window: SeatingWindow | None = SeatingRules.get_seating_window(weekday_hours, booking_context.seating_rhythm.seating_duration_minutes)
+        if seating_window is None:
+            return stated_seating
+        return replace(stated_seating, starts_at=SeatingRules.read_as_seatable_time(stated_seating.starts_at, seating_window))
 
     async def _plan_seating(self, requested_seating: RequestedSeating, booking_context: _BookingContext) -> _SeatingPlan:
         seating_window: SeatingWindow = await self._get_seating_window_or_refuse(

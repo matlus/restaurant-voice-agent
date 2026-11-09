@@ -205,6 +205,8 @@ class CapturedRealtimeSession:
     guest_audio: list[bytes] = field(default_factory=list[bytes])
     tool_outputs: list[CapturedToolOutput] = field(default_factory=list[CapturedToolOutput])
     agent_response_request_count: int = 0
+    # The instructions each response.create carried for that reply alone, or None when it carried none.
+    agent_response_instructions: list[str | None] = field(default_factory=list[str | None])
     was_closed_by_client: bool = False
 
 
@@ -323,6 +325,12 @@ class RealtimeVoiceServiceScripted:
                 )
             case "response.create":
                 captured_realtime_session.agent_response_request_count += 1
+                response_settings: object = client_event.get("response")
+                captured_realtime_session.agent_response_instructions.append(
+                    cast(str | None, cast(Mapping[str, object], response_settings).get("instructions"))
+                    if isinstance(response_settings, Mapping)
+                    else None
+                )
                 await self._speak_greeting(server_connection)
             case "input_audio_buffer.append":
                 input_audio_buffer_append_event_message: InputAudioBufferAppendEventMessage = cast(InputAudioBufferAppendEventMessage, client_event)
