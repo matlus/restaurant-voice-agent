@@ -45,7 +45,9 @@ from voice_agent_restaurant import (
     DishLookupRequest,
     MenuSearchRequest,
     OpeningHours,
+    Reservation,
     ReservationPolicyRefusedException,
+    ReservationRequest,
     RestaurantClosedOnDateException,
     Weekday,
 )
@@ -252,6 +254,81 @@ class TestAgentTools:
             for dish_answer in (json.loads(actual_tool_output.output) for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted))
         ]
         assert actual_dish_answers == expected_dish_answers
+
+    async def test_Converse_WhenTheAgentFindsABookingByPhoneNameAndDate_ThenTheAnswerGivesOnlyItsTimeAndPartySize(
+        self, restaurant_database_path: Path
+    ) -> None:
+        # The answer leaves out the confirmation code, the name, the phone number, the notes and the table.
+        guest_microphone: GuestMicrophone = GuestMicrophone()
+        booked_guest_name: str = "Avery Quinn"
+        booked_phone_number: str = "5550199999"
+        booking_request: ReservationRequest = ReservationRequest(
+            guest_name=booked_guest_name,
+            phone_number=booked_phone_number,
+            party_size=2,
+            reservation_date=(await create_tomorrows_availability_request(restaurant_database_path, "19:00", 2)).reservation_date,
+            reservation_time="19:00",
+            notes="Window seat, please",
+        )
+        async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
+            booked_reservation: Reservation = await restaurant_domain_facade.create_reservation(booking_request)
+        expected_booking_answers: list[list[dict[str, Any]]] = [
+            [
+                {
+                    "reservation_date": booked_reservation.reservation_date.isoformat(),
+                    "reservation_time": booked_reservation.starts_at.isoformat(),
+                    "party_size": booked_reservation.party_size,
+                }
+            ]
+        ]
+        find_bookings_arguments_json: str = json.dumps(
+            {"phone_number": booked_phone_number, "guest_name": "quinn", "reservation_date": booked_reservation.reservation_date.isoformat()}
+        )
+
+        async with (
+            RealtimeVoiceServiceScripted(
+                events_after_each_guest_audio=create_tool_call_events(TOOL_CALL_ID, "find_bookings", find_bookings_arguments_json)
+            ) as realtime_voice_service_scripted,
+            create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_audio())) as conversation,
+        ):
+            await guest_microphone.take_part(conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1))
+
+        actual_booking_answers: list[list[dict[str, Any]]] = [
+            json.loads(actual_tool_output.output) for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted)
+        ]
+        assert actual_booking_answers == expected_booking_answers
+
+    async def test_Converse_WhenTheAgentBooksATable_ThenTheAnswerGivesTheCodeAndTheCallersDetailsButNotTheTableOrPhoneNumber(
+        self, restaurant_database_path: Path
+    ) -> None:
+        guest_microphone: GuestMicrophone = GuestMicrophone()
+        reservation_date: str | None = (await create_tomorrows_availability_request(restaurant_database_path, "19:00", 2)).reservation_date
+        book_table_arguments: dict[str, Any] = {
+            "guest_name": "Avery Quinn",
+            "phone_number": "555 019 9999",
+            "party_size": 2,
+            "reservation_date": reservation_date,
+            "reservation_time": "19:00",
+            "notes": "Window seat, please",
+        }
+        expected_booking_answer_names: list[str] = ["confirmation_code", "guest_name", "reservation_date", "reservation_time", "party_size", "notes"]
+
+        async with (
+            RealtimeVoiceServiceScripted(
+                events_after_each_guest_audio=create_tool_call_events(TOOL_CALL_ID, "book_table", json.dumps(book_table_arguments))
+            ) as realtime_voice_service_scripted,
+            create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_audio())) as conversation,
+        ):
+            await guest_microphone.take_part(conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1))
+
+        actual_booking_answer_names: list[list[str]] = [
+            list(json.loads(actual_tool_output.output)) for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted)
+        ]
+        assert actual_booking_answer_names == [expected_booking_answer_names]
 
     async def test_Converse_WhenTheAgentGoesOnAfterALookup_ThenOnlyItsFirstReplyWasToldToGreet(self, restaurant_database_path: Path) -> None:
         # The greeting instruction once lived in the standing instructions the model reads before every reply, and the

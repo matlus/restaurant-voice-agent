@@ -33,7 +33,8 @@ class ExpectedExceptionMetadata:
 class AsserterException:
     """Compares a raised exception with the test's expectations and reports every mismatch in one failure.
 
-    Expected message phrases must each appear in the message; the message may say more. Each expected contextual entry
+    Expected message phrases must each appear in the message; the message may say more, but never a withheld phrase, such
+    as a confirmation code the caller must not hear. Each expected contextual entry
     must be present with its value, and each expected present name must be present with any value; the exception may
     carry other entries.
     """
@@ -46,9 +47,13 @@ class AsserterException:
         expected_contextual_data_by_name: Mapping[str, ContextualDataValue],
         actual_voice_agent_restaurant_exception: VoiceAgentRestaurantBaseException,
         expected_present_contextual_data_names: Iterable[str] = (),
+        withheld_message_phrases: Iterable[str] = (),
     ) -> None:
         assertion_failures: list[str] = AsserterException._find_message_mismatches(
             expected_message_phrases, actual_voice_agent_restaurant_exception.message
+        )
+        assertion_failures.extend(
+            AsserterException._find_withheld_message_phrases(withheld_message_phrases, actual_voice_agent_restaurant_exception.message)
         )
         assertion_failures.extend(AsserterException._find_metadata_mismatches(expected_exception_metadata, actual_voice_agent_restaurant_exception))
         assertion_failures.extend(
@@ -161,6 +166,14 @@ class AsserterException:
             f"Message is missing {expected_message_phrase!r}. Actual message: {actual_exception_message!r}."
             for expected_message_phrase in expected_message_phrases
             if expected_message_phrase not in actual_exception_message
+        ]
+
+    @staticmethod
+    def _find_withheld_message_phrases(withheld_message_phrases: Iterable[str], actual_exception_message: str) -> list[str]:
+        return [
+            f"Message reveals withheld {withheld_message_phrase!r}. Actual message: {actual_exception_message!r}."
+            for withheld_message_phrase in withheld_message_phrases
+            if withheld_message_phrase in actual_exception_message
         ]
 
     @staticmethod

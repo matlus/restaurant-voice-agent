@@ -65,16 +65,25 @@ class ReservationRequest:
 
 @dataclass(frozen=True)
 class ReservationSearchRequest:
+    """A guest's search for their own bookings on one date: date as YYYY-MM-DD. A booking is found only when the phone
+    number, the name and the date all match it, so a phone number alone reveals nothing."""
+
     phone_number: str | None
+    guest_name: str | None
+    reservation_date: str | None
 
 
 @dataclass(frozen=True)
 class ReservationChangeRequest:
-    """A change to a booking, found by its confirmation code. A phone number, when given, must be the booking's own.
-    Any other field left as None keeps its current value."""
+    """A change to a booking. The booking is identified by its confirmation code, or, without the code, by the phone
+    number, name, date and time it is booked under (booked_date as YYYY-MM-DD, booked_time as 24-hour HH:MM). A phone
+    number given with a code must be the booking's own. Any of the other fields left as None keeps its current value."""
 
     confirmation_code: str | None
     phone_number: str | None
+    guest_name: str | None
+    booked_date: str | None
+    booked_time: str | None
     reservation_date: str | None
     reservation_time: str | None
     party_size: int | None
@@ -83,8 +92,13 @@ class ReservationChangeRequest:
 
 @dataclass(frozen=True)
 class ReservationCancellationRequest:
+    """A cancellation, with the booking identified as for a change."""
+
     confirmation_code: str | None
     phone_number: str | None
+    guest_name: str | None
+    booked_date: str | None
+    booked_time: str | None
 
 
 @dataclass(frozen=True)
@@ -113,6 +127,26 @@ class ReservationIdentity:
 
 
 @dataclass(frozen=True)
+class GuestBookingSearch:
+    """What a guest must know to find their bookings: the phone number, the name and the date they are booked under."""
+
+    phone_number: str
+    guest_name: str
+    reservation_date: date
+
+
+@dataclass(frozen=True)
+class GuestBookingIdentity:
+    """A booking identified without its confirmation code, by everything the guest must know about it."""
+
+    guest_booking_search: GuestBookingSearch
+    starts_at: time
+
+
+type BookingIdentity = ReservationIdentity | GuestBookingIdentity
+
+
+@dataclass(frozen=True)
 class ValidatedReservationRequest:
     guest_name: str
     phone_number: str
@@ -133,7 +167,7 @@ class SeatingChange:
 class ValidatedReservationChange:
     """A validated change. Notes left as None keep the booking's current notes."""
 
-    reservation_identity: ReservationIdentity
+    booking_identity: BookingIdentity
     seating_change: SeatingChange
     notes: str | None
 

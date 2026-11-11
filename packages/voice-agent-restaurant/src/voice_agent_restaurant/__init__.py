@@ -9,6 +9,7 @@ from voice_agent_restaurant.managers.exceptions.menu_exceptions import (
     MenuSearchValidationException,
 )
 from voice_agent_restaurant.managers.exceptions.reservation_exceptions import (
+    GuestReservationNotFoundException,
     LogEventReservation,
     NoTableAvailableException,
     OutsideSeatingHoursException,
@@ -81,6 +82,7 @@ __all__ = [
     "DishNotFoundException",
     "DomainFacade",
     "ExceptionAction",
+    "GuestReservationNotFoundException",
     "LogEventBase",
     "LogEventConfiguration",
     "LogEventMenu",

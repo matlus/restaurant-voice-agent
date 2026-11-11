@@ -159,7 +159,9 @@ class TestRestaurantInformation:
 
         async with create_domain_facade(restaurant_database_path) as second_domain_facade:
             actual_found_reservations: list[Reservation] = await second_domain_facade.find_reservations(
-                ReservationSearchRequest(phone_number=generated_guest.phone_digits)
+                ReservationSearchRequest(
+                    phone_number=generated_guest.phone_digits, guest_name=generated_guest.guest_name, reservation_date="2026-11-05"
+                )
             )
 
         assert actual_found_reservations == expected_reservations

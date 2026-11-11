@@ -143,6 +143,10 @@ class NoTableAvailableException(VoiceAgentRestaurantBusinessBaseException):
         return 409
 
 
+# The messages below are read to the caller, who may have identified the booking without its confirmation code, so they
+# never repeat the code; it is kept in the contextual data for the logs.
+
+
 @final
 class ReservationNotFoundException(VoiceAgentRestaurantBusinessBaseException):
     """No booked reservation matches the confirmation code, or the phone number given with it. Which was wrong is never revealed."""
@@ -150,7 +154,8 @@ class ReservationNotFoundException(VoiceAgentRestaurantBusinessBaseException):
     def __init__(self, confirmation_code: str, contextual_data_by_name: ContextualDataDict | None = None) -> None:
         super().__init__(
             message=(
-                f"No current reservation matches confirmation code '{confirmation_code}'. Check the code, or look the reservation up by phone number."
+                "No current booking matches that confirmation code. Check the code, or find the booking by the phone number, name and "
+                "date it is booked under."
             ),
             log_event=LogEventReservation.RESERVATION_LOOKUP,
             contextual_data_by_name=contextual_data_by_name,
@@ -169,10 +174,38 @@ class ReservationNotFoundException(VoiceAgentRestaurantBusinessBaseException):
 
 
 @final
+class GuestReservationNotFoundException(VoiceAgentRestaurantBusinessBaseException):
+    """No single upcoming booking at this date and time matches the phone number and name given. Which detail was wrong is
+    never revealed, so the refusal cannot be used to learn whose bookings exist."""
+
+    def __init__(self, reservation_date: date, starts_at: time, contextual_data_by_name: ContextualDataDict | None = None) -> None:
+        super().__init__(
+            message=(
+                f"No current booking at {_format_time(starts_at)} on {reservation_date.isoformat()} matches that phone number and name. "
+                "Check the details, or use the booking's confirmation code."
+            ),
+            log_event=LogEventReservation.RESERVATION_LOOKUP,
+            contextual_data_by_name=contextual_data_by_name,
+        )
+        self.reservation_date: date = reservation_date
+        self.starts_at: time = starts_at
+
+    @property
+    @override
+    def reason(self) -> str:
+        return "The reservation was not found"
+
+    @property
+    @override
+    def http_status_code(self) -> int:
+        return 404
+
+
+@final
 class ReservationAlreadyStartedException(VoiceAgentRestaurantBusinessBaseException):
     def __init__(self, confirmation_code: str, contextual_data_by_name: ContextualDataDict | None = None) -> None:
         super().__init__(
-            message=f"Reservation '{confirmation_code}' has already started, so it can no longer be changed or cancelled by phone.",
+            message="That booking has already started, so it can no longer be changed or cancelled by phone.",
             log_event=LogEventReservation.RESERVATION_SCHEDULING,
             contextual_data_by_name=contextual_data_by_name,
         )
@@ -197,8 +230,8 @@ class ReservationChangedConcurrentlyException(VoiceAgentRestaurantBusinessBaseEx
     def __init__(self, confirmation_code: str, contextual_data_by_name: ContextualDataDict | None = None) -> None:
         super().__init__(
             message=(
-                f"Reservation '{confirmation_code}' was changed by another request while this change was being made, so nothing was changed. "
-                "Look the reservation up again and repeat the change."
+                "That booking was changed by another request while this change was being made, so nothing was changed. "
+                "Look the booking up again and repeat the change."
             ),
             log_event=LogEventReservation.RESERVATION_SCHEDULING,
             contextual_data_by_name=contextual_data_by_name,

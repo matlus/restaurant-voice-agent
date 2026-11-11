@@ -15,7 +15,7 @@ has one microphone button and no transcript. You press it, talk, and hear the ag
 | Restaurant | Ember & Sprout, a "modern grill and garden" with one location and 32 dishes. |
 | Diet labels | Vegan, vegetarian, pescatarian, keto, carnivore and paleo from the recipe. Gluten-free, dairy-free and nut-free derived from allergens. |
 | Allergens | The nine major US allergens. |
-| Reservations | The full lifecycle: check, book, look up by phone, change and cancel. Changing or cancelling needs only the confirmation code; a caller without it is looked up by phone. |
+| Reservations | The full lifecycle: check, book, look up, change and cancel. Changing or cancelling needs only the confirmation code. A caller without it proves the booking is theirs with the phone number, the name and the date it is under, and that proof is checked again on every change or cancellation. A lookup never returns the confirmation code. Caller ID or a texted one-time code would be stronger, and need a telephony or SMS provider. |
 | Storage | A local SQLite file, seeded from JSON on first use. |
 | Secrets | API keys in a gitignored `.env`. `.env.example` is committed. |
 | Practice | PWI (see `AGENTS.md`). |

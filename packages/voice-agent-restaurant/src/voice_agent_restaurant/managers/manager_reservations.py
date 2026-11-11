@@ -9,6 +9,7 @@ from voice_agent_restaurant.managers.data_managers.data_manager_reservations imp
 from voice_agent_restaurant.managers.data_managers.data_manager_restaurant import DataManagerRestaurant
 from voice_agent_restaurant.managers.exceptions.reservation_exceptions import (
     CandidateTablesTakenException,
+    GuestReservationNotFoundException,
     NoTableAvailableException,
     OutsideSeatingHoursException,
     ReservationAlreadyStartedException,
@@ -19,7 +20,10 @@ from voice_agent_restaurant.managers.models.reservation_models import (
     AvailabilityRequest,
     AvailabilityResult,
     BookedSchedule,
+    BookingIdentity,
     BookingWindow,
+    GuestBookingIdentity,
+    GuestBookingSearch,
     NewReservation,
     RequestedSeating,
     Reservation,
@@ -41,6 +45,7 @@ from voice_agent_restaurant.managers.models.restaurant_models import (
     Weekday,
     WeekdayHours,
 )
+from voice_agent_restaurant.managers.rules.guest_name_matching import GuestNameMatching
 from voice_agent_restaurant.managers.rules.seating_rules import SeatingDay, SeatingRhythm, SeatingRules, SeatingWindow
 from voice_agent_restaurant.managers.service_locators.service_locator_base import ServiceLocatorBase
 from voice_agent_restaurant.managers.validators.validator_reservation_requests import ValidatorReservationRequests
@@ -71,8 +76,10 @@ class ManagerReservations:
     """Checks availability and books, finds, changes and cancels reservations.
 
     Every operation validates what arrived first, then decides whether the restaurant can seat the
-    party, then lets the store seat it atomically. Changes and cancellations find the booking by its
-    confirmation code; a phone number given with it must be the one the booking was made with.
+    party, then lets the store seat it atomically. A guest finds their bookings only by giving the phone
+    number, name and date they booked under. Changes and cancellations find the booking by its confirmation
+    code, where a phone number given with it must be the one the booking was made with, or else by the
+    phone number, name, date and time it is booked under.
     """
 
     RESERVATION_DATE_CONTEXT_KEY: Final[str] = "Reservation.Date"
@@ -120,20 +127,15 @@ class ManagerReservations:
         return reservation
 
     async def find_reservations(self, reservation_search_request: ReservationSearchRequest) -> list[Reservation]:
-        phone_number: str = ValidatorReservationRequests.validate_search_request(reservation_search_request)
+        guest_booking_search: GuestBookingSearch = ValidatorReservationRequests.validate_search_request(reservation_search_request)
         restaurant_now: datetime = await self._get_restaurant_now()
-        booked_reservations: list[Reservation] = await self._data_manager_reservations.find_booked_reservations(phone_number, restaurant_now.date())
-        return [
-            booked_reservation
-            for booked_reservation in booked_reservations
-            if SeatingRules.is_still_upcoming(booked_reservation.reservation_date, booked_reservation.ends_at, restaurant_now)
-        ]
+        return await self._find_guest_reservations(guest_booking_search, restaurant_now)
 
     async def change_reservation(self, reservation_change_request: ReservationChangeRequest) -> Reservation:
         validated_reservation_change: ValidatedReservationChange = ValidatorReservationRequests.validate_change_request(reservation_change_request)
         booking_context: _BookingContext = await self._load_booking_context()
         current_reservation: Reservation = await self._retrieve_changeable_reservation(
-            validated_reservation_change.reservation_identity, booking_context.booking_window.restaurant_now
+            validated_reservation_change.booking_identity, booking_context.booking_window.restaurant_now
         )
         current_seating: RequestedSeating = self._to_current_seating(current_reservation)
         changed_requested_seating: RequestedSeating = await self._read_as_seatable(
@@ -158,9 +160,9 @@ class ManagerReservations:
         return changed_reservation
 
     async def cancel_reservation(self, reservation_cancellation_request: ReservationCancellationRequest) -> Reservation:
-        reservation_identity: ReservationIdentity = ValidatorReservationRequests.validate_cancellation_request(reservation_cancellation_request)
+        booking_identity: BookingIdentity = ValidatorReservationRequests.validate_cancellation_request(reservation_cancellation_request)
         restaurant_now: datetime = await self._get_restaurant_now()
-        current_reservation: Reservation = await self._retrieve_changeable_reservation(reservation_identity, restaurant_now)
+        current_reservation: Reservation = await self._retrieve_changeable_reservation(booking_identity, restaurant_now)
         return await self._data_manager_reservations.cancel_reservation(current_reservation.confirmation_code, self._clock.now_utc())
 
     async def _load_booking_context(self) -> _BookingContext:
@@ -179,8 +181,43 @@ class ManagerReservations:
         restaurant_profile: RestaurantProfile = await self._data_manager_restaurant.get_restaurant_profile()
         return self._to_restaurant_now(restaurant_profile.time_zone)
 
-    async def _retrieve_changeable_reservation(self, reservation_identity: ReservationIdentity, restaurant_now: datetime) -> Reservation:
-        current_reservation: Reservation = await self._data_manager_reservations.retrieve_booked_reservation(reservation_identity)
+    async def _find_guest_reservations(self, guest_booking_search: GuestBookingSearch, restaurant_now: datetime) -> list[Reservation]:
+        booked_reservations: list[Reservation] = await self._data_manager_reservations.find_booked_reservations(
+            guest_booking_search.phone_number, guest_booking_search.reservation_date
+        )
+        return [
+            booked_reservation
+            for booked_reservation in booked_reservations
+            if booked_reservation.reservation_date == guest_booking_search.reservation_date
+            and GuestNameMatching.is_name_on_booking(booked_reservation.guest_name, guest_booking_search.guest_name)
+            and SeatingRules.is_still_upcoming(booked_reservation.reservation_date, booked_reservation.ends_at, restaurant_now)
+        ]
+
+    async def _retrieve_booked_reservation(self, booking_identity: BookingIdentity, restaurant_now: datetime) -> Reservation:
+        if isinstance(booking_identity, ReservationIdentity):
+            return await self._data_manager_reservations.retrieve_booked_reservation(booking_identity)
+        return await self._retrieve_guest_reservation(booking_identity, restaurant_now)
+
+    async def _retrieve_guest_reservation(self, guest_booking_identity: GuestBookingIdentity, restaurant_now: datetime) -> Reservation:
+        guest_reservations: list[Reservation] = [
+            guest_reservation
+            for guest_reservation in await self._find_guest_reservations(guest_booking_identity.guest_booking_search, restaurant_now)
+            if guest_reservation.starts_at == guest_booking_identity.starts_at
+        ]
+        if len(guest_reservations) != 1:
+            # Two bookings under one name and number at one time cannot be told apart; the guest needs the code for either.
+            raise GuestReservationNotFoundException(
+                guest_booking_identity.guest_booking_search.reservation_date,
+                guest_booking_identity.starts_at,
+                {
+                    self.RESERVATION_DATE_CONTEXT_KEY: guest_booking_identity.guest_booking_search.reservation_date.isoformat(),
+                    "Reservation.MatchingBookingCount": len(guest_reservations),
+                },
+            )
+        return guest_reservations[0]
+
+    async def _retrieve_changeable_reservation(self, booking_identity: BookingIdentity, restaurant_now: datetime) -> Reservation:
+        current_reservation: Reservation = await self._retrieve_booked_reservation(booking_identity, restaurant_now)
         if SeatingRules.has_started(current_reservation.reservation_date, current_reservation.starts_at, restaurant_now):
             raise ReservationAlreadyStartedException(
                 current_reservation.confirmation_code, {"Reservation.ConfirmationCode": current_reservation.confirmation_code}
