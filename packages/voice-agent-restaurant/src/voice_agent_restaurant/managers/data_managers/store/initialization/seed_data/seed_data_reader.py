@@ -53,6 +53,15 @@ class RestaurantSeed:
 
 
 @dataclass(frozen=True)
+class _SeedTableSeating:
+    """The table, weekday and start a seed booking holds, which is all an overlap with another booking depends on."""
+
+    weekday: Weekday
+    table_id: str
+    starts_at: time
+
+
+@dataclass(frozen=True)
 class _SeedFiles:
     restaurant_seed_file: SeedFile
     tables_seed_file: SeedFile
@@ -140,7 +149,10 @@ class SeedDataReader:
             ),
             large_party_guidance=restaurant_seed_file.get_text(reservation_policy_object, "large_party_guidance", reservation_policy_path),
         )
-        cls._verify_reservation_policy(restaurant_seed_file, reservation_policy, reservation_policy_path)
+        cls._verify_party_size_range(
+            restaurant_seed_file, reservation_policy_path, reservation_policy.minimum_party_size, reservation_policy.maximum_party_size
+        )
+        cls._verify_slot_interval(restaurant_seed_file, reservation_policy_path, reservation_policy.slot_interval_minutes)
         return RestaurantProfile(
             name=restaurant_seed_file.get_text(root_object, "name", "$"),
             tagline=restaurant_seed_file.get_text(root_object, "tagline", "$"),
@@ -151,6 +163,7 @@ class SeedDataReader:
             postal_code=restaurant_seed_file.get_text(root_object, "postal_code", "$"),
             phone_number=restaurant_seed_file.get_text(root_object, "phone_number", "$"),
             time_zone=restaurant_seed_file.get_time_zone_name(root_object, "time_zone", "$"),
+            allergen_notice=restaurant_seed_file.get_text(root_object, "allergen_notice", "$"),
             house_notes=restaurant_seed_file.get_texts(root_object, "house_notes", "$"),
             reservation_policy=reservation_policy,
         )
@@ -183,7 +196,18 @@ class SeedDataReader:
         if opens_at is None and closes_at is None:
             return ClosedWeekday(weekday=weekday)
         if opens_at is None or closes_at is None:
-            raise restaurant_seed_file.fail(value_path, "must give both 'opens_at' and 'closes_at', or neither on a day the restaurant does not open")
+            given_times: str = ", ".join(
+                f"'{time_key}' {given_time:%H:%M}"
+                for time_key, given_time in (("opens_at", opens_at), ("closes_at", closes_at))
+                if given_time is not None
+            )
+            raise restaurant_seed_file.fail(
+                value_path,
+                (
+                    "must give both 'opens_at' and 'closes_at', or neither on a day the restaurant does not open, "
+                    f"but {weekday.value} gives only {given_times}"
+                ),
+            )
         # Seatings are kept as times of one calendar day, so service must end before midnight of the day it starts.
         if closes_at <= opens_at:
             raise restaurant_seed_file.fail(
@@ -342,27 +366,32 @@ class SeedDataReader:
             seed_files.restaurant_seed_file, restaurant_seed.weekly_hours, restaurant_seed.restaurant_profile.reservation_policy.slot_interval_minutes
         )
         cls._verify_reservation_party_sizes(
-            seed_files.reservations_seed_file, restaurant_seed.seed_reservations, restaurant_seed.restaurant_profile.reservation_policy
+            seed_files.reservations_seed_file,
+            restaurant_seed.seed_reservations,
+            restaurant_seed.restaurant_profile.reservation_policy.minimum_party_size,
+            restaurant_seed.restaurant_profile.reservation_policy.maximum_party_size,
         )
         cls._verify_reservation_tables(seed_files.reservations_seed_file, restaurant_seed.seed_reservations, restaurant_seed.dining_tables)
         cls._verify_reservation_seating_times(seed_files.reservations_seed_file, restaurant_seed)
 
     @classmethod
-    def _verify_reservation_policy(cls, restaurant_seed_file: SeedFile, reservation_policy: ReservationPolicy, reservation_policy_path: str) -> None:
-        if reservation_policy.maximum_party_size < reservation_policy.minimum_party_size:
+    def _verify_party_size_range(
+        cls, restaurant_seed_file: SeedFile, reservation_policy_path: str, minimum_party_size: int, maximum_party_size: int
+    ) -> None:
+        if maximum_party_size < minimum_party_size:
             raise restaurant_seed_file.fail(
                 f"{reservation_policy_path}.maximum_party_size",
-                f"must be at least the minimum_party_size of {reservation_policy.minimum_party_size} but was {reservation_policy.maximum_party_size}",
+                f"must be at least the minimum_party_size of {minimum_party_size} but was {maximum_party_size}",
             )
+
+    @classmethod
+    def _verify_slot_interval(cls, restaurant_seed_file: SeedFile, reservation_policy_path: str, slot_interval_minutes: int) -> None:
         # Bookable times step from each day's opening time, while a requested time is judged by its minute of the hour.
         # The two agree only when the interval divides an hour and every opening time lies on that grid.
-        if cls.MINUTES_PER_HOUR % reservation_policy.slot_interval_minutes != 0:
+        if cls.MINUTES_PER_HOUR % slot_interval_minutes != 0:
             raise restaurant_seed_file.fail(
                 f"{reservation_policy_path}.slot_interval_minutes",
-                (
-                    "must divide an hour evenly, so bookable times fall on the same minutes every hour, "
-                    f"but was {reservation_policy.slot_interval_minutes}"
-                ),
+                f"must divide an hour evenly, so bookable times fall on the same minutes every hour, but was {slot_interval_minutes}",
             )
 
     @staticmethod
@@ -390,16 +419,16 @@ class SeedDataReader:
     # Seed bookings stand for bookings guests made by phone, so they keep to the policy a phone booking is held to.
     @staticmethod
     def _verify_reservation_party_sizes(
-        reservations_seed_file: SeedFile, seed_reservations: Sequence[SeedReservation], reservation_policy: ReservationPolicy
+        reservations_seed_file: SeedFile, seed_reservations: Sequence[SeedReservation], minimum_party_size: int, maximum_party_size: int
     ) -> None:
         position: int
         seed_reservation: SeedReservation
         for position, seed_reservation in enumerate(seed_reservations):
-            if not reservation_policy.minimum_party_size <= seed_reservation.party_size <= reservation_policy.maximum_party_size:
+            if not minimum_party_size <= seed_reservation.party_size <= maximum_party_size:
                 raise reservations_seed_file.fail(
                     f"$.reservations[{position}].party_size",
                     (
-                        f"must be between {reservation_policy.minimum_party_size} and {reservation_policy.maximum_party_size}, "
+                        f"must be between {minimum_party_size} and {maximum_party_size}, "
                         f"the party sizes the reservation policy allows, but was {seed_reservation.party_size}"
                     ),
                 )
@@ -439,7 +468,9 @@ class SeedDataReader:
                 reservations_seed_file, starts_at_path, seed_reservation.starts_at, weekday_hours, seating_duration_minutes
             )
             overlapping_seed_reservation: SeedReservation | None = cls._find_overlapping_seed_reservation(
-                restaurant_seed.seed_reservations[:position], seed_reservation, seating_duration_minutes
+                restaurant_seed.seed_reservations[:position],
+                _SeedTableSeating(weekday=seed_reservation.weekday, table_id=seed_reservation.table_id, starts_at=seed_reservation.starts_at),
+                seating_duration_minutes,
             )
             if overlapping_seed_reservation is not None:
                 raise reservations_seed_file.fail(
@@ -452,7 +483,7 @@ class SeedDataReader:
 
     @classmethod
     def _verify_time_on_slot_grid(cls, seed_file: SeedFile, value_path: str, time_of_day: time, slot_interval_minutes: int) -> None:
-        if cls._to_minutes(time_of_day) % slot_interval_minutes != 0:
+        if cls._to_minutes_after_midnight(time_of_day) % slot_interval_minutes != 0:
             raise seed_file.fail(
                 value_path, f"'{time_of_day:%H:%M}' must fall on the {slot_interval_minutes}-minute slot grid that bookable times follow"
             )
@@ -466,9 +497,9 @@ class SeedDataReader:
         open_weekday: OpenWeekday,
         seating_duration_minutes: int,
     ) -> None:
-        starts_at_minutes: int = cls._to_minutes(starts_at)
-        if starts_at_minutes < cls._to_minutes(open_weekday.opens_at) or (
-            starts_at_minutes + seating_duration_minutes > cls._to_minutes(open_weekday.closes_at)
+        starts_at_minutes: int = cls._to_minutes_after_midnight(starts_at)
+        if starts_at_minutes < cls._to_minutes_after_midnight(open_weekday.opens_at) or (
+            starts_at_minutes + seating_duration_minutes > cls._to_minutes_after_midnight(open_weekday.closes_at)
         ):
             raise reservations_seed_file.fail(
                 starts_at_path,
@@ -480,21 +511,21 @@ class SeedDataReader:
 
     @classmethod
     def _find_overlapping_seed_reservation(
-        cls, earlier_seed_reservations: Sequence[SeedReservation], seed_reservation: SeedReservation, seating_duration_minutes: int
+        cls, earlier_seed_reservations: Sequence[SeedReservation], seed_table_seating: _SeedTableSeating, seating_duration_minutes: int
     ) -> SeedReservation | None:
-        starts_at_minutes: int = cls._to_minutes(seed_reservation.starts_at)
+        starts_at_minutes: int = cls._to_minutes_after_midnight(seed_table_seating.starts_at)
         return next(
             (
                 earlier_seed_reservation
                 for earlier_seed_reservation in earlier_seed_reservations
-                if earlier_seed_reservation.weekday == seed_reservation.weekday
-                and earlier_seed_reservation.table_id == seed_reservation.table_id
-                and cls._to_minutes(earlier_seed_reservation.starts_at) < starts_at_minutes + seating_duration_minutes
-                and starts_at_minutes < cls._to_minutes(earlier_seed_reservation.starts_at) + seating_duration_minutes
+                if earlier_seed_reservation.weekday == seed_table_seating.weekday
+                and earlier_seed_reservation.table_id == seed_table_seating.table_id
+                and cls._to_minutes_after_midnight(earlier_seed_reservation.starts_at) < starts_at_minutes + seating_duration_minutes
+                and starts_at_minutes < cls._to_minutes_after_midnight(earlier_seed_reservation.starts_at) + seating_duration_minutes
             ),
             None,
         )
 
     @classmethod
-    def _to_minutes(cls, time_of_day: time) -> int:
+    def _to_minutes_after_midnight(cls, time_of_day: time) -> int:
         return time_of_day.hour * cls.MINUTES_PER_HOUR + time_of_day.minute

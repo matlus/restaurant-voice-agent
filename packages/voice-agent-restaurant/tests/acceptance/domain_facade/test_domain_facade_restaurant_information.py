@@ -2,7 +2,9 @@
 # Black-box through the DomainFacade against a real SQLite store seeded from the bundled seed files. The facade's
 # answers here are the seeded values themselves, so the expectations are read from the bundled seed file.
 
-from datetime import date, datetime, time, timedelta
+import sqlite3
+from contextlib import closing
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Final
 from zoneinfo import ZoneInfo
@@ -40,6 +42,18 @@ from voice_agent_restaurant import (
 )
 
 ENVIRONMENT_VARIABLE_NAME_CONTEXT_NAME: Final[str] = "Configuration.EnvironmentVariableName"
+
+OLDER_STORE_VERSION: Final[int] = 1
+# Monday 2026-11-30 at 15:00 in Riverton: after Thanksgiving, the first seeded closure.
+AFTER_THE_FIRST_CLOSURE_UTC: Final[datetime] = datetime(2026, 11, 30, 21, 0, tzinfo=UTC)
+
+
+@pytest.fixture
+def older_store_database_path(restaurant_database_path: Path) -> Path:
+    with closing(sqlite3.connect(restaurant_database_path)) as connection:
+        # SQLite PRAGMA statements take no bound parameters, so the version is interpolated; it is a test constant, never input.
+        connection.execute(f"PRAGMA user_version = {OLDER_STORE_VERSION}")
+    return restaurant_database_path
 
 
 @pytest.fixture
@@ -80,6 +94,7 @@ class TestRestaurantInformation:
             expected_time_zone=seeded_restaurant.time_zone,
             expected_seating_duration_minutes=seeded_restaurant.reservation_policy.seating_duration_minutes,
             expected_maximum_party_size=seeded_restaurant.reservation_policy.maximum_party_size,
+            expected_allergen_notice=seeded_restaurant.allergen_notice,
             expected_house_notes=seeded_restaurant.house_notes,
             actual_restaurant_profile=actual_restaurant_profile,
         )
@@ -99,25 +114,30 @@ class TestRestaurantInformation:
     async def test_GetOpeningHours_WhenAsked_ThenEveryWeekdayIsListedAndOnlyTheClosuresInsideTheBookingWindow(
         self, restaurant_database_path: Path
     ) -> None:
+        # Today falls after the first seeded closure, so the window must leave a closure out as well as keep the later ones.
         seeded_restaurant: SeededRestaurant = read_seeded_restaurant()
-        restaurant_today: date = WEDNESDAY_AFTERNOON_UTC.astimezone(ZoneInfo(seeded_restaurant.time_zone)).date()
+        restaurant_today: date = AFTER_THE_FIRST_CLOSURE_UTC.astimezone(ZoneInfo(seeded_restaurant.time_zone)).date()
         last_bookable_date: date = restaurant_today + timedelta(days=seeded_restaurant.reservation_policy.booking_window_days)
         seeded_closures: list[Closure] = [
             Closure(closed_on=seeded_closure.closed_on, reason=seeded_closure.reason) for seeded_closure in seeded_restaurant.closures
         ]
+        closures_inside_the_window: list[Closure] = [
+            seeded_closure for seeded_closure in seeded_closures if restaurant_today <= seeded_closure.closed_on <= last_bookable_date
+        ]
+        assert 0 < len(closures_inside_the_window) < len(seeded_closures), (
+            f"The booking window from {restaurant_today} to {last_bookable_date} must hold some seeded closures and leave others out; "
+            f"the seeded data no longer supports this scenario: {seeded_closures!r}"
+        )
         expected_opening_hours: OpeningHours = OpeningHours(
             weekly_hours=sorted(
                 (to_weekday_hours(seeded_weekday_hours) for seeded_weekday_hours in seeded_restaurant.weekly_hours),
                 key=lambda weekday_hours: list(Weekday).index(weekday_hours.weekday),
             ),
-            upcoming_closures=sorted(
-                (seeded_closure for seeded_closure in seeded_closures if restaurant_today <= seeded_closure.closed_on <= last_bookable_date),
-                key=lambda upcoming_closure: upcoming_closure.closed_on,
-            ),
+            upcoming_closures=sorted(closures_inside_the_window, key=lambda upcoming_closure: upcoming_closure.closed_on),
             last_seating_minutes_before_close=seeded_restaurant.reservation_policy.seating_duration_minutes,
         )
 
-        async with create_domain_facade(restaurant_database_path) as domain_facade:
+        async with create_domain_facade(restaurant_database_path, AFTER_THE_FIRST_CLOSURE_UTC) as domain_facade:
             actual_opening_hours: OpeningHours = await domain_facade.get_opening_hours()
 
         assert actual_opening_hours == expected_opening_hours
@@ -143,6 +163,32 @@ class TestRestaurantInformation:
             )
 
         assert actual_found_reservations == expected_reservations
+
+    async def test_GetRestaurantProfile_WhenTheStoreWasCreatedByAnOlderVersion_ThenTheFailureSaysToDeleteTheStore(
+        self, older_store_database_path: Path
+    ) -> None:
+        expected_message_phrases: list[str] = [f"store version {OLDER_STORE_VERSION}", "Delete the store file"]
+        expected_exception_metadata: ExpectedExceptionMetadata = ExpectedExceptionMetadata(
+            http_status_code=500,
+            exception_action=ExceptionAction.DEVELOPER_ACTION_REQUIRED,
+            reason="The restaurant store breaks a contract the domain relies on",
+            severity=Severity.ERROR,
+            log_event=LogEventRestaurantStore.RESTAURANT_STORE_OPERATION,
+        )
+        expected_contextual_data_by_name: dict[str, int] = {"RestaurantStore.Version": OLDER_STORE_VERSION}
+        expected_present_contextual_data_names: list[str] = ["RestaurantStore.RequiredVersion"]
+
+        async with create_domain_facade(older_store_database_path) as domain_facade:
+            with pytest.raises(RestaurantStoreContractViolationException) as raised:
+                await domain_facade.get_restaurant_profile()
+
+        AsserterException.assert_message_and_metadata_are_as_expected(
+            expected_message_phrases=expected_message_phrases,
+            expected_exception_metadata=expected_exception_metadata,
+            expected_contextual_data_by_name=expected_contextual_data_by_name,
+            actual_voice_agent_restaurant_exception=raised.value,
+            expected_present_contextual_data_names=expected_present_contextual_data_names,
+        )
 
     async def test_GetRestaurantProfile_WhenTheStoreFileIsNotASqliteDatabase_ThenTheFailureIsReportedAsPermanent(
         self, foreign_file_database_path: Path

@@ -15,7 +15,9 @@ platform are planned (see [What's next](#whats-next)).
 - **Find dishes for a diet:** vegan, vegetarian, pescatarian, keto, carnivore or paleo, plus gluten-free, dairy-free
   and nut-free. Ask "What do you have that's keto?" and the agent names two or three that fit best, then offers more.
 - **Avoid allergens:** the nine major US allergens (milk, eggs, fish, shellfish, tree nuts, peanuts, wheat, soy and
-  sesame). Ask for dishes without sesame, or whether a dish has nuts.
+  sesame). Ask for dishes without sesame, or whether a dish has nuts. Whenever an answer is about an allergen or a
+  free-from diet, the agent also says, once in the call, that everything is made in a shared kitchen, so no dish is
+  guaranteed free of traces, and suggests telling the server about any allergy.
 - **Narrow it down:** by menu section (starters, garden, mains, sides, desserts, drinks), by a calorie limit, or by a
   word such as "salmon" or "mushroom".
 - **Hear about one dish:** what's in it, its price, calories, protein, carbohydrate and fat, its allergens and any
@@ -66,7 +68,8 @@ the store is created (today counts), so the scenarios stay in the future.
 | Large party | Parties over eight are pointed to the private dining room instead. |
 
 To start over with fresh data, stop the app and delete the SQLite file (`data/restaurant.sqlite3` by default). It is
-created and seeded again on the next run.
+created and seeded again on the next run. A store created by an older version of the app
+is refused with a message saying so; delete it the same way.
 
 ## The restaurant
 
@@ -77,7 +80,8 @@ zone. It opens Tuesday to Thursday 5–10 PM, Friday 5–11 PM, Saturday noon–
   ingredients, nutrition, allergens and the diets it suits.
 - **Diet labels:** the lifestyle diets (vegan, vegetarian, pescatarian, keto, carnivore, paleo) come from the recipe.
   The free-from labels (gluten-free, dairy-free, nut-free) are derived from the allergen data, so the two can never
-  disagree. A test checks the whole menu for consistency: for example, every vegan dish is also vegetarian and
+  disagree. They describe the recipe, not cross-contact, which is why the agent always gives the shared-kitchen
+  allergen notice with them. A test checks the whole menu for consistency: for example, every vegan dish is also vegetarian and
   contains no milk or eggs, and every keto dish has at most 15 g of carbohydrate.
 - **Tables:** 15 tables, from 2 to 8 seats, in the window, main room and garden room.
 - **Reservation rules:** a seating lasts 90 minutes. Bookable times fall every 15 minutes, and a seating must end by
@@ -114,8 +118,8 @@ A call goes like this:
 
 | Tool | What it does |
 | --- | --- |
-| `search_menu` | Dishes matching diets, excluded allergens, section, calorie limit and search words. |
-| `describe_dish` | One dish in full, found by a loose name. |
+| `search_menu` | Dishes matching diets, excluded allergens, section, calorie limit and search words. A search about an allergy also carries the restaurant's allergen notice. |
+| `describe_dish` | One dish in full, found by a loose name, with the restaurant's allergen notice. |
 | `get_opening_hours` | Weekly hours and upcoming holiday closures. |
 | `check_availability` | Whether a table fits, with nearby open times when it doesn't. |
 | `book_table` | Books a table and returns the confirmation code. |

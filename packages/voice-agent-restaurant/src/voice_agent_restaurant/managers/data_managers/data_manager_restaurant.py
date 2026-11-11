@@ -136,6 +136,7 @@ class DataManagerRestaurant:
             postal_code=restaurant_row["postal_code"],
             phone_number=restaurant_row["phone_number"],
             time_zone=restaurant_row["time_zone"],
+            allergen_notice=restaurant_row["allergen_notice"],
             house_notes=cast(list[str], json.loads(restaurant_row["house_notes_json"])),
             reservation_policy=ReservationPolicy(
                 seating_duration_minutes=restaurant_row["seating_duration_minutes"],

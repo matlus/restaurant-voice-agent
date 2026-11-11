@@ -1,6 +1,6 @@
 import json
 import sqlite3
-from collections.abc import Generator, Sequence
+from collections.abc import Collection, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import date, datetime, time, timedelta
 from typing import Final
@@ -12,6 +12,7 @@ from voice_agent_restaurant.managers.data_managers.store.initialization.seed_dat
     SeedDataReader,
     SeedReservation,
 )
+from voice_agent_restaurant.managers.exceptions.restaurant_store_exceptions import RestaurantStoreContractViolationException
 from voice_agent_restaurant.managers.models.menu_models import DishRecord
 from voice_agent_restaurant.managers.models.reservation_models import ReservationStatus
 from voice_agent_restaurant.managers.models.restaurant_models import (
@@ -34,6 +35,8 @@ class RestaurantStoreInitializer:
     on a new file cannot both seed it.
     """
 
+    # SQLite reports this version for a file no store has been created in yet.
+    NEW_FILE_STORE_VERSION: Final[int] = 0
     MINUTES_PER_HOUR: Final[int] = 60
     DAYS_PER_WEEK: Final[int] = 7
 
@@ -59,18 +62,35 @@ class RestaurantStoreInitializer:
 
     @classmethod
     def _create_store(cls, connection: sqlite3.Connection, now_utc: datetime) -> None:
+        store_version: int = cls._read_store_version(connection)
         # A racing first caller may have created the store between the unlocked check and this transaction.
-        if cls._is_current(connection):
+        if cls._is_store_version_current(store_version):
             return
+        if store_version != cls.NEW_FILE_STORE_VERSION:
+            raise RestaurantStoreContractViolationException(
+                message=(
+                    f"The restaurant store was created by an older version of the app (store version {store_version}; this version needs "
+                    f"{STORE_VERSION}), and it cannot be upgraded in place. Delete the store file; it is created and seeded again on the next run."
+                ),
+                contextual_data_by_name={"RestaurantStore.Version": store_version, "RestaurantStore.RequiredVersion": STORE_VERSION},
+            )
         cls._create_schema(connection)
         cls._load_seed(connection, SeedDataReader.read_restaurant_seed(), now_utc)
         # SQLite PRAGMA statements take no bound parameters, so the version is interpolated; STORE_VERSION is an int constant, never input.
         connection.execute(f"PRAGMA user_version = {STORE_VERSION}")
 
+    @classmethod
+    def _is_current(cls, connection: sqlite3.Connection) -> bool:
+        return cls._is_store_version_current(cls._read_store_version(connection))
+
     @staticmethod
-    def _is_current(connection: sqlite3.Connection) -> bool:
+    def _is_store_version_current(store_version: int) -> bool:
+        return store_version >= STORE_VERSION
+
+    @classmethod
+    def _read_store_version(cls, connection: sqlite3.Connection) -> int:
         version_row: sqlite3.Row | None = connection.execute("PRAGMA user_version").fetchone()
-        return version_row is not None and int(version_row[0]) >= STORE_VERSION
+        return cls.NEW_FILE_STORE_VERSION if version_row is None else int(version_row[0])
 
     @staticmethod
     def _create_schema(connection: sqlite3.Connection) -> None:
@@ -87,7 +107,11 @@ class RestaurantStoreInitializer:
         cls._insert_dishes(connection, restaurant_seed.dish_records)
         restaurant_today: date = now_utc.astimezone(ZoneInfo(restaurant_profile.time_zone)).date()
         cls._insert_seed_reservations(
-            connection, restaurant_seed.seed_reservations, restaurant_today, restaurant_profile.reservation_policy.seating_duration_minutes, now_utc
+            connection,
+            restaurant_seed.seed_reservations,
+            cls._find_first_open_weekday_dates(restaurant_today, {closure.closed_on for closure in restaurant_seed.closures}),
+            restaurant_profile.reservation_policy.seating_duration_minutes,
+            now_utc,
         )
 
     @staticmethod
@@ -96,9 +120,9 @@ class RestaurantStoreInitializer:
             """
             INSERT INTO restaurant (
                 restaurant_id, name, tagline, description, street_address, city, state_or_region, postal_code, phone_number,
-                time_zone, house_notes_json, seating_duration_minutes, slot_interval_minutes, minimum_party_size,
+                time_zone, allergen_notice, house_notes_json, seating_duration_minutes, slot_interval_minutes, minimum_party_size,
                 maximum_party_size, booking_window_days, late_arrival_hold_minutes, large_party_guidance
-            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 restaurant_profile.name,
@@ -110,6 +134,7 @@ class RestaurantStoreInitializer:
                 restaurant_profile.postal_code,
                 restaurant_profile.phone_number,
                 restaurant_profile.time_zone,
+                restaurant_profile.allergen_notice,
                 json.dumps(restaurant_profile.house_notes),
                 restaurant_profile.reservation_policy.seating_duration_minutes,
                 restaurant_profile.reservation_policy.slot_interval_minutes,
@@ -183,18 +208,30 @@ class RestaurantStoreInitializer:
         )
 
     @classmethod
+    def _find_first_open_weekday_dates(cls, restaurant_today: date, closed_dates: Collection[date]) -> dict[Weekday, date]:
+        """The date each seed booking's weekday next falls on, from today on, skipping holiday closures a week at a time,
+        so no seed booking lands on a day the restaurant is closed."""
+        reservation_date_by_weekday: dict[Weekday, date] = {}
+        days_ahead: int
+        for days_ahead in range(cls.DAYS_PER_WEEK):
+            reservation_date: date = restaurant_today + timedelta(days=days_ahead)
+            while reservation_date in closed_dates:
+                reservation_date += timedelta(days=cls.DAYS_PER_WEEK)
+            reservation_date_by_weekday[list(Weekday)[reservation_date.weekday()]] = reservation_date
+        return reservation_date_by_weekday
+
+    @classmethod
     def _insert_seed_reservations(
         cls,
         connection: sqlite3.Connection,
         seed_reservations: Sequence[SeedReservation],
-        restaurant_today: date,
+        reservation_date_by_weekday: Mapping[Weekday, date],
         seating_duration_minutes: int,
         now_utc: datetime,
     ) -> None:
         reservation_rows: list[tuple[_StoredValue, ...]] = []
         for seed_reservation in seed_reservations:
-            days_until_weekday: int = (list(Weekday).index(seed_reservation.weekday) - restaurant_today.weekday()) % cls.DAYS_PER_WEEK
-            reservation_date: date = restaurant_today + timedelta(days=days_until_weekday)
+            reservation_date: date = reservation_date_by_weekday[seed_reservation.weekday]
             starts_at_minutes: int = cls._to_minutes_after_midnight(seed_reservation.starts_at)
             reservation_rows.append(
                 (

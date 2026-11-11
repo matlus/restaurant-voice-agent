@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Final
 
 
 class Allergen(StrEnum):
@@ -28,6 +29,10 @@ class DietLabel(StrEnum):
     GLUTEN_FREE = "gluten_free"
     DAIRY_FREE = "dairy_free"
     NUT_FREE = "nut_free"
+
+
+# The diet labels derived from allergen data rather than stated by the recipe.
+FREE_FROM_DIET_LABELS: Final[frozenset[DietLabel]] = frozenset({DietLabel.GLUTEN_FREE, DietLabel.DAIRY_FREE, DietLabel.NUT_FREE})
 
 
 class MenuCategory(StrEnum):
@@ -98,6 +103,15 @@ class MenuSearchRequest:
 @dataclass(frozen=True)
 class DishLookupRequest:
     dish_name: str | None
+
+
+@dataclass(frozen=True)
+class MenuSearchResult:
+    """The dishes a menu search found. filters_on_allergens is true when the search excluded allergens or asked for a
+    free-from diet, so the answer is about allergy safety and the restaurant's allergen notice applies to it."""
+
+    dishes: list[Dish]
+    filters_on_allergens: bool
 
 
 @dataclass(frozen=True)

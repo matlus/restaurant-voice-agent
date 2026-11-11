@@ -40,6 +40,7 @@ from voice_agent_restaurant.managers.models.menu_models import (
     DishLookupRequest,
     MenuCategory,
     MenuSearchRequest,
+    MenuSearchResult,
     Nutrition,
 )
 from voice_agent_restaurant.managers.models.reservation_models import (
@@ -87,6 +88,7 @@ __all__ = [
     "LogEventRestaurantStore",
     "MenuCategory",
     "MenuSearchRequest",
+    "MenuSearchResult",
     "MenuSearchValidationException",
     "NoTableAvailableException",
     "Nutrition",

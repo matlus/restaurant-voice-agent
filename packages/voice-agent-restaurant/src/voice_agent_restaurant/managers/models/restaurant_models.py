@@ -17,8 +17,6 @@ class Weekday(StrEnum):
 
 @dataclass(frozen=True)
 class OpenWeekday:
-    """A weekday on which the restaurant opens, with the hours it keeps."""
-
     weekday: Weekday
     opens_at: time
     closes_at: time
@@ -26,8 +24,6 @@ class OpenWeekday:
 
 @dataclass(frozen=True)
 class ClosedWeekday:
-    """A weekday on which the restaurant does not open at all."""
-
     weekday: Weekday
 
 
@@ -62,16 +58,14 @@ class RestaurantProfile:
     postal_code: str
     phone_number: str
     time_zone: str
+    allergen_notice: str
     house_notes: list[str]
     reservation_policy: ReservationPolicy
 
 
 @dataclass(frozen=True)
 class OpeningHours:
-    """The weekly schedule plus the closures that fall inside the booking window.
-
-    last_seating_minutes_before_close is how long before closing the final table can be seated.
-    """
+    """The weekly schedule plus the closures that fall inside the booking window."""
 
     weekly_hours: list[WeekdayHours]
     upcoming_closures: list[Closure]

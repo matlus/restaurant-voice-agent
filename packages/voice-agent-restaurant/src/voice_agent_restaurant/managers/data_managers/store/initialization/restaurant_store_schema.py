@@ -1,7 +1,7 @@
 from typing import Final
 
 # The store's version lives in SQLite's PRAGMA user_version. A new, empty file reads 0; a created and seeded store reads this.
-STORE_VERSION: Final[int] = 1
+STORE_VERSION: Final[int] = 2
 
 # Times of day are stored as minutes after midnight and dates as ISO text, so range
 # comparisons in SQL are plain integer and string comparisons.
@@ -18,6 +18,7 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         postal_code TEXT NOT NULL,
         phone_number TEXT NOT NULL,
         time_zone TEXT NOT NULL,
+        allergen_notice TEXT NOT NULL,
         house_notes_json TEXT NOT NULL,
         seating_duration_minutes INTEGER NOT NULL,
         slot_interval_minutes INTEGER NOT NULL,
@@ -85,5 +86,6 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS ix_reservations_date ON reservations (reservation_date, status)",
+    "CREATE INDEX IF NOT EXISTS ix_reservations_table ON reservations (table_id)",
     "CREATE INDEX IF NOT EXISTS ix_reservations_phone ON reservations (phone_number, status)",
 )

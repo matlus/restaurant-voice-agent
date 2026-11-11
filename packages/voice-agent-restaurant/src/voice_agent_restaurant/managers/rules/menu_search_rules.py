@@ -1,6 +1,6 @@
 from collections.abc import Collection, Iterable
 
-from voice_agent_restaurant.managers.models.menu_models import Allergen, DietLabel, Dish, MenuCategory, MenuSearchCriteria
+from voice_agent_restaurant.managers.models.menu_models import FREE_FROM_DIET_LABELS, Allergen, DietLabel, Dish, MenuCategory, MenuSearchCriteria
 
 
 class MenuSearchRules:
@@ -13,10 +13,14 @@ class MenuSearchRules:
             and cls._avoids_excluded_allergens(dish.allergens, menu_search_criteria.excluded_allergens)
             and cls._is_in_requested_category(dish.category, menu_search_criteria.category)
             and cls._is_within_calorie_limit(dish.nutrition.calories, menu_search_criteria.maximum_calories)
-            and cls._contains_search_text(
-                [dish.name, dish.description, *dish.ingredients],
-                None if menu_search_criteria.search_text is None else menu_search_criteria.search_text.casefold(),
-            )
+            and cls._contains_search_text(dish, menu_search_criteria.search_text)
+        )
+
+    @staticmethod
+    def filters_on_allergens(menu_search_criteria: MenuSearchCriteria) -> bool:
+        """Whether the search is about allergy safety: it excludes allergens or asks for a free-from diet."""
+        return bool(menu_search_criteria.excluded_allergens) or any(
+            diet_label in FREE_FROM_DIET_LABELS for diet_label in menu_search_criteria.diet_labels
         )
 
     @staticmethod
@@ -36,7 +40,9 @@ class MenuSearchRules:
         return maximum_calories is None or dish_calories <= maximum_calories
 
     @staticmethod
-    def _contains_search_text(dish_searchable_texts: Iterable[str], folded_search_text: str | None) -> bool:
-        return folded_search_text is None or any(
-            folded_search_text in dish_searchable_text.casefold() for dish_searchable_text in dish_searchable_texts
-        )
+    def _contains_search_text(dish: Dish, search_text: str | None) -> bool:
+        if search_text is None:
+            return True
+        folded_search_text: str = search_text.casefold()
+        dish_searchable_texts: list[str] = [dish.name, dish.description, *dish.ingredients]
+        return any(folded_search_text in dish_searchable_text.casefold() for dish_searchable_text in dish_searchable_texts)

@@ -4,7 +4,7 @@ from typing import Self
 
 from voice_agent_restaurant.managers.manager_reservations import ManagerReservations
 from voice_agent_restaurant.managers.manager_restaurant import ManagerRestaurant
-from voice_agent_restaurant.managers.models.menu_models import Dish, DishLookupRequest, MenuSearchRequest
+from voice_agent_restaurant.managers.models.menu_models import Dish, DishLookupRequest, MenuSearchRequest, MenuSearchResult
 from voice_agent_restaurant.managers.models.reservation_models import (
     AvailabilityRequest,
     AvailabilityResult,
@@ -41,7 +41,7 @@ class DomainFacade:
         await self.close()
 
     async def close(self) -> None:
-        """Nothing to release yet; see the class description."""
+        pass
 
     async def get_restaurant_profile(self) -> RestaurantProfile:
         return await self._manager_restaurant.get_restaurant_profile()
@@ -53,9 +53,10 @@ class DomainFacade:
     async def get_opening_hours(self) -> OpeningHours:
         return await self._manager_restaurant.get_opening_hours()
 
-    async def search_menu(self, menu_search_request: MenuSearchRequest) -> list[Dish]:
+    async def search_menu(self, menu_search_request: MenuSearchRequest) -> MenuSearchResult:
         """Returns every dish that suits all the requested diets, contains none of the excluded allergens, and
-        matches the optional category, calorie ceiling and text. An empty list means nothing matches."""
+        matches the optional category, calorie ceiling and text. No dishes means nothing matches. The result also says
+        whether the search was about allergy safety, which is when the restaurant profile's allergen notice applies."""
         return await self._manager_restaurant.search_menu(menu_search_request)
 
     async def retrieve_dish(self, dish_lookup_request: DishLookupRequest) -> Dish:
