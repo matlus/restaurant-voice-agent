@@ -1,6 +1,6 @@
 # Handler tests for the browser's front door. They start at a handler method and end at its domain Hook, which
 # ConversationHandlerForTest scripts, so no domain runs beneath them. They prove only what the handler owns: the wire
-# request becomes the typed domain request, the guest's binary frames become the guest audio stream, the domain's
+# request becomes the typed domain request, the guest's binary frames and cut-off reports become the guest side stream, the domain's
 # answer becomes the browser's wire messages, a browser that hangs up ends the call quietly, and a domain failure or a
 # frame that cannot be sent fails onward to the middleware untouched.
 
@@ -17,11 +17,14 @@ from web_test_support.scripted_browser import ScriptedBrowser
 
 from voice_agent_conversation import (
     AgentSpeechChunk,
+    AgentSpeechCutOff,
     AgentTurnFinished,
     ConversationAudioFormat,
     ConversationEvent,
     ConversationRequest,
     ConversationStarted,
+    GuestSideEvent,
+    GuestSpeechChunk,
     GuestStartedSpeaking,
     PresentedGender,
     RealtimeVoiceProviderUnavailableException,
@@ -86,15 +89,39 @@ class TestConversationHandlerHoldConversation:
             guest_audio_reading=GuestAudioReading.READ_AFTER_THE_EVENTS
         )
         expected_conversation_request: ConversationRequest = ConversationRequest(voice_key="  OpenAI-Cedar ")
+        expected_guest_side_events: list[GuestSideEvent] = [GuestSpeechChunk(pcm_audio=guest_audio_chunk) for guest_audio_chunk in guest_audio_chunks]
         expected_delivered_messages: list[Message] = [{"type": "websocket.accept", "subprotocol": None, "headers": []}]
 
         await conversation_handler_for_test.hold_conversation(scripted_browser.create_websocket())
 
         assert (
             conversation_handler_for_test.captured_conversation_request,
-            conversation_handler_for_test.captured_guest_audio,
+            conversation_handler_for_test.captured_guest_side_events,
             scripted_browser.delivered_messages,
-        ) == (expected_conversation_request, guest_audio_chunks, expected_delivered_messages)
+        ) == (expected_conversation_request, expected_guest_side_events, expected_delivered_messages)
+
+    async def test_HoldConversation_WhenThePageReportsAgentSpeechCutOff_ThenTheDomainGetsHowMuchWentUnplayedAndMalformedReportsArePassedOver(
+        self,
+    ) -> None:
+        unplayed_milliseconds: int = 640
+        scripted_browser: ScriptedBrowser = ScriptedBrowser(
+            query_string=b"voice=openai-cedar",
+            browser_messages=[
+                {"type": "websocket.receive", "text": json.dumps({"type": "agent_speech_cut_off", "unplayed_milliseconds": unplayed_milliseconds})},
+                {"type": "websocket.receive", "text": json.dumps({"type": "agent_speech_cut_off", "unplayed_milliseconds": "a lot"})},
+                {"type": "websocket.receive", "text": json.dumps({"type": "agent_speech_cut_off", "unplayed_milliseconds": True})},
+                {"type": "websocket.receive", "text": "{not json"},
+                {"type": "websocket.disconnect", "code": NORMAL_CLOSURE_CODE},
+            ],
+        )
+        conversation_handler_for_test: ConversationHandlerForTest = ConversationHandlerForTest(
+            guest_audio_reading=GuestAudioReading.READ_AFTER_THE_EVENTS
+        )
+        expected_guest_side_events: list[GuestSideEvent] = [AgentSpeechCutOff(unplayed_milliseconds=unplayed_milliseconds)]
+
+        await conversation_handler_for_test.hold_conversation(scripted_browser.create_websocket())
+
+        assert conversation_handler_for_test.captured_guest_side_events == expected_guest_side_events
 
     async def test_HoldConversation_WhenTheDomainYieldsEveryKindOfEvent_ThenTheBrowserGetsEachAsItsWireFrameInOrderAndThenTheClose(self) -> None:
         scripted_conversation_events: list[ConversationEvent] = [

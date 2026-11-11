@@ -76,6 +76,28 @@ class AgentToolCallRequested:
     arguments_json: str
 
 
+@dataclass(frozen=True)
+class GuestSpeechChunk:
+    """The next piece of the guest's speech, in the format ConversationStarted gave."""
+
+    pcm_audio: bytes
+
+
+@dataclass(frozen=True)
+class AgentSpeechCutOff:
+    """The host dropped agent speech it had received but not yet played, because the guest started talking.
+
+    unplayed_milliseconds is how much it dropped. The provider sends speech faster than it is played, so only the host
+    knows where the guest stopped hearing it; the agent is told, so it does not believe the guest heard the rest.
+    """
+
+    unplayed_milliseconds: int
+
+
+# What the guest's side of a call sends the domain: speech, and word that agent speech was cut off unheard.
+type GuestSideEvent = GuestSpeechChunk | AgentSpeechCutOff
+
+
 type ConversationEvent = ConversationStarted | AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished
 
 type AgentSessionEvent = AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished

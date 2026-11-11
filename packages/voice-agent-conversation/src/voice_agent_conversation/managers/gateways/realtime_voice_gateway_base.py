@@ -18,6 +18,11 @@ class RealtimeVoiceSessionBase(ABC):
         """Passes on the next piece of the guest's speech. The provider detects turns itself."""
 
     @abstractmethod
+    async def cut_off_agent_speech(self, unplayed_milliseconds: int) -> None:
+        """Tells the provider the host dropped this much of the agent's latest speech unplayed, so the agent forgets
+        the part the guest never heard. Nothing dropped, or no agent speech yet, leaves the conversation as it is."""
+
+    @abstractmethod
     async def request_greeting(self, greeting_instructions: str) -> None:
         """Asks the agent to speak first and greet the guest. The greeting instructions apply to that one reply only."""
 

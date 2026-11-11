@@ -89,8 +89,10 @@ class SessionEventMessage(TypedDict):
     session: dict[str, object]
 
 
-type ScriptedServerEventMessage = SpeechStartedEventMessage | ErrorEventMessage | ResponseDoneEventMessage | FunctionCallArgumentsDoneEventMessage
-type ServerEventMessage = ScriptedServerEventMessage | OutputAudioDeltaEventMessage | SessionEventMessage
+type ScriptedServerEventMessage = (
+    SpeechStartedEventMessage | ErrorEventMessage | ResponseDoneEventMessage | FunctionCallArgumentsDoneEventMessage | OutputAudioDeltaEventMessage
+)
+type ServerEventMessage = ScriptedServerEventMessage | SessionEventMessage
 
 
 # The parts of the client events this service reads.
@@ -138,8 +140,28 @@ class ConversationItemCreateEventMessage(TypedDict):
     item: FunctionCallOutputItemMessage
 
 
+class ConversationItemTruncateEventMessage(TypedDict):
+    type: Literal["conversation.item.truncate"]
+    item_id: str
+    content_index: int
+    audio_end_ms: int
+
+
 def create_speech_started_event() -> SpeechStartedEventMessage:
     return {"type": "input_audio_buffer.speech_started", "event_id": "event_speech_started", "audio_start_ms": 0, "item_id": "item_guest"}
+
+
+def create_agent_speech_event(item_id: str, pcm_audio: bytes) -> OutputAudioDeltaEventMessage:
+    """One piece of the agent's speech in the reply item given, as OpenAI streams it."""
+    return {
+        "type": "response.output_audio.delta",
+        "event_id": f"event_{item_id}_audio",
+        "response_id": f"response_{item_id}",
+        "item_id": item_id,
+        "output_index": 0,
+        "content_index": 0,
+        "delta": base64.b64encode(pcm_audio).decode("ascii"),
+    }
 
 
 def create_error_event(error_type: str, error_code: str | None, error_message: str) -> ErrorEventMessage:
@@ -197,6 +219,15 @@ class CapturedToolOutput:
     output: str
 
 
+@dataclass(frozen=True)
+class CapturedAgentSpeechTruncation:
+    """One conversation.item.truncate the client sent: where the guest stopped hearing the agent's speech."""
+
+    item_id: str
+    content_index: int
+    audio_end_ms: int
+
+
 @dataclass
 class CapturedRealtimeSession:
     """What one client connection did, as the service saw it on the wire. State only."""
@@ -205,6 +236,7 @@ class CapturedRealtimeSession:
     session_settings: list[CapturedSessionSettings] = field(default_factory=list[CapturedSessionSettings])
     guest_audio: list[bytes] = field(default_factory=list[bytes])
     tool_outputs: list[CapturedToolOutput] = field(default_factory=list[CapturedToolOutput])
+    agent_speech_truncations: list[CapturedAgentSpeechTruncation] = field(default_factory=list[CapturedAgentSpeechTruncation])
     agent_response_request_count: int = 0
     # The instructions each response.create carried for that reply alone, or None when it carried none.
     agent_response_instructions: list[str | None] = field(default_factory=list[str | None])
@@ -217,7 +249,7 @@ class RealtimeVoiceServiceScripted:
     The production gateway connects to it through its configured WebSocket base URL, so every line of the
     gateway, the session and its exception translator runs exactly as it does against OpenAI; only the far
     end of the wire is scripted. It confirms session settings, greets when asked for a response, answers
-    each piece of guest audio with the scripted events, and captures every tool answer the client sends.
+    each piece of guest audio with the scripted events, and captures every tool answer and speech truncation the client sends.
     It can also refuse the WebSocket handshake with an HTTP status, refuse an accepted connection by closing
     it the way OpenAI does for an invalid API key, or reject the session settings with a provider error event.
 
@@ -346,6 +378,17 @@ class RealtimeVoiceServiceScripted:
                 function_call_output_item_message: FunctionCallOutputItemMessage = conversation_item_create_event_message["item"]
                 captured_realtime_session.tool_outputs.append(
                     CapturedToolOutput(call_id=function_call_output_item_message["call_id"], output=function_call_output_item_message["output"])
+                )
+            case "conversation.item.truncate":
+                conversation_item_truncate_event_message: ConversationItemTruncateEventMessage = cast(
+                    ConversationItemTruncateEventMessage, client_event
+                )
+                captured_realtime_session.agent_speech_truncations.append(
+                    CapturedAgentSpeechTruncation(
+                        item_id=conversation_item_truncate_event_message["item_id"],
+                        content_index=conversation_item_truncate_event_message["content_index"],
+                        audio_end_ms=conversation_item_truncate_event_message["audio_end_ms"],
+                    )
                 )
             case _:
                 pass

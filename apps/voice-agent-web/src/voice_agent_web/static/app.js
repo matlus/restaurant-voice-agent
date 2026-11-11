@@ -77,6 +77,14 @@ function connectAudio(guestSampleRate, agentSampleRate) {
     processorOptions: { sourceSampleRate: agentSampleRate },
   });
   call.playback.connect(audioContext.destination);
+  // The agent's speech arrives faster than it plays. When it is cut off, the server must learn how much the guest never
+  // heard, so the agent does not believe the guest heard it all.
+  call.playback.port.onmessage = (event) => {
+    const { unplayedMilliseconds } = event.data;
+    if (unplayedMilliseconds > 0 && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "agent_speech_cut_off", unplayed_milliseconds: unplayedMilliseconds }));
+    }
+  };
 }
 
 function endCall(message) {

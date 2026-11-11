@@ -12,10 +12,13 @@ from voice_agent_conversation.managers.gateways.realtime_voice_gateway_base impo
 from voice_agent_conversation.managers.gateways.realtime_voice_gateway_openai import RealtimeVoiceGatewayOpenAI
 from voice_agent_conversation.managers.models.conversation_models import (
     AgentSessionEvent,
+    AgentSpeechCutOff,
     AgentToolCallRequested,
     ConversationEvent,
     ConversationRequest,
     ConversationStarted,
+    GuestSideEvent,
+    GuestSpeechChunk,
     VoiceOption,
     VoiceSessionEvent,
     VoiceSessionSettings,
@@ -50,7 +53,9 @@ class ManagerConversation:
     async def get_voice_options(self) -> list[VoiceOption]:
         return await asyncio.to_thread(DataManagerVoiceCatalog.get_voice_options)
 
-    async def converse(self, conversation_request: ConversationRequest, guest_audio: AsyncIterable[bytes]) -> AsyncGenerator[ConversationEvent]:
+    async def converse(
+        self, conversation_request: ConversationRequest, guest_side_events: AsyncIterable[GuestSideEvent]
+    ) -> AsyncGenerator[ConversationEvent]:
         voice_key: str = ValidatorConversationRequests.validate_conversation_request(conversation_request)
         voice_option: VoiceOption = await self._retrieve_voice_option(voice_key)
         restaurant_profile: RestaurantProfile = await self._restaurant_domain_facade.get_restaurant_profile()
@@ -62,9 +67,9 @@ class ManagerConversation:
         async with await self._realtime_voice_gateway.open_session(voice_session_settings) as realtime_voice_session:
             yield ConversationStarted(audio_format=realtime_voice_session.audio_format, voice_option=voice_option)
             await realtime_voice_session.request_greeting(AgentInstructions.compose_greeting(restaurant_profile.name))
-            # Closing the relay here, in this task, settles guest audio forwarding before the session closes.
+            # Closing the relay here, in this task, settles guest side forwarding before the session closes.
             async with contextlib.aclosing(
-                self._relay_conversation(realtime_voice_session, guest_audio, self._agent_toolbox)
+                self._relay_conversation(realtime_voice_session, guest_side_events, self._agent_toolbox)
             ) as agent_session_events:
                 agent_session_event: AgentSessionEvent
                 async for agent_session_event in agent_session_events:
@@ -87,13 +92,13 @@ class ManagerConversation:
 
     @staticmethod
     async def _relay_conversation(
-        realtime_voice_session: RealtimeVoiceSessionBase, guest_audio: AsyncIterable[bytes], agent_toolbox: AgentToolbox
+        realtime_voice_session: RealtimeVoiceSessionBase, guest_side_events: AsyncIterable[GuestSideEvent], agent_toolbox: AgentToolbox
     ) -> AsyncGenerator[AgentSessionEvent]:
-        """Sends guest audio while yielding the agent's events and answering its tool calls. Ends when either side does;
+        """Sends the guest side on while yielding the agent's events and answering its tool calls. Ends when either side does;
         a failure on either side escapes."""
         guest_audio_ended: asyncio.Event = asyncio.Event()
         guest_audio_forwarding: asyncio.Task[None] = asyncio.create_task(
-            ManagerConversation._forward_guest_audio(guest_audio, realtime_voice_session, guest_audio_ended)
+            ManagerConversation._forward_guest_side_events(guest_side_events, realtime_voice_session, guest_audio_ended)
         )
         # Wrong tool calls are counted per conversation; the toolbox ends the call when too many come in a row.
         consecutive_call_repair_count: int = 0
@@ -143,13 +148,17 @@ class ManagerConversation:
         return current_task is not None and current_task.cancelling() > 0
 
     @staticmethod
-    async def _forward_guest_audio(
-        guest_audio: AsyncIterable[bytes], realtime_voice_session: RealtimeVoiceSessionBase, guest_audio_ended: asyncio.Event
+    async def _forward_guest_side_events(
+        guest_side_events: AsyncIterable[GuestSideEvent], realtime_voice_session: RealtimeVoiceSessionBase, guest_audio_ended: asyncio.Event
     ) -> None:
         try:
-            pcm_audio: bytes
-            async for pcm_audio in guest_audio:
-                await realtime_voice_session.send_guest_audio(pcm_audio)
+            guest_side_event: GuestSideEvent
+            async for guest_side_event in guest_side_events:
+                match guest_side_event:
+                    case GuestSpeechChunk(pcm_audio=pcm_audio):
+                        await realtime_voice_session.send_guest_audio(pcm_audio)
+                    case AgentSpeechCutOff(unplayed_milliseconds=unplayed_milliseconds):
+                        await realtime_voice_session.cut_off_agent_speech(unplayed_milliseconds)
         finally:
             # The guest hung up or forwarding failed. Closing the session ends the event relay.
             guest_audio_ended.set()

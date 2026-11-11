@@ -3,7 +3,7 @@ from types import TracebackType
 from typing import Self
 
 from voice_agent_conversation.managers.manager_conversation import ManagerConversation
-from voice_agent_conversation.managers.models.conversation_models import ConversationEvent, ConversationRequest, VoiceOption
+from voice_agent_conversation.managers.models.conversation_models import ConversationEvent, ConversationRequest, GuestSideEvent, VoiceOption
 from voice_agent_conversation.managers.service_locators.service_locator_base import ServiceLocatorBase
 from voice_agent_conversation.managers.service_locators.service_locator_production import ServiceLocatorProduction
 
@@ -34,10 +34,13 @@ class DomainFacade:
         """Every voice a guest can choose, in catalog order."""
         return await self._manager_conversation.get_voice_options()
 
-    def converse(self, conversation_request: ConversationRequest, guest_audio: AsyncIterable[bytes]) -> AsyncGenerator[ConversationEvent]:
-        """Holds one voice conversation, yielding ConversationStarted first and then what happens until the guest audio ends.
+    def converse(
+        self, conversation_request: ConversationRequest, guest_side_events: AsyncIterable[GuestSideEvent]
+    ) -> AsyncGenerator[ConversationEvent]:
+        """Holds one voice conversation, yielding ConversationStarted first and then what happens until the guest side ends.
 
-        Guest audio is mono 16-bit PCM at the rate ConversationStarted gives. The agent greets the guest first.
-        Close the returned iterator (contextlib.aclosing) if you stop reading before it ends.
+        Guest speech is mono 16-bit PCM at the rate ConversationStarted gives. When the guest talks over the agent, the
+        host drops the agent speech it has not played and sends AgentSpeechCutOff with how much it dropped. The agent
+        greets the guest first. Close the returned iterator (contextlib.aclosing) if you stop reading before it ends.
         """
-        return self._manager_conversation.converse(conversation_request, guest_audio)
+        return self._manager_conversation.converse(conversation_request, guest_side_events)

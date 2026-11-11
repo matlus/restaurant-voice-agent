@@ -1,5 +1,6 @@
 // Runs on the audio thread. Capture turns microphone samples into 16-bit PCM at the rate the agent expects;
-// playback turns the agent's 16-bit PCM back into samples and can drop everything queued when the guest talks.
+// playback turns the agent's 16-bit PCM back into samples and can drop everything queued when the guest talks,
+// saying how much it dropped.
 
 class GuestCaptureProcessor extends AudioWorkletProcessor {
   constructor(options) {
@@ -44,12 +45,14 @@ class GuestCaptureProcessor extends AudioWorkletProcessor {
 class AgentPlaybackProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
-    this.sourceStep = options.processorOptions.sourceSampleRate / sampleRate;
+    this.sourceSampleRate = options.processorOptions.sourceSampleRate;
+    this.sourceStep = this.sourceSampleRate / sampleRate;
     this.queue = [];
     this.current = null;
     this.position = 0;
     this.port.onmessage = (event) => {
       if (event.data === "clear") {
+        this.port.postMessage({ unplayedMilliseconds: this.countUnplayedMilliseconds() });
         this.queue = [];
         this.current = null;
         this.position = 0;
@@ -62,6 +65,15 @@ class AgentPlaybackProcessor extends AudioWorkletProcessor {
       }
       this.queue.push(samples);
     };
+  }
+
+  // How much queued speech has not been played yet, at the agent's own sample rate.
+  countUnplayedMilliseconds() {
+    let unplayedSamples = this.current ? Math.max(0, this.current.length - this.position) : 0;
+    for (const samples of this.queue) {
+      unplayedSamples += samples.length;
+    }
+    return Math.round((unplayedSamples / this.sourceSampleRate) * 1000);
   }
 
   process(_inputs, outputs) {

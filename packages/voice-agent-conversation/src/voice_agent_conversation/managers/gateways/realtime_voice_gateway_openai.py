@@ -1,11 +1,13 @@
 import asyncio
 import base64
+import dataclasses
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Final, NoReturn, final, override
 
 from openai import AsyncOpenAI, OpenAIError
 from openai.resources.realtime.realtime import AsyncRealtimeConnection
-from openai.types.realtime import RealtimeResponseStatus, RealtimeServerEvent
+from openai.types.realtime import RealtimeResponseStatus, RealtimeServerEvent, ResponseAudioDeltaEvent
 from openai.types.realtime.realtime_function_tool_param import RealtimeFunctionToolParam
 from openai.types.realtime.realtime_response_status import Error as RealtimeResponseStatusError
 from openai.types.realtime.realtime_session_create_request_param import RealtimeSessionCreateRequestParam
@@ -91,6 +93,15 @@ class RealtimeVoiceGatewayOpenAI(RealtimeVoiceGatewayBase):
         return self.CONNECT_OPERATION_DESCRIPTION_TEMPLATE.format(model=self._model)
 
 
+@dataclass(frozen=True)
+class _SentAgentSpeech:
+    """How much of the agent's latest speech the session has passed on to the host: one audio part of one reply item."""
+
+    item_id: str
+    content_index: int
+    sent_byte_count: int
+
+
 @final
 class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
     """One OpenAI Realtime conversation over a WebSocket the gateway has already connected. Only the gateway above
@@ -101,10 +112,16 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
 
     A reply in which the model calls tools ends without speech; the model speaks once it has the answers. So when that
     reply ends with every call answered, the session asks for the next reply itself instead of reporting the turn as finished.
+
+    The provider sends speech faster than it is played. The session counts what it passed on of the latest speech, so
+    when the host reports how much it dropped unheard, the provider can be told where the guest stopped hearing it.
     """
 
     # The provider accepts only 24 kHz PCM, so the constant keeps its literal type for the SDK's typed session.
     SAMPLE_RATE_HZ: Final = 24_000
+    # Mono 16-bit PCM in both directions.
+    BYTES_PER_SAMPLE: Final[int] = 2
+    MILLISECONDS_PER_SECOND: Final[int] = 1_000
     # The guest's turn ends after this much silence. Semantic turn detection waited 4 to 7 seconds after a guest stopped
     # before the agent spoke, measured live; silence detection at half a second answers in about 1 to 2.
     TURN_END_SILENCE_MILLISECONDS: Final[int] = 500
@@ -116,6 +133,7 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
         self._connection: AsyncRealtimeConnection | None = connection
         self._has_answered_tool_calls: bool = False
         self._agent_instructions: str = ""
+        self._sent_agent_speech: _SentAgentSpeech | None = None
 
     @property
     @override
@@ -162,6 +180,24 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
             self._raise_connection_failure(provider_error, "requesting an agent response", LogEventRealtimeVoice.AGENT_RESPONSE_REQUEST)
 
     @override
+    async def cut_off_agent_speech(self, unplayed_milliseconds: int) -> None:
+        sent_agent_speech: _SentAgentSpeech | None = self._sent_agent_speech
+        if sent_agent_speech is None or unplayed_milliseconds <= 0:
+            return
+        connection: AsyncRealtimeConnection = self._get_open_connection()
+        # Forgotten first: the provider is told once, and a later report belongs to later speech.
+        self._sent_agent_speech = None
+        heard_milliseconds: int = max(0, self._to_milliseconds(sent_agent_speech.sent_byte_count) - unplayed_milliseconds)
+        try:
+            await connection.conversation.item.truncate(
+                item_id=sent_agent_speech.item_id, content_index=sent_agent_speech.content_index, audio_end_ms=heard_milliseconds
+            )
+        except (OpenAIError, WebSocketException, OSError) as provider_error:
+            self._raise_connection_failure(
+                provider_error, "cutting off the agent speech the guest did not hear", LogEventRealtimeVoice.AGENT_SPEECH_CUT_OFF
+            )
+
+    @override
     async def send_tool_result(self, call_id: str, tool_output: str) -> None:
         connection: AsyncRealtimeConnection = self._get_open_connection()
         try:
@@ -177,6 +213,8 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
         try:
             async for server_event in connection:
                 voice_session_event: VoiceSessionEvent | None = self._to_voice_session_event(server_event)
+                if server_event.type == "response.output_audio.delta" and isinstance(voice_session_event, AgentSpeechChunk):
+                    self._sent_agent_speech = self._count_sent_agent_speech(self._sent_agent_speech, server_event, len(voice_session_event.pcm_audio))
                 if isinstance(voice_session_event, AgentTurnFinished) and self._has_answered_tool_calls:
                     self._has_answered_tool_calls = False
                     await self._request_next_reply()
@@ -198,6 +236,27 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
             await connection.close()
         except (OpenAIError, WebSocketException, OSError) as provider_error:
             self._raise_connection_failure(provider_error, "closing the session", LogEventRealtimeVoice.SESSION_CLOSE)
+
+    @staticmethod
+    def _count_sent_agent_speech(
+        sent_agent_speech: _SentAgentSpeech | None, response_audio_delta_event: ResponseAudioDeltaEvent, pcm_byte_count: int
+    ) -> _SentAgentSpeech:
+        """Adds a piece of speech to the count of the part it belongs to; a piece of a new part starts a new count."""
+        if (
+            sent_agent_speech is None
+            or sent_agent_speech.item_id != response_audio_delta_event.item_id
+            or sent_agent_speech.content_index != response_audio_delta_event.content_index
+        ):
+            return _SentAgentSpeech(
+                item_id=response_audio_delta_event.item_id,
+                content_index=response_audio_delta_event.content_index,
+                sent_byte_count=pcm_byte_count,
+            )
+        return dataclasses.replace(sent_agent_speech, sent_byte_count=sent_agent_speech.sent_byte_count + pcm_byte_count)
+
+    @classmethod
+    def _to_milliseconds(cls, pcm_byte_count: int) -> int:
+        return pcm_byte_count * cls.MILLISECONDS_PER_SECOND // (cls.BYTES_PER_SAMPLE * cls.SAMPLE_RATE_HZ)
 
     def _get_open_connection(self) -> AsyncRealtimeConnection:
         if self._connection is None:
