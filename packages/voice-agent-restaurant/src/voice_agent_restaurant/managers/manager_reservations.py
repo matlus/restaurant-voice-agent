@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime, time
 from pathlib import Path
@@ -22,6 +23,7 @@ from voice_agent_restaurant.managers.models.reservation_models import (
     BookedSchedule,
     BookingIdentity,
     BookingWindow,
+    GuestBookingIdentity,
     GuestBookingSearch,
     NewReservation,
     RequestedSeating,
@@ -93,15 +95,21 @@ class ManagerReservations:
     async def check_availability(self, availability_request: AvailabilityRequest) -> AvailabilityResult:
         stated_requested_seating: RequestedSeating = ValidatorReservationRequests.validate_availability_request(availability_request)
         booking_context: _BookingContext = await self._load_booking_context()
-        requested_seating: RequestedSeating = await self._read_as_seatable(stated_requested_seating, booking_context)
-        ValidatorReservationRequests.validate_requested_seating(requested_seating, booking_context.reservation_policy, booking_context.booking_window)
-        seating_plan: _SeatingPlan = await self._plan_seating(requested_seating, booking_context)
-        seatings: list[Seating] = await self._data_manager_reservations.find_seatings_on(requested_seating.reservation_date)
-        table_is_free: bool = SeatingRules.has_free_table(seating_plan.fitting_tables, seatings, requested_seating.starts_at, seating_plan.ends_at)
+        seatable_requested_seating: RequestedSeating = await self._read_as_seatable(stated_requested_seating, booking_context)
+        ValidatorReservationRequests.validate_requested_seating(
+            seatable_requested_seating, booking_context.reservation_policy, booking_context.booking_window
+        )
+        seating_plan: _SeatingPlan = await self._plan_seating(
+            seatable_requested_seating, booking_context.seating_rhythm, booking_context.booking_window.restaurant_now
+        )
+        seatings: list[Seating] = await self._data_manager_reservations.find_seatings_on(seatable_requested_seating.reservation_date)
+        table_is_free: bool = SeatingRules.has_free_table(
+            seating_plan.fitting_tables, seatings, seatable_requested_seating.starts_at, seating_plan.ends_at
+        )
         return AvailabilityResult(
-            reservation_date=requested_seating.reservation_date,
-            requested_time=requested_seating.starts_at,
-            party_size=requested_seating.party_size,
+            reservation_date=seatable_requested_seating.reservation_date,
+            requested_time=seatable_requested_seating.starts_at,
+            party_size=seatable_requested_seating.party_size,
             is_available=table_is_free,
             alternative_times=[] if table_is_free else self._find_alternative_times(seating_plan, seatings),
         )
@@ -111,15 +119,17 @@ class ManagerReservations:
             reservation_request
         )
         booking_context: _BookingContext = await self._load_booking_context()
-        validated_reservation_request: ValidatedReservationRequest = replace(
+        seatable_validated_reservation_request: ValidatedReservationRequest = replace(
             stated_validated_reservation_request,
             requested_seating=await self._read_as_seatable(stated_validated_reservation_request.requested_seating, booking_context),
         )
         ValidatorReservationRequests.validate_requested_seating(
-            validated_reservation_request.requested_seating, booking_context.reservation_policy, booking_context.booking_window
+            seatable_validated_reservation_request.requested_seating, booking_context.reservation_policy, booking_context.booking_window
         )
-        seating_plan: _SeatingPlan = await self._plan_seating(validated_reservation_request.requested_seating, booking_context)
-        new_reservation: NewReservation = self._to_new_reservation(validated_reservation_request, seating_plan.ends_at)
+        seating_plan: _SeatingPlan = await self._plan_seating(
+            seatable_validated_reservation_request.requested_seating, booking_context.seating_rhythm, booking_context.booking_window.restaurant_now
+        )
+        new_reservation: NewReservation = self._to_new_reservation(seatable_validated_reservation_request, seating_plan.ends_at)
         try:
             reservation: Reservation = await self._data_manager_reservations.record_reservation(
                 new_reservation, [fitting_table.table_id for fitting_table in seating_plan.fitting_tables], self._clock.now_utc()
@@ -139,15 +149,27 @@ class ManagerReservations:
     async def change_reservation(self, reservation_change_request: ReservationChangeRequest) -> Reservation:
         validated_reservation_change: ValidatedReservationChange = ValidatorReservationRequests.validate_change_request(reservation_change_request)
         booking_context: _BookingContext = await self._load_booking_context()
-        current_reservation: Reservation = await self._retrieve_changeable_reservation(validated_reservation_change.booking_identity, booking_context)
+        current_reservation: Reservation = await self._retrieve_changeable_reservation(
+            validated_reservation_change.booking_identity,
+            booking_context.booking_window.restaurant_now,
+            booking_context.seating_rhythm.seating_duration_minutes,
+        )
         current_requested_seating: RequestedSeating = self._to_current_requested_seating(current_reservation)
-        changed_requested_seating: RequestedSeating = await self._read_as_seatable(
-            SeatingRules.apply_seating_change(current_requested_seating, validated_reservation_change.seating_change), booking_context
+        stated_changed_requested_seating: RequestedSeating = SeatingRules.apply_seating_change(
+            current_requested_seating, validated_reservation_change.seating_change
+        )
+        # Only a time the caller says now is read as callers say it; a kept time is already the booked one.
+        changed_requested_seating: RequestedSeating = (
+            stated_changed_requested_seating
+            if validated_reservation_change.seating_change.starts_at is None
+            else await self._read_as_seatable(stated_changed_requested_seating, booking_context)
         )
         ValidatorReservationRequests.validate_changed_seating(
             current_requested_seating, changed_requested_seating, booking_context.reservation_policy, booking_context.booking_window
         )
-        seating_plan: _SeatingPlan = await self._plan_seating(changed_requested_seating, booking_context)
+        seating_plan: _SeatingPlan = await self._plan_seating(
+            changed_requested_seating, booking_context.seating_rhythm, booking_context.booking_window.restaurant_now
+        )
         reservation_reschedule: ReservationReschedule = self._to_reservation_reschedule(
             current_reservation, validated_reservation_change, changed_requested_seating, seating_plan.ends_at
         )
@@ -165,7 +187,9 @@ class ManagerReservations:
     async def cancel_reservation(self, reservation_cancellation_request: ReservationCancellationRequest) -> Reservation:
         booking_identity: BookingIdentity = ValidatorReservationRequests.validate_cancellation_request(reservation_cancellation_request)
         booking_context: _BookingContext = await self._load_booking_context()
-        current_reservation: Reservation = await self._retrieve_changeable_reservation(booking_identity, booking_context)
+        current_reservation: Reservation = await self._retrieve_changeable_reservation(
+            booking_identity, booking_context.booking_window.restaurant_now, booking_context.seating_rhythm.seating_duration_minutes
+        )
         return await self._data_manager_reservations.cancel_reservation(
             ReservationCancellation(
                 confirmation_code=current_reservation.confirmation_code, current_booked_schedule=self._to_booked_schedule(current_reservation)
@@ -189,37 +213,14 @@ class ManagerReservations:
         restaurant_profile: RestaurantProfile = await self._data_manager_restaurant.get_restaurant_profile()
         return self._to_restaurant_now(restaurant_profile.time_zone)
 
-    async def _retrieve_changeable_reservation(self, booking_identity: BookingIdentity, booking_context: _BookingContext) -> Reservation:
-        restaurant_now: datetime = booking_context.booking_window.restaurant_now
-        if isinstance(booking_identity, ReservationIdentity):
-            current_reservation: Reservation = await self._data_manager_reservations.retrieve_booked_reservation(booking_identity)
-        else:
-            guest_booking_search: GuestBookingSearch = booking_identity.guest_booking_search
-            # The time is read as callers say it, as for a new booking, so "7:00" finds a 19:00 dinner booking.
-            booked_starts_at: time = SeatingRules.read_as_seatable_time_on(
-                await self._data_manager_restaurant.retrieve_weekday_hours(SeatingRules.weekday_of(guest_booking_search.reservation_date)),
-                booking_identity.starts_at,
-                booking_context.seating_rhythm.seating_duration_minutes,
-            )
-            booked_reservations: list[Reservation] = await self._data_manager_reservations.find_booked_reservations_on(
-                guest_booking_search.phone_number, guest_booking_search.reservation_date
-            )
-            guest_reservations: list[Reservation] = [
-                guest_reservation
-                for guest_reservation in self._select_guest_reservations(booked_reservations, guest_booking_search.guest_name, restaurant_now)
-                if guest_reservation.starts_at == booked_starts_at
-            ]
-            if len(guest_reservations) != 1:
-                # Two bookings under one name and number at one time cannot be told apart; the guest needs the code for either.
-                raise GuestReservationNotFoundException(
-                    guest_booking_search.reservation_date,
-                    booked_starts_at,
-                    {
-                        self.RESERVATION_DATE_CONTEXT_KEY: guest_booking_search.reservation_date.isoformat(),
-                        "Reservation.MatchingBookingCount": len(guest_reservations),
-                    },
-                )
-            current_reservation = guest_reservations[0]
+    async def _retrieve_changeable_reservation(
+        self, booking_identity: BookingIdentity, restaurant_now: datetime, seating_duration_minutes: int
+    ) -> Reservation:
+        current_reservation: Reservation = (
+            await self._data_manager_reservations.retrieve_booked_reservation(booking_identity)
+            if isinstance(booking_identity, ReservationIdentity)
+            else await self._retrieve_guest_reservation(booking_identity, restaurant_now, seating_duration_minutes)
+        )
         if SeatingRules.has_started(current_reservation.reservation_date, current_reservation.starts_at, restaurant_now):
             raise ReservationAlreadyStartedException(
                 current_reservation.confirmation_code,
@@ -231,6 +232,34 @@ class ManagerReservations:
                 },
             )
         return current_reservation
+
+    async def _retrieve_guest_reservation(
+        self, guest_booking_identity: GuestBookingIdentity, restaurant_now: datetime, seating_duration_minutes: int
+    ) -> Reservation:
+        guest_booking_search: GuestBookingSearch = guest_booking_identity.guest_booking_search
+        # The time is read as callers say it, as for a new booking, so "7:00" finds a 19:00 dinner booking.
+        booked_starts_at: time = SeatingRules.read_as_seatable_time_on(
+            await self._data_manager_restaurant.retrieve_weekday_hours(SeatingRules.weekday_of(guest_booking_search.reservation_date)),
+            guest_booking_identity.starts_at,
+            seating_duration_minutes,
+        )
+        booked_reservations: list[Reservation] = await self._data_manager_reservations.find_booked_reservations_on(
+            guest_booking_search.phone_number, guest_booking_search.reservation_date
+        )
+        guest_reservations: list[Reservation] = self._select_guest_reservations_at(
+            booked_reservations, guest_booking_search.guest_name, booked_starts_at, restaurant_now
+        )
+        if len(guest_reservations) != 1:
+            # Two bookings under one name and number at one time cannot be told apart; the guest needs the code for either.
+            raise GuestReservationNotFoundException(
+                guest_booking_search.reservation_date,
+                booked_starts_at,
+                {
+                    self.RESERVATION_DATE_CONTEXT_KEY: guest_booking_search.reservation_date.isoformat(),
+                    "Reservation.MatchingBookingCount": len(guest_reservations),
+                },
+            )
+        return guest_reservations[0]
 
     async def _read_as_seatable(self, stated_requested_seating: RequestedSeating, booking_context: _BookingContext) -> RequestedSeating:
         # Resolved before any other check, so a dinner time said without PM is not refused as already passed or too early.
@@ -244,18 +273,16 @@ class ManagerReservations:
             ),
         )
 
-    async def _plan_seating(self, requested_seating: RequestedSeating, booking_context: _BookingContext) -> _SeatingPlan:
-        seating_window: SeatingWindow = await self._get_seating_window_or_refuse(
-            requested_seating, booking_context.seating_rhythm.seating_duration_minutes
-        )
+    async def _plan_seating(self, requested_seating: RequestedSeating, seating_rhythm: SeatingRhythm, restaurant_now: datetime) -> _SeatingPlan:
+        seating_window: SeatingWindow = await self._get_seating_window_or_refuse(requested_seating, seating_rhythm.seating_duration_minutes)
         dining_tables: list[DiningTable] = await self._data_manager_restaurant.get_dining_tables()
         return _SeatingPlan(
             requested_seating=requested_seating,
-            ends_at=SeatingRules.get_ends_at(requested_seating.starts_at, booking_context.seating_rhythm.seating_duration_minutes),
+            ends_at=SeatingRules.get_ends_at(requested_seating.starts_at, seating_rhythm.seating_duration_minutes),
             seating_window=seating_window,
             fitting_tables=SeatingRules.get_fitting_tables(dining_tables, requested_seating.party_size),
-            seating_rhythm=booking_context.seating_rhythm,
-            restaurant_now=booking_context.booking_window.restaurant_now,
+            seating_rhythm=seating_rhythm,
+            restaurant_now=restaurant_now,
         )
 
     async def _get_seating_window_or_refuse(self, requested_seating: RequestedSeating, seating_duration_minutes: int) -> SeatingWindow:
@@ -349,12 +376,22 @@ class ManagerReservations:
         )
 
     @staticmethod
-    def _select_guest_reservations(booked_reservations: list[Reservation], given_guest_name: str, restaurant_now: datetime) -> list[Reservation]:
+    def _select_guest_reservations(booked_reservations: Iterable[Reservation], given_guest_name: str, restaurant_now: datetime) -> list[Reservation]:
         return [
             booked_reservation
             for booked_reservation in booked_reservations
             if GuestNameMatching.is_name_on_booking(booked_reservation.guest_name, given_guest_name)
             and SeatingRules.is_still_upcoming(booked_reservation.reservation_date, booked_reservation.ends_at, restaurant_now)
+        ]
+
+    @classmethod
+    def _select_guest_reservations_at(
+        cls, booked_reservations: Iterable[Reservation], given_guest_name: str, booked_starts_at: time, restaurant_now: datetime
+    ) -> list[Reservation]:
+        return [
+            guest_reservation
+            for guest_reservation in cls._select_guest_reservations(booked_reservations, given_guest_name, restaurant_now)
+            if guest_reservation.starts_at == booked_starts_at
         ]
 
     @staticmethod

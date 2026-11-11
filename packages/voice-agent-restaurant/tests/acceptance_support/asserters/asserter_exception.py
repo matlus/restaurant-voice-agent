@@ -223,10 +223,14 @@ class AsserterException:
         contextual_data_name: str
         expected_contextual_data_value: ContextualDataValue
         for contextual_data_name, expected_contextual_data_value in expected_contextual_data_by_name.items():
-            if actual_contextual_data_by_name.get(contextual_data_name) != expected_contextual_data_value:
+            # Types are compared too: False == 0 and 4 == 4.0, but a flag is not a count.
+            actual_contextual_data_value: ContextualDataValue | None = actual_contextual_data_by_name.get(contextual_data_name)
+            if (type(actual_contextual_data_value), actual_contextual_data_value) != (
+                type(expected_contextual_data_value),
+                expected_contextual_data_value,
+            ):
                 assertion_failures.append(
-                    f"Context {contextual_data_name!r}: expected {expected_contextual_data_value!r}; "
-                    f"actual {actual_contextual_data_by_name.get(contextual_data_name)!r}."
+                    f"Context {contextual_data_name!r}: expected {expected_contextual_data_value!r}; actual {actual_contextual_data_value!r}."
                 )
         assertion_failures.extend(
             f"Context {present_contextual_data_name!r}: expected present; actual absent."
@@ -246,6 +250,13 @@ class AsserterException:
             assertion_failures.append(
                 f"Problem count: expected {len(expected_exception_content.message_phrases)}; actual {len(actual_problems)} ({actual_problems!r})."
             )
+        assertion_failures.extend(
+            f"Problem {problem_number}: expected it to contain {expected_problem_phrase!r}; actual {actual_problem!r}."
+            for problem_number, (expected_problem_phrase, actual_problem) in enumerate(
+                zip(expected_exception_content.message_phrases, actual_problems, strict=False), start=1
+            )
+            if expected_problem_phrase not in actual_problem
+        )
         assertion_failures.extend(
             AsserterException._find_exception_content_mismatches(expected_exception_content, actual_voice_agent_restaurant_exception)
         )

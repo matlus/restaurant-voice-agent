@@ -86,9 +86,9 @@ CONFIRMATION_CODE_CONTEXT_NAME: Final[str] = "Reservation.ConfirmationCode"
 
 def create_reservation_request(
     generated_guest: GeneratedGuest,
-    reservation_date: str | None = QUIET_THURSDAY,
-    reservation_time: str | None = "19:00",
-    party_size: int | None = 2,
+    reservation_date: str = QUIET_THURSDAY,
+    reservation_time: str = "19:00",
+    party_size: int = 2,
     notes: str | None = None,
 ) -> ReservationRequest:
     return ReservationRequest(
@@ -1112,7 +1112,12 @@ class TestChangeReservation:
                 f"Booking {pinned_reservation.confirmation_code} must have started by {restaurant_local_now}; it starts at {pinned_start}"
             )
             expected_message_phrases: list[str] = ["has already started", "can no longer be changed or cancelled by phone"]
-            expected_contextual_data_by_name: dict[str, str] = {CONFIRMATION_CODE_CONTEXT_NAME: pinned_reservation.confirmation_code}
+            expected_contextual_data_by_name: dict[str, str] = {
+                CONFIRMATION_CODE_CONTEXT_NAME: pinned_reservation.confirmation_code,
+                RESERVATION_DATE_CONTEXT_NAME: pinned_reservation.reservation_date.isoformat(),
+                "Reservation.StartsAt": f"{pinned_reservation.starts_at:%H:%M}",
+                "Restaurant.LocalNow": restaurant_local_now.isoformat(timespec="minutes"),
+            }
             with pytest.raises(ReservationAlreadyStartedException) as raised:
                 await domain_facade.change_reservation(
                     create_change_request(pinned_reservation.confirmation_code, SEEDED_PRIYA_PHONE, reservation_time="21:00")

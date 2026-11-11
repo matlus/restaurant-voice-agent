@@ -225,16 +225,25 @@ class TestRestaurantInformation:
             actual_voice_agent_restaurant_exception=raised.value,
         )
 
-    def test_DomainFacade_WhenTheDatabasePathSettingIsMissing_ThenConstructionFailsNamingTheSetting(self) -> None:
-        expected_message_phrases: list[str] = [DATABASE_PATH_VARIABLE_NAME, "empty or whitespace"]
+    @pytest.mark.parametrize(
+        ("environment_variables", "expected_absence_phrase", "expected_setting_was_missing"),
+        [
+            ({}, "was missing", True),
+            ({DATABASE_PATH_VARIABLE_NAME: "   "}, "was empty or whitespace", False),
+        ],
+    )
+    def test_DomainFacade_WhenTheDatabasePathSettingIsMissingOrBlank_ThenConstructionFailsNamingTheSetting(
+        self, environment_variables: dict[str, str], expected_absence_phrase: str, expected_setting_was_missing: bool
+    ) -> None:
+        expected_message_phrases: list[str] = [DATABASE_PATH_VARIABLE_NAME, expected_absence_phrase]
         expected_exception_metadata: ExpectedExceptionMetadata = create_configuration_refusal_metadata()
         expected_contextual_data_by_name: dict[str, str | bool] = {
             ENVIRONMENT_VARIABLE_NAME_CONTEXT_NAME: DATABASE_PATH_VARIABLE_NAME,
-            "Configuration.SettingWasMissing": False,
+            "Configuration.SettingWasMissing": expected_setting_was_missing,
         }
 
         with pytest.raises(ConfigurationSettingException) as raised:
-            DomainFacade(ServiceLocatorTesting({DATABASE_PATH_VARIABLE_NAME: "   "}, WEDNESDAY_AFTERNOON_UTC))
+            DomainFacade(ServiceLocatorTesting(environment_variables, WEDNESDAY_AFTERNOON_UTC))
 
         AsserterException.assert_message_and_metadata_are_as_expected(
             expected_exception_content=ExpectedExceptionContent(

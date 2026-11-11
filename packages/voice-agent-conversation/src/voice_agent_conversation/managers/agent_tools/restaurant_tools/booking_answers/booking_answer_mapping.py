@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import date, time
+from datetime import date
 from typing import final
 
 from voice_agent_restaurant import Reservation
@@ -8,14 +8,15 @@ from voice_agent_restaurant import Reservation
 @final
 @dataclass(frozen=True)
 class BookingSummary:
-    """What the agent may say about a booking the caller found, changed or cancelled: when, and for how many.
+    """What the agent may say about a booking the caller found, changed or cancelled: when, and for how many. The time
+    is 24-hour HH:MM, the form the by-details tools take back, so a looked-up booking can be named exactly as given.
 
     It leaves out the confirmation code, so a booking found without the code never reveals it, and the name, phone number
     and notes, which a guest wrote and the agent has no need to read back.
     """
 
     reservation_date: date
-    reservation_time: time
+    reservation_time: str
     party_size: int
 
 
@@ -27,7 +28,7 @@ class BookingConfirmation:
     confirmation_code: str
     guest_name: str
     reservation_date: date
-    reservation_time: time
+    reservation_time: str
     party_size: int
     notes: str | None
 
@@ -39,7 +40,7 @@ class BookingAnswerMapping:
     @staticmethod
     def to_booking_summary(reservation: Reservation) -> BookingSummary:
         return BookingSummary(
-            reservation_date=reservation.reservation_date, reservation_time=reservation.starts_at, party_size=reservation.party_size
+            reservation_date=reservation.reservation_date, reservation_time=f"{reservation.starts_at:%H:%M}", party_size=reservation.party_size
         )
 
     @staticmethod
@@ -48,7 +49,7 @@ class BookingAnswerMapping:
             confirmation_code=reservation.confirmation_code,
             guest_name=reservation.guest_name,
             reservation_date=reservation.reservation_date,
-            reservation_time=reservation.starts_at,
+            reservation_time=f"{reservation.starts_at:%H:%M}",
             party_size=reservation.party_size,
             notes=reservation.notes,
         )

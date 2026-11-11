@@ -211,7 +211,7 @@ class DataManagerReservations:
         # The confirmation code's primary key decides whether a generated code is unused. A table is chosen afresh for
         # each code, because a code that happens to name another booking would hide that booking's seating.
         for _ in range(self.MAXIMUM_CONFIRMATION_CODE_ATTEMPTS):
-            candidate_code: str = "".join(secrets.choice(CONFIRMATION_CODE_ALPHABET) for _ in range(CONFIRMATION_CODE_LENGTH))
+            candidate_code: str = self._generate_confirmation_code()
             table_slot: _TableSlot = _TableSlot(
                 reservation_date=new_reservation.reservation_date,
                 starts_at=new_reservation.starts_at,
@@ -228,8 +228,17 @@ class DataManagerReservations:
             return self._read_reservation(connection, candidate_code)
         raise RestaurantStoreContractViolationException(
             message=f"No unused confirmation code was found in {self.MAXIMUM_CONFIRMATION_CODE_ATTEMPTS} attempts",
-            contextual_data_by_name={"Reservation.ConfirmationCodeAttempts": self.MAXIMUM_CONFIRMATION_CODE_ATTEMPTS},
+            contextual_data_by_name={
+                "Reservation.ConfirmationCodeAttempts": self.MAXIMUM_CONFIRMATION_CODE_ATTEMPTS,
+                self._RESERVATION_DATE_CONTEXT_KEY: new_reservation.reservation_date.isoformat(),
+                "Reservation.StartsAt": f"{new_reservation.starts_at:%H:%M}",
+                "Reservation.PartySize": new_reservation.party_size,
+            },
         )
+
+    @staticmethod
+    def _generate_confirmation_code() -> str:
+        return "".join(secrets.choice(CONFIRMATION_CODE_ALPHABET) for _ in range(CONFIRMATION_CODE_LENGTH))
 
     def _move_booked_reservation(
         self, connection: sqlite3.Connection, reservation_reschedule: ReservationReschedule, candidate_table_ids: Sequence[str], now_utc: datetime
@@ -337,7 +346,7 @@ class DataManagerReservations:
             raise self._create_lost_update_exception(connection, reservation_reschedule.confirmation_code)
 
     @staticmethod
-    def _to_booked_schedule_values(booked_schedule: BookedSchedule) -> tuple[int | str | None, ...]:
+    def _to_booked_schedule_values(booked_schedule: BookedSchedule) -> tuple[int, str, int, int, str, str | None]:
         """The values _BOOKED_SCHEDULE_CONDITION compares a row with, in its order."""
         return (
             booked_schedule.party_size,

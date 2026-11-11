@@ -6,7 +6,7 @@
 import asyncio
 import json
 from contextlib import aclosing
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
@@ -73,6 +73,8 @@ GREETING_EVENTS: Final[list[ConversationEvent]] = [
 # The reply the agent gives once its tool call is answered.
 ANSWER_EVENTS: Final[list[ConversationEvent]] = [AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO), AgentTurnFinished()]
 EXPECTED_CONVERSATION_EVENTS: Final[list[ConversationEvent]] = GREETING_EVENTS + ANSWER_EVENTS
+TOMORROWS_BOOKING_TIME: Final[str] = "19:00"
+TOMORROWS_BOOKING_PARTY_SIZE: Final[int] = 2
 RESTAURANT_TOOL_NAMES: Final[tuple[str, ...]] = (
     "search_menu",
     "describe_dish",
@@ -87,8 +89,27 @@ RESTAURANT_TOOL_NAMES: Final[tuple[str, ...]] = (
 )
 
 
+@dataclass(frozen=True)
+class BookingSummaryAnswer:
+    """A lookup, change or cancellation answer as the agent reads it: exactly these fields and no others."""
+
+    reservation_date: str
+    reservation_time: str
+    party_size: int
+
+
+@dataclass(frozen=True)
+class BookingConfirmationDetails:
+    """A new booking's answer as the agent reads it, apart from the confirmation code the store assigns."""
+
+    guest_name: str
+    reservation_date: str
+    reservation_time: str
+    party_size: int
+    notes: str | None
+
+
 def count_events_after_answers(answer_count: int) -> int:
-    """How many conversation events have arrived once the greeting and the given number of answered tool calls are over."""
     return len(GREETING_EVENTS) + len(ANSWER_EVENTS) * answer_count
 
 
@@ -107,35 +128,43 @@ def count_agent_response_requests(realtime_voice_service_scripted: RealtimeVoice
     )
 
 
-async def create_tomorrows_availability_request(restaurant_database_path: Path, reservation_time: str, party_size: int) -> AvailabilityRequest:
+async def read_restaurant_tomorrow(restaurant_database_path: Path) -> date:
     async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
         restaurant_local_now: datetime = await restaurant_domain_facade.get_restaurant_local_now()
-    tomorrow: date = restaurant_local_now.date() + timedelta(days=1)
+    return restaurant_local_now.date() + timedelta(days=1)
+
+
+async def create_tomorrows_availability_request(restaurant_database_path: Path, reservation_time: str, party_size: int) -> AvailabilityRequest:
+    tomorrow: date = await read_restaurant_tomorrow(restaurant_database_path)
     return AvailabilityRequest(reservation_date=tomorrow.isoformat(), reservation_time=reservation_time, party_size=party_size)
 
 
-async def create_tomorrows_reservation_request(restaurant_database_path: Path, generated_guest: GeneratedGuest) -> ReservationRequest:
-    """A booking for two at 19:00 tomorrow, a quiet evening in the seed."""
-    reservation_time: str = "19:00"
-    party_size: int = 2
-    availability_request: AvailabilityRequest = await create_tomorrows_availability_request(restaurant_database_path, reservation_time, party_size)
+def create_tomorrows_reservation_request(tomorrow: date, generated_guest: GeneratedGuest, notes: str) -> ReservationRequest:
+    """A booking at TOMORROWS_BOOKING_TIME for TOMORROWS_BOOKING_PARTY_SIZE, a quiet evening in the seed."""
     return ReservationRequest(
         guest_name=generated_guest.guest_name,
         phone_number=generated_guest.phone_digits,
-        party_size=party_size,
-        reservation_date=availability_request.reservation_date,
-        reservation_time=reservation_time,
-        notes=create_generated_note(),
+        party_size=TOMORROWS_BOOKING_PARTY_SIZE,
+        reservation_date=tomorrow.isoformat(),
+        reservation_time=TOMORROWS_BOOKING_TIME,
+        notes=notes,
     )
 
 
-def create_expected_booking_summary(reservation: Reservation) -> dict[str, Any]:
-    """What a lookup, change or cancellation answer must say about a booking, and nothing more."""
-    return {
-        "reservation_date": reservation.reservation_date.isoformat(),
-        "reservation_time": reservation.starts_at.isoformat(),
-        "party_size": reservation.party_size,
-    }
+def create_expected_booking_summary(reservation: Reservation) -> BookingSummaryAnswer:
+    return BookingSummaryAnswer(
+        reservation_date=reservation.reservation_date.isoformat(),
+        reservation_time=f"{reservation.starts_at:%H:%M}",
+        party_size=reservation.party_size,
+    )
+
+
+def read_booking_summary_answers(realtime_voice_service_scripted: RealtimeVoiceServiceScripted) -> list[list[BookingSummaryAnswer]]:
+    """Each lookup answer's bookings; an answer carrying any other field fails to read as BookingSummaryAnswer."""
+    return [
+        [BookingSummaryAnswer(**booking_answer) for booking_answer in json.loads(captured_tool_output.output)]
+        for captured_tool_output in collect_tool_outputs(realtime_voice_service_scripted)
+    ]
 
 
 async def read_policy_refusal(restaurant_database_path: Path, availability_request: AvailabilityRequest) -> str:
@@ -289,10 +318,11 @@ class TestAgentTools:
         # The answer leaves out the confirmation code, the name, the phone number, the notes and the table.
         guest_microphone: GuestMicrophone = GuestMicrophone()
         generated_guest: GeneratedGuest = create_generated_guest()
-        reservation_request: ReservationRequest = await create_tomorrows_reservation_request(restaurant_database_path, generated_guest)
+        tomorrow: date = await read_restaurant_tomorrow(restaurant_database_path)
+        reservation_request: ReservationRequest = create_tomorrows_reservation_request(tomorrow, generated_guest, create_generated_note())
         async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
             booked_reservation: Reservation = await restaurant_domain_facade.create_reservation(reservation_request)
-        expected_booking_answers: list[list[dict[str, Any]]] = [[create_expected_booking_summary(booked_reservation)]]
+        expected_booking_answers: list[list[BookingSummaryAnswer]] = [[create_expected_booking_summary(booked_reservation)]]
         find_bookings_arguments_json: str = json.dumps(
             {
                 "phone_number": generated_guest.phone_digits,
@@ -311,26 +341,30 @@ class TestAgentTools:
         ):
             await guest_microphone.take_part(conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1))
 
-        actual_booking_answers: list[list[dict[str, Any]]] = [
-            json.loads(actual_tool_output.output) for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted)
-        ]
+        actual_booking_answers: list[list[BookingSummaryAnswer]] = read_booking_summary_answers(realtime_voice_service_scripted)
         assert actual_booking_answers == expected_booking_answers
 
-    async def test_Converse_WhenTheAgentBooksATable_ThenTheAnswerGivesTheNewCodeAndTheCallersDetailsButNotTheTableOrPhoneNumber(
+    async def test_Converse_WhenTheAgentBooksATable_ThenTheAnswerGivesTheStoredCodeAndTheCallersDetailsButNotTheTableOrPhoneNumber(
         self, restaurant_database_path: Path
     ) -> None:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         generated_guest: GeneratedGuest = create_generated_guest()
-        reservation_request: ReservationRequest = await create_tomorrows_reservation_request(restaurant_database_path, generated_guest)
-        book_table_arguments_json: str = json.dumps(
-            {
-                "guest_name": reservation_request.guest_name,
-                "phone_number": reservation_request.phone_number,
-                "party_size": reservation_request.party_size,
-                "reservation_date": reservation_request.reservation_date,
-                "reservation_time": reservation_request.reservation_time,
-                "notes": reservation_request.notes,
-            }
+        tomorrow: date = await read_restaurant_tomorrow(restaurant_database_path)
+        generated_note: str = create_generated_note()
+        reservation_request: ReservationRequest = create_tomorrows_reservation_request(tomorrow, generated_guest, generated_note)
+        book_table_arguments_json: str = json.dumps(asdict(reservation_request))
+        # The details are the caller's own; the code must be the one the restaurant stored for the new booking.
+        expected_outcome: tuple[list[BookingConfirmationDetails], bool] = (
+            [
+                BookingConfirmationDetails(
+                    guest_name=generated_guest.guest_name,
+                    reservation_date=tomorrow.isoformat(),
+                    reservation_time=TOMORROWS_BOOKING_TIME,
+                    party_size=TOMORROWS_BOOKING_PARTY_SIZE,
+                    notes=generated_note,
+                )
+            ],
+            True,
         )
 
         async with (
@@ -343,48 +377,46 @@ class TestAgentTools:
         ):
             await guest_microphone.take_part(conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1))
         async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
-            booked_reservations: list[Reservation] = await restaurant_domain_facade.find_reservations(
+            stored_reservations: list[Reservation] = await restaurant_domain_facade.find_reservations(
                 ReservationSearchRequest(
                     phone_number=generated_guest.phone_digits,
                     guest_name=generated_guest.guest_name,
-                    reservation_date=reservation_request.reservation_date,
+                    reservation_date=tomorrow.isoformat(),
                 )
             )
-        expected_booking_answers: list[dict[str, Any]] = [
-            {
-                "confirmation_code": booked_reservation.confirmation_code,
-                "guest_name": booked_reservation.guest_name,
-                "reservation_date": booked_reservation.reservation_date.isoformat(),
-                "reservation_time": booked_reservation.starts_at.isoformat(),
-                "party_size": booked_reservation.party_size,
-                "notes": booked_reservation.notes,
-            }
-            for booked_reservation in booked_reservations
-        ]
 
-        actual_booking_answers: list[dict[str, Any]] = [
-            json.loads(actual_tool_output.output) for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted)
+        booking_answers: list[dict[str, Any]] = [
+            json.loads(captured_tool_output.output) for captured_tool_output in collect_tool_outputs(realtime_voice_service_scripted)
         ]
-        assert (len(booked_reservations), actual_booking_answers) == (1, expected_booking_answers)
+        actual_outcome: tuple[list[BookingConfirmationDetails], bool] = (
+            [
+                BookingConfirmationDetails(**{name: value for name, value in booking_answer.items() if name != "confirmation_code"})
+                for booking_answer in booking_answers
+            ],
+            [booking_answer["confirmation_code"] for booking_answer in booking_answers]
+            == [stored_reservation.confirmation_code for stored_reservation in stored_reservations],
+        )
+        assert actual_outcome == expected_outcome
 
     async def test_Converse_WhenTheAgentCancelsABookingByTheCallersDetails_ThenItIsCancelledAndTheAnswerGivesWhatWasCancelled(
         self, restaurant_database_path: Path
     ) -> None:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         generated_guest: GeneratedGuest = create_generated_guest()
-        reservation_request: ReservationRequest = await create_tomorrows_reservation_request(restaurant_database_path, generated_guest)
+        tomorrow: date = await read_restaurant_tomorrow(restaurant_database_path)
+        reservation_request: ReservationRequest = create_tomorrows_reservation_request(tomorrow, generated_guest, create_generated_note())
         reservation_search_request: ReservationSearchRequest = ReservationSearchRequest(
-            phone_number=generated_guest.phone_digits, guest_name=generated_guest.guest_name, reservation_date=reservation_request.reservation_date
+            phone_number=generated_guest.phone_digits, guest_name=generated_guest.guest_name, reservation_date=tomorrow.isoformat()
         )
         async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
             booked_reservation: Reservation = await restaurant_domain_facade.create_reservation(reservation_request)
-        expected_outcome: tuple[list[dict[str, Any]], list[Reservation]] = ([create_expected_booking_summary(booked_reservation)], [])
+        expected_outcome: tuple[list[list[BookingSummaryAnswer]], list[Reservation]] = ([[create_expected_booking_summary(booked_reservation)]], [])
         cancel_booking_arguments_json: str = json.dumps(
             {
                 "phone_number": generated_guest.phone_digits,
                 "guest_name": generated_guest.family_name,
                 "booked_date": booked_reservation.reservation_date.isoformat(),
-                "booked_time": f"{booked_reservation.starts_at:%H:%M}",
+                "booked_time": create_expected_booking_summary(booked_reservation).reservation_time,
             }
         )
 
@@ -400,8 +432,11 @@ class TestAgentTools:
         async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
             remaining_reservations: list[Reservation] = await restaurant_domain_facade.find_reservations(reservation_search_request)
 
-        actual_outcome: tuple[list[dict[str, Any]], list[Reservation]] = (
-            [json.loads(actual_tool_output.output) for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted)],
+        actual_outcome: tuple[list[list[BookingSummaryAnswer]], list[Reservation]] = (
+            [
+                [BookingSummaryAnswer(**json.loads(captured_tool_output.output))]
+                for captured_tool_output in collect_tool_outputs(realtime_voice_service_scripted)
+            ],
             remaining_reservations,
         )
         assert actual_outcome == expected_outcome

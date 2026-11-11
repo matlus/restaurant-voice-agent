@@ -1,4 +1,5 @@
 import re
+from collections.abc import Collection, Iterable, Sequence
 from typing import Final
 
 
@@ -16,9 +17,17 @@ class GuestNameMatching:
     def is_name_on_booking(cls, booked_guest_name: str, given_guest_name: str) -> bool:
         booked_name_words: list[str] = cls._get_name_words(booked_guest_name)
         given_name_words: list[str] = cls._get_name_words(given_guest_name)
-        if not given_name_words or any(given_name_word not in booked_name_words for given_name_word in given_name_words):
-            return False
-        later_booked_name_words: list[str] = booked_name_words[1:]
+        return cls._are_all_booked_name_words(given_name_words, booked_name_words) and cls._gives_more_than_the_first_name(
+            given_name_words, booked_name_words
+        )
+
+    @staticmethod
+    def _are_all_booked_name_words(given_name_words: Sequence[str], booked_name_words: Collection[str]) -> bool:
+        return bool(given_name_words) and all(given_name_word in booked_name_words for given_name_word in given_name_words)
+
+    @staticmethod
+    def _gives_more_than_the_first_name(given_name_words: Iterable[str], booked_name_words: Sequence[str]) -> bool:
+        later_booked_name_words: Sequence[str] = booked_name_words[1:]
         return not later_booked_name_words or any(given_name_word in later_booked_name_words for given_name_word in given_name_words)
 
     @classmethod
