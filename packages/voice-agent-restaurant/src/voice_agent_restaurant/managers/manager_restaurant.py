@@ -1,8 +1,8 @@
 from datetime import date, datetime, timedelta
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from voice_agent_restaurant.managers.clocks.clock_base import ClockBase
+from voice_agent_restaurant.managers.configuration_providers.settings_models.restaurant_store_settings import RestaurantStoreSettings
 from voice_agent_restaurant.managers.data_managers.data_manager_restaurant import DataManagerRestaurant
 from voice_agent_restaurant.managers.exceptions.menu_exceptions import DishNotFoundException
 from voice_agent_restaurant.managers.models.menu_models import (
@@ -25,8 +25,10 @@ class ManagerRestaurant:
 
     def __init__(self, service_locator: ServiceLocatorBase) -> None:
         self._clock: ClockBase = service_locator.create_clock()
-        database_path: Path = service_locator.get_configuration_provider().get_restaurant_store_settings().database_path
-        self._data_manager_restaurant: DataManagerRestaurant = DataManagerRestaurant(database_path, self._clock)
+        restaurant_store_settings: RestaurantStoreSettings = service_locator.get_configuration_provider().get_restaurant_store_settings()
+        self._data_manager_restaurant: DataManagerRestaurant = DataManagerRestaurant(
+            restaurant_store_settings.database_path, restaurant_store_settings.store_seeding, self._clock
+        )
 
     async def get_restaurant_profile(self) -> RestaurantProfile:
         return await self._data_manager_restaurant.get_restaurant_profile()

@@ -31,6 +31,7 @@ from voice_agent_restaurant.managers.models.reservation_models import (
     ReservationStatus,
     Seating,
 )
+from voice_agent_restaurant.managers.models.store_models import StoreSeeding
 
 
 @dataclass(frozen=True)
@@ -70,8 +71,8 @@ class DataManagerReservations:
         LIMIT 1
     """
 
-    def __init__(self, database_path: Path, clock: ClockBase) -> None:
-        self._restaurant_store_connector: RestaurantStoreConnector = RestaurantStoreConnector(database_path, clock)
+    def __init__(self, database_path: Path, store_seeding: StoreSeeding, clock: ClockBase) -> None:
+        self._restaurant_store_connector: RestaurantStoreConnector = RestaurantStoreConnector(database_path, store_seeding, clock)
 
     async def find_seatings_on(self, reservation_date: date) -> list[Seating]:
         return await asyncio.to_thread(self._find_seatings_on_synchronously, reservation_date)

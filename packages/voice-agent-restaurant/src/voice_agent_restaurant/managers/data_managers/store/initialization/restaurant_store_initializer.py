@@ -23,6 +23,7 @@ from voice_agent_restaurant.managers.models.restaurant_models import (
     Weekday,
     WeekdayHours,
 )
+from voice_agent_restaurant.managers.models.store_models import StoreSeeding
 
 type _StoredValue = str | int | None
 
@@ -30,9 +31,10 @@ type _StoredValue = str | int | None
 class RestaurantStoreInitializer:
     """Creates the schema and loads the bundled seed into a new store, exactly once per database file.
 
-    Every connection reads the store's version, which costs one PRAGMA. Only a store below STORE_VERSION is
-    initialized, inside one IMMEDIATE transaction that reads the version again, so two first callers racing
-    on a new file cannot both seed it.
+    Creating a store has three steps: the schema, the restaurant's reference data (profile, hours, closures, tables
+    and menu), and the demo bookings when the store seeding asks for them. Every connection reads the store's version, which costs
+    one PRAGMA. Only a new, empty file is initialized, inside one IMMEDIATE transaction that reads the version again, so two
+    first callers racing on a new file cannot both seed it. A store from any other version, older or newer, is refused.
     """
 
     # SQLite reports this version for a file no store has been created in yet.
@@ -41,11 +43,15 @@ class RestaurantStoreInitializer:
     DAYS_PER_WEEK: Final[int] = 7
 
     @classmethod
-    def ensure_initialized(cls, connection: sqlite3.Connection, now_utc: datetime) -> None:
+    def ensure_initialized(cls, connection: sqlite3.Connection, now_utc: datetime, store_seeding: StoreSeeding) -> None:
         if cls._is_current(connection):
             return
         with cls._immediate_transaction(connection):
-            cls._create_store(connection, now_utc)
+            cls._create_store(connection, now_utc, store_seeding)
+        # Write-ahead logging lets readers carry on while one writer books. The mode belongs to the file and cannot
+        # change inside a transaction, so it is set once the store exists, never on a file that was refused; setting
+        # it twice, as a racing first caller may, is harmless.
+        connection.execute("PRAGMA journal_mode = WAL")
 
     @staticmethod
     @contextmanager
@@ -61,7 +67,7 @@ class RestaurantStoreInitializer:
             raise
 
     @classmethod
-    def _create_store(cls, connection: sqlite3.Connection, now_utc: datetime) -> None:
+    def _create_store(cls, connection: sqlite3.Connection, now_utc: datetime, store_seeding: StoreSeeding) -> None:
         store_version: int = cls._read_store_version(connection)
         # A racing first caller may have created the store between the unlocked check and this transaction.
         if cls._is_store_version_current(store_version):
@@ -69,13 +75,26 @@ class RestaurantStoreInitializer:
         if store_version != cls.NEW_FILE_STORE_VERSION:
             raise RestaurantStoreContractViolationException(
                 message=(
-                    f"The restaurant store was created by an older version of the app (store version {store_version}; this version needs "
-                    f"{STORE_VERSION}), and it cannot be upgraded in place. Delete the store file; it is created and seeded again on the next run."
+                    f"The restaurant store was created by another version of the app (store version {store_version}; this version needs "
+                    f"{STORE_VERSION}), and this version cannot use it. Delete the store file; it is created and seeded again on the next run."
                 ),
                 contextual_data_by_name={"RestaurantStore.Version": store_version, "RestaurantStore.RequiredVersion": STORE_VERSION},
             )
+        # Every SQLite file starts at version 0, so the version alone cannot tell a new file from another program's database.
+        table_count: int = cls._count_tables(connection)
+        if table_count != 0:
+            raise RestaurantStoreContractViolationException(
+                message=(
+                    "The file at the configured store path is a SQLite database that already holds tables but no restaurant store "
+                    f"(table count: {table_count}), so it belongs to something else and is left untouched. Point the store path at a new file."
+                ),
+                contextual_data_by_name={"RestaurantStore.TableCount": table_count},
+            )
+        restaurant_seed: RestaurantSeed = SeedDataReader.read_restaurant_seed()
         cls._create_schema(connection)
-        cls._load_seed(connection, SeedDataReader.read_restaurant_seed(), now_utc)
+        cls._insert_reference_data(connection, restaurant_seed)
+        if store_seeding == StoreSeeding.RESTAURANT_AND_DEMO_BOOKINGS:
+            cls._insert_demo_bookings(connection, restaurant_seed, now_utc)
         # SQLite PRAGMA statements take no bound parameters, so the version is interpolated; STORE_VERSION is an int constant, never input.
         connection.execute(f"PRAGMA user_version = {STORE_VERSION}")
 
@@ -85,7 +104,12 @@ class RestaurantStoreInitializer:
 
     @staticmethod
     def _is_store_version_current(store_version: int) -> bool:
-        return store_version >= STORE_VERSION
+        return store_version == STORE_VERSION
+
+    @staticmethod
+    def _count_tables(connection: sqlite3.Connection) -> int:
+        table_count_row: sqlite3.Row = connection.execute("SELECT count(*) FROM sqlite_schema WHERE type = 'table'").fetchone()
+        return int(table_count_row[0])
 
     @classmethod
     def _read_store_version(cls, connection: sqlite3.Connection) -> int:
@@ -98,13 +122,16 @@ class RestaurantStoreInitializer:
             connection.execute(schema_statement)
 
     @classmethod
-    def _load_seed(cls, connection: sqlite3.Connection, restaurant_seed: RestaurantSeed, now_utc: datetime) -> None:
-        restaurant_profile: RestaurantProfile = restaurant_seed.restaurant_profile
-        cls._insert_restaurant(connection, restaurant_profile)
+    def _insert_reference_data(cls, connection: sqlite3.Connection, restaurant_seed: RestaurantSeed) -> None:
+        cls._insert_restaurant(connection, restaurant_seed.restaurant_profile)
         cls._insert_weekly_hours(connection, restaurant_seed.weekly_hours)
         cls._insert_closures(connection, restaurant_seed.closures)
         cls._insert_dining_tables(connection, restaurant_seed.dining_tables)
         cls._insert_dishes(connection, restaurant_seed.dish_records)
+
+    @classmethod
+    def _insert_demo_bookings(cls, connection: sqlite3.Connection, restaurant_seed: RestaurantSeed, now_utc: datetime) -> None:
+        restaurant_profile: RestaurantProfile = restaurant_seed.restaurant_profile
         restaurant_today: date = now_utc.astimezone(ZoneInfo(restaurant_profile.time_zone)).date()
         cls._insert_seed_reservations(
             connection,

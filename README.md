@@ -56,8 +56,9 @@ Four voices are available, picked on the page before a call: Marin and Coral (fe
 
 ## Try it: test scenarios
 
-The seed data sets up situations worth calling about. Seed bookings land on the next occurrence of their weekday after
-the store is created (today counts), so the scenarios stay in the future.
+The seed data sets up situations worth calling about. The demo bookings are seeded only when
+`VOICE_AGENT_RESTAURANT_STORE_SEEDING` is `restaurant_and_demo_bookings`, as it is in `.env.example` and the hosted demo. They land on the
+next occurrence of their weekday after the store is created (today counts), so the scenarios stay in the future.
 
 | Scenario | What to try |
 | --- | --- |
@@ -69,9 +70,10 @@ the store is created (today counts), so the scenarios stay in the future.
 | Existing booking | Priya Raman has a Friday booking under phone number 555-010-1001, confirmation code `KX4TPA`. Change or cancel it with the code, or by phone number, name and date. |
 | Large party | Parties over eight are pointed to the private dining room instead. |
 
-To start over with fresh data, stop the app and delete the SQLite file (`data/restaurant.sqlite3` by default). It is
-created and seeded again on the next run. A store created by an older version of the app
-is refused with a message saying so; delete it the same way.
+The store is disposable. To start over with fresh data, stop the app and delete the SQLite file
+(`data/restaurant.sqlite3` by default); it is created and seeded again on the next run. A store created by another
+version of the app is not migrated: the app refuses it at startup with a message saying so, and you delete it the same
+way.
 
 ## The restaurant
 
@@ -181,6 +183,7 @@ Open http://127.0.0.1:8000, choose a voice and press the call button. The browse
 | --- | --- | --- |
 | `OPENAI_API_KEY` | Yes | Your OpenAI API key. |
 | `VOICE_AGENT_RESTAURANT_DATABASE_PATH` | Yes | Where the SQLite store lives, such as `data/restaurant.sqlite3`. Created and seeded if missing. |
+| `VOICE_AGENT_RESTAURANT_STORE_SEEDING` | No | `restaurant_and_demo_bookings` seeds a new store with the demo bookings the test scenarios use. Defaults to `restaurant_only`, so a real deployment starts with no bookings. |
 | `VOICE_AGENT_OPENAI_REALTIME_MODEL` | No | The speech model. Defaults to `gpt-realtime-2.1`. `gpt-realtime-2.1-mini` costs less. |
 | `VOICE_AGENT_OPENAI_REALTIME_WEBSOCKET_BASE_URL` | No | Another Realtime address. Tests use this to point at a scripted service. |
 | `VOICE_AGENT_WEB_HOST` / `VOICE_AGENT_WEB_PORT` | No | Where the web app listens. Defaults to `127.0.0.1` and `8000`. |
@@ -254,7 +257,8 @@ everything down, delete the resource group and the app registration.
   operations exposed as HTTP tool endpoints.
 
 Today the app is a demo. It sends no confirmation texts or emails, and keeps its data in a SQLite file that the hosted
-copy loses whenever it restarts.
+copy loses whenever it restarts. Real use needs a server database (Postgres or Azure SQL) for bookings; the data
+managers already hide the store, so that change stays inside them.
 
 ## License
 

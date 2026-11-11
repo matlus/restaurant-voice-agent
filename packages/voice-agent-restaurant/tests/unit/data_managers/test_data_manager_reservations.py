@@ -28,6 +28,7 @@ from voice_agent_restaurant import (
 )
 from voice_agent_restaurant.managers.data_managers.data_manager_reservations import DataManagerReservations
 from voice_agent_restaurant.managers.models.reservation_models import BookedSchedule, ReservationCancellation, ReservationReschedule
+from voice_agent_restaurant.managers.models.store_models import StoreSeeding
 
 SEEDED_PRIYA_PHONE: Final[str] = "5550101001"
 
@@ -72,7 +73,9 @@ class TestDataManagerReservationsReschedule:
     async def test_RescheduleReservation_WhenTheBookingChangedAfterItWasRead_ThenTheChangeIsRefusedAndTheOtherChangeKept(
         self, restaurant_database_path: Path
     ) -> None:
-        data_manager_reservations: DataManagerReservations = DataManagerReservations(restaurant_database_path, ClockFixed(WEDNESDAY_AFTERNOON_UTC))
+        data_manager_reservations: DataManagerReservations = DataManagerReservations(
+            restaurant_database_path, StoreSeeding.RESTAURANT_AND_DEMO_BOOKINGS, ClockFixed(WEDNESDAY_AFTERNOON_UTC)
+        )
         expected_exception_metadata: ExpectedExceptionMetadata = ExpectedExceptionMetadata(
             http_status_code=409,
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,
@@ -123,7 +126,9 @@ class TestDataManagerReservationsReschedule:
         assert actual_found_reservations == expected_reservations
 
     async def test_RescheduleReservation_WhenTheBookingWasCancelledAfterItWasRead_ThenItIsNotFound(self, restaurant_database_path: Path) -> None:
-        data_manager_reservations: DataManagerReservations = DataManagerReservations(restaurant_database_path, ClockFixed(WEDNESDAY_AFTERNOON_UTC))
+        data_manager_reservations: DataManagerReservations = DataManagerReservations(
+            restaurant_database_path, StoreSeeding.RESTAURANT_AND_DEMO_BOOKINGS, ClockFixed(WEDNESDAY_AFTERNOON_UTC)
+        )
         expected_found_reservations: list[Reservation] = []
         expected_exception_metadata: ExpectedExceptionMetadata = ExpectedExceptionMetadata(
             http_status_code=404,
@@ -171,7 +176,9 @@ class TestDataManagerReservationsCancel:
     async def test_CancelReservation_WhenTheBookingChangedAfterItWasRead_ThenTheCancellationIsRefusedAndTheChangeKept(
         self, restaurant_database_path: Path
     ) -> None:
-        data_manager_reservations: DataManagerReservations = DataManagerReservations(restaurant_database_path, ClockFixed(WEDNESDAY_AFTERNOON_UTC))
+        data_manager_reservations: DataManagerReservations = DataManagerReservations(
+            restaurant_database_path, StoreSeeding.RESTAURANT_AND_DEMO_BOOKINGS, ClockFixed(WEDNESDAY_AFTERNOON_UTC)
+        )
         expected_exception_metadata: ExpectedExceptionMetadata = ExpectedExceptionMetadata(
             http_status_code=409,
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,

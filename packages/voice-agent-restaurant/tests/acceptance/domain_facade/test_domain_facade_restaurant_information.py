@@ -4,7 +4,7 @@
 
 import sqlite3
 from contextlib import closing
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Final
 from zoneinfo import ZoneInfo
@@ -17,6 +17,7 @@ from acceptance_support.bundled_seed import SeededClosedWeekday, SeededRestauran
 from acceptance_support.generated_guests import GeneratedGuest, create_generated_guest
 from acceptance_support.service_locator_testing import (
     DATABASE_PATH_VARIABLE_NAME,
+    STORE_SEEDING_VARIABLE_NAME,
     WEDNESDAY_AFTERNOON_UTC,
     ServiceLocatorTesting,
     create_domain_facade,
@@ -40,20 +41,18 @@ from voice_agent_restaurant import (
     Weekday,
     WeekdayHours,
 )
+from voice_agent_restaurant.managers.data_managers.store.initialization.restaurant_store_schema import STORE_VERSION
 
 ENVIRONMENT_VARIABLE_NAME_CONTEXT_NAME: Final[str] = "Configuration.EnvironmentVariableName"
 
-OLDER_STORE_VERSION: Final[int] = 1
 # Monday 2026-11-30 at 15:00 in Riverton: after Thanksgiving, the first seeded closure.
 AFTER_THE_FIRST_CLOSURE_UTC: Final[datetime] = datetime(2026, 11, 30, 21, 0, tzinfo=UTC)
 
 
-@pytest.fixture
-def older_store_database_path(restaurant_database_path: Path) -> Path:
-    with closing(sqlite3.connect(restaurant_database_path)) as connection:
-        # SQLite PRAGMA statements take no bound parameters, so the version is interpolated; it is a test constant, never input.
-        connection.execute(f"PRAGMA user_version = {OLDER_STORE_VERSION}")
-    return restaurant_database_path
+def write_store_version(database_path: Path, store_version: int) -> None:
+    with closing(sqlite3.connect(database_path)) as connection:
+        # SQLite PRAGMA statements take no bound parameters, so the version is interpolated; it is an int the test chose, never input.
+        connection.execute(f"PRAGMA user_version = {store_version}")
 
 
 @pytest.fixture
@@ -104,12 +103,13 @@ class TestRestaurantInformation:
     ) -> None:
         seeded_restaurant: SeededRestaurant = read_seeded_restaurant()
         expected_restaurant_local_now: datetime = WEDNESDAY_AFTERNOON_UTC.astimezone(ZoneInfo(seeded_restaurant.time_zone))
-        expected_local_date_and_time: tuple[date, time] = (expected_restaurant_local_now.date(), expected_restaurant_local_now.time())
+        # Aware datetimes compare as instants, so the wall time, its offset and the zone are compared as written.
+        expected_local_time_and_zone: tuple[str, str] = (expected_restaurant_local_now.isoformat(), seeded_restaurant.time_zone)
 
         async with create_domain_facade(restaurant_database_path, WEDNESDAY_AFTERNOON_UTC) as domain_facade:
             actual_restaurant_local_now: datetime = await domain_facade.get_restaurant_local_now()
 
-        assert (actual_restaurant_local_now.date(), actual_restaurant_local_now.time()) == expected_local_date_and_time
+        assert (actual_restaurant_local_now.isoformat(), str(actual_restaurant_local_now.tzinfo)) == expected_local_time_and_zone
 
     async def test_GetOpeningHours_WhenAsked_ThenEveryWeekdayIsListedAndOnlyTheClosuresInsideTheBookingWindow(
         self, restaurant_database_path: Path
@@ -167,10 +167,12 @@ class TestRestaurantInformation:
 
         assert actual_found_reservations == expected_reservations
 
-    async def test_GetRestaurantProfile_WhenTheStoreWasCreatedByAnOlderVersion_ThenTheFailureSaysToDeleteTheStore(
-        self, older_store_database_path: Path
+    @pytest.mark.parametrize("store_version", [STORE_VERSION - 1, STORE_VERSION + 1], ids=["older version", "newer version"])
+    def test_DomainFacade_WhenTheStoreWasCreatedByAnotherVersion_ThenStartupFailsSayingToDeleteTheStore(
+        self, restaurant_database_path: Path, store_version: int
     ) -> None:
-        expected_message_phrases: list[str] = [f"store version {OLDER_STORE_VERSION}", "Delete the store file"]
+        write_store_version(restaurant_database_path, store_version)
+        expected_message_phrases: list[str] = [f"store version {store_version}", "Delete the store file"]
         expected_exception_metadata: ExpectedExceptionMetadata = ExpectedExceptionMetadata(
             http_status_code=500,
             exception_action=ExceptionAction.DEVELOPER_ACTION_REQUIRED,
@@ -178,27 +180,25 @@ class TestRestaurantInformation:
             severity=Severity.ERROR,
             log_event=LogEventRestaurantStore.RESTAURANT_STORE_OPERATION,
         )
-        expected_contextual_data_by_name: dict[str, int] = {"RestaurantStore.Version": OLDER_STORE_VERSION}
-        expected_present_contextual_data_names: list[str] = ["RestaurantStore.RequiredVersion"]
+        expected_contextual_data_by_name: dict[str, int] = {
+            "RestaurantStore.Version": store_version,
+            "RestaurantStore.RequiredVersion": STORE_VERSION,
+        }
 
-        async with create_domain_facade(older_store_database_path) as domain_facade:
-            with pytest.raises(RestaurantStoreContractViolationException) as raised:
-                await domain_facade.get_restaurant_profile()
+        with pytest.raises(RestaurantStoreContractViolationException) as raised:
+            DomainFacade(ServiceLocatorTesting({DATABASE_PATH_VARIABLE_NAME: str(restaurant_database_path)}, WEDNESDAY_AFTERNOON_UTC))
 
         AsserterException.assert_message_and_metadata_are_as_expected(
             expected_exception_content=ExpectedExceptionContent(
                 message_phrases=expected_message_phrases,
                 exception_metadata=expected_exception_metadata,
                 contextual_data_by_name=expected_contextual_data_by_name,
-                present_contextual_data_names=expected_present_contextual_data_names,
             ),
             actual_voice_agent_restaurant_exception=raised.value,
         )
 
-    async def test_GetRestaurantProfile_WhenTheStoreFileIsNotASqliteDatabase_ThenTheFailureIsReportedAsPermanent(
-        self, foreign_file_database_path: Path
-    ) -> None:
-        store_operation: str = "read the restaurant profile"
+    def test_DomainFacade_WhenTheStoreFileIsNotASqliteDatabase_ThenStartupFailsReportingItAsPermanent(self, foreign_file_database_path: Path) -> None:
+        store_operation: str = "read the restaurant's reference data"
         expected_message_phrases: list[str] = [store_operation, "retrying will not help"]
         expected_exception_metadata: ExpectedExceptionMetadata = ExpectedExceptionMetadata(
             http_status_code=500,
@@ -211,9 +211,8 @@ class TestRestaurantInformation:
         # The driver's error type and text are its own; that they are recorded is what the diagnosis needs.
         expected_present_contextual_data_names: list[str] = ["RestaurantStore.ErrorType", "RestaurantStore.Error"]
 
-        async with create_domain_facade(foreign_file_database_path) as domain_facade:
-            with pytest.raises(RestaurantStoreContractViolationException) as raised:
-                await domain_facade.get_restaurant_profile()
+        with pytest.raises(RestaurantStoreContractViolationException) as raised:
+            DomainFacade(ServiceLocatorTesting({DATABASE_PATH_VARIABLE_NAME: str(foreign_file_database_path)}, WEDNESDAY_AFTERNOON_UTC))
 
         AsserterException.assert_message_and_metadata_are_as_expected(
             expected_exception_content=ExpectedExceptionContent(
@@ -221,6 +220,67 @@ class TestRestaurantInformation:
                 exception_metadata=expected_exception_metadata,
                 contextual_data_by_name=expected_contextual_data_by_name,
                 present_contextual_data_names=expected_present_contextual_data_names,
+            ),
+            actual_voice_agent_restaurant_exception=raised.value,
+        )
+
+    def test_DomainFacade_WhenTheStorePathHoldsAnotherProgramsDatabase_ThenStartupFailsAndLeavesItUntouched(
+        self, restaurant_database_path: Path
+    ) -> None:
+        with closing(sqlite3.connect(restaurant_database_path)) as connection:
+            connection.execute("CREATE TABLE notes (body TEXT)")
+        expected_message_phrases: list[str] = ["already holds tables but no restaurant store", "Point the store path at a new file"]
+        expected_exception_metadata: ExpectedExceptionMetadata = ExpectedExceptionMetadata(
+            http_status_code=500,
+            exception_action=ExceptionAction.DEVELOPER_ACTION_REQUIRED,
+            reason="The restaurant store breaks a contract the domain relies on",
+            severity=Severity.ERROR,
+            log_event=LogEventRestaurantStore.RESTAURANT_STORE_OPERATION,
+        )
+        expected_contextual_data_by_name: dict[str, int] = {"RestaurantStore.TableCount": 1}
+        # The other program's database keeps its own journal mode and holds only its own table.
+        expected_journal_mode_and_table_names: tuple[str, list[str]] = ("delete", ["notes"])
+
+        with pytest.raises(RestaurantStoreContractViolationException) as raised:
+            DomainFacade(ServiceLocatorTesting({DATABASE_PATH_VARIABLE_NAME: str(restaurant_database_path)}, WEDNESDAY_AFTERNOON_UTC))
+
+        AsserterException.assert_message_and_metadata_are_as_expected(
+            expected_exception_content=ExpectedExceptionContent(
+                message_phrases=expected_message_phrases,
+                exception_metadata=expected_exception_metadata,
+                contextual_data_by_name=expected_contextual_data_by_name,
+            ),
+            actual_voice_agent_restaurant_exception=raised.value,
+        )
+        with closing(sqlite3.connect(restaurant_database_path)) as connection:
+            actual_journal_mode_and_table_names: tuple[str, list[str]] = (
+                connection.execute("PRAGMA journal_mode").fetchone()[0],
+                [table_row[0] for table_row in connection.execute("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name")],
+            )
+        assert actual_journal_mode_and_table_names == expected_journal_mode_and_table_names
+
+    def test_DomainFacade_WhenAStoredDishListIsNotJson_ThenStartupFailsNamingTheColumn(self, restaurant_database_path: Path) -> None:
+        create_domain_facade(restaurant_database_path)
+        with closing(sqlite3.connect(restaurant_database_path)) as connection, connection:
+            connection.execute("UPDATE dishes SET allergens_json = 'peanuts, sesame'")
+        expected_message_phrases: list[str] = ["'dishes.allergens_json'", "JSON list of text"]
+        expected_exception_metadata: ExpectedExceptionMetadata = ExpectedExceptionMetadata(
+            http_status_code=500,
+            exception_action=ExceptionAction.DEVELOPER_ACTION_REQUIRED,
+            reason="The restaurant store breaks a contract the domain relies on",
+            severity=Severity.ERROR,
+            log_event=LogEventRestaurantStore.RESTAURANT_STORE_OPERATION,
+        )
+        expected_contextual_data_by_name: dict[str, str] = {"RestaurantStore.Table": "dishes", "RestaurantStore.Column": "allergens_json"}
+
+        with pytest.raises(RestaurantStoreContractViolationException) as raised:
+            DomainFacade(ServiceLocatorTesting({DATABASE_PATH_VARIABLE_NAME: str(restaurant_database_path)}, WEDNESDAY_AFTERNOON_UTC))
+
+        AsserterException.assert_message_and_metadata_are_as_expected(
+            expected_exception_content=ExpectedExceptionContent(
+                message_phrases=expected_message_phrases,
+                exception_metadata=expected_exception_metadata,
+                contextual_data_by_name=expected_contextual_data_by_name,
             ),
             actual_voice_agent_restaurant_exception=raised.value,
         )
@@ -233,8 +293,14 @@ class TestRestaurantInformation:
         ],
     )
     def test_DomainFacade_WhenTheDatabasePathSettingIsMissingOrBlank_ThenConstructionFailsNamingTheSetting(
-        self, environment_variables: dict[str, str], expected_absence_phrase: str, expected_setting_was_missing: bool
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        environment_variables: dict[str, str],
+        expected_absence_phrase: str,
+        expected_setting_was_missing: bool,
     ) -> None:
+        # The setting is read from the process environment when no override names it, so a value set there must not leak in.
+        monkeypatch.delenv(DATABASE_PATH_VARIABLE_NAME, raising=False)
         expected_message_phrases: list[str] = [DATABASE_PATH_VARIABLE_NAME, expected_absence_phrase]
         expected_exception_metadata: ExpectedExceptionMetadata = create_configuration_refusal_metadata()
         expected_contextual_data_by_name: dict[str, str | bool] = {
@@ -244,6 +310,36 @@ class TestRestaurantInformation:
 
         with pytest.raises(ConfigurationSettingException) as raised:
             DomainFacade(ServiceLocatorTesting(environment_variables, WEDNESDAY_AFTERNOON_UTC))
+
+        AsserterException.assert_message_and_metadata_are_as_expected(
+            expected_exception_content=ExpectedExceptionContent(
+                message_phrases=expected_message_phrases,
+                exception_metadata=expected_exception_metadata,
+                contextual_data_by_name=expected_contextual_data_by_name,
+            ),
+            actual_voice_agent_restaurant_exception=raised.value,
+        )
+
+    def test_DomainFacade_WhenTheStoreSeedingSettingIsUnknown_ThenConstructionFailsNamingTheSettingAndValue(
+        self, restaurant_database_path: Path
+    ) -> None:
+        unknown_setting_value: str = "sometimes"
+        expected_message_phrases: list[str] = [
+            STORE_SEEDING_VARIABLE_NAME,
+            "'restaurant_only'",
+            "'restaurant_and_demo_bookings'",
+            unknown_setting_value,
+        ]
+        expected_exception_metadata: ExpectedExceptionMetadata = create_configuration_refusal_metadata()
+        expected_contextual_data_by_name: dict[str, str] = {ENVIRONMENT_VARIABLE_NAME_CONTEXT_NAME: STORE_SEEDING_VARIABLE_NAME}
+
+        with pytest.raises(ConfigurationSettingException) as raised:
+            DomainFacade(
+                ServiceLocatorTesting(
+                    {DATABASE_PATH_VARIABLE_NAME: str(restaurant_database_path), STORE_SEEDING_VARIABLE_NAME: unknown_setting_value},
+                    WEDNESDAY_AFTERNOON_UTC,
+                )
+            )
 
         AsserterException.assert_message_and_metadata_are_as_expected(
             expected_exception_content=ExpectedExceptionContent(

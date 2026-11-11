@@ -16,6 +16,7 @@ from voice_agent_restaurant import (
 )
 
 RESTAURANT_DATABASE_PATH_VARIABLE_NAME: Final[str] = "VOICE_AGENT_RESTAURANT_DATABASE_PATH"
+RESTAURANT_STORE_SEEDING_VARIABLE_NAME: Final[str] = "VOICE_AGENT_RESTAURANT_STORE_SEEDING"
 OPENAI_API_KEY_VARIABLE_NAME: Final[str] = "OPENAI_API_KEY"
 OPENAI_REALTIME_MODEL_VARIABLE_NAME: Final[str] = "VOICE_AGENT_OPENAI_REALTIME_MODEL"
 OPENAI_REALTIME_WEBSOCKET_BASE_URL_VARIABLE_NAME: Final[str] = "VOICE_AGENT_OPENAI_REALTIME_WEBSOCKET_BASE_URL"
@@ -43,7 +44,12 @@ class RestaurantServiceLocatorTesting(RestaurantServiceLocatorBase):
 
     @override
     def get_configuration_provider(self) -> RestaurantConfigurationProvider:
-        return RestaurantConfigurationProvider({RESTAURANT_DATABASE_PATH_VARIABLE_NAME: str(self._restaurant_database_path)})
+        return RestaurantConfigurationProvider(
+            {
+                RESTAURANT_DATABASE_PATH_VARIABLE_NAME: str(self._restaurant_database_path),
+                RESTAURANT_STORE_SEEDING_VARIABLE_NAME: "restaurant_and_demo_bookings",
+            }
+        )
 
     @override
     def create_clock(self) -> ClockBase:

@@ -1,11 +1,11 @@
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime, time
-from pathlib import Path
 from typing import Final
 from zoneinfo import ZoneInfo
 
 from voice_agent_restaurant.managers.clocks.clock_base import ClockBase
+from voice_agent_restaurant.managers.configuration_providers.settings_models.restaurant_store_settings import RestaurantStoreSettings
 from voice_agent_restaurant.managers.data_managers.data_manager_reservations import DataManagerReservations
 from voice_agent_restaurant.managers.data_managers.data_manager_restaurant import DataManagerRestaurant
 from voice_agent_restaurant.managers.exceptions.reservation_exceptions import (
@@ -88,9 +88,13 @@ class ManagerReservations:
 
     def __init__(self, service_locator: ServiceLocatorBase) -> None:
         self._clock: ClockBase = service_locator.create_clock()
-        database_path: Path = service_locator.get_configuration_provider().get_restaurant_store_settings().database_path
-        self._data_manager_restaurant: DataManagerRestaurant = DataManagerRestaurant(database_path, self._clock)
-        self._data_manager_reservations: DataManagerReservations = DataManagerReservations(database_path, self._clock)
+        restaurant_store_settings: RestaurantStoreSettings = service_locator.get_configuration_provider().get_restaurant_store_settings()
+        self._data_manager_restaurant: DataManagerRestaurant = DataManagerRestaurant(
+            restaurant_store_settings.database_path, restaurant_store_settings.store_seeding, self._clock
+        )
+        self._data_manager_reservations: DataManagerReservations = DataManagerReservations(
+            restaurant_store_settings.database_path, restaurant_store_settings.store_seeding, self._clock
+        )
 
     async def check_availability(self, availability_request: AvailabilityRequest) -> AvailabilityResult:
         stated_requested_seating: RequestedSeating = ValidatorReservationRequests.validate_availability_request(availability_request)
