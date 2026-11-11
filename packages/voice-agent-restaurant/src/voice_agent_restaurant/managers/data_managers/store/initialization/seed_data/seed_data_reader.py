@@ -196,7 +196,18 @@ class SeedDataReader:
         if opens_at is None and closes_at is None:
             return ClosedWeekday(weekday=weekday)
         if opens_at is None or closes_at is None:
-            raise restaurant_seed_file.fail(value_path, "must give both 'opens_at' and 'closes_at', or neither on a day the restaurant does not open")
+            given_times: str = ", ".join(
+                f"'{time_key}' {given_time:%H:%M}"
+                for time_key, given_time in (("opens_at", opens_at), ("closes_at", closes_at))
+                if given_time is not None
+            )
+            raise restaurant_seed_file.fail(
+                value_path,
+                (
+                    "must give both 'opens_at' and 'closes_at', or neither on a day the restaurant does not open, "
+                    f"but {weekday.value} gives only {given_times}"
+                ),
+            )
         # Seatings are kept as times of one calendar day, so service must end before midnight of the day it starts.
         if closes_at <= opens_at:
             raise restaurant_seed_file.fail(
@@ -472,7 +483,7 @@ class SeedDataReader:
 
     @classmethod
     def _verify_time_on_slot_grid(cls, seed_file: SeedFile, value_path: str, time_of_day: time, slot_interval_minutes: int) -> None:
-        if cls._to_minutes(time_of_day) % slot_interval_minutes != 0:
+        if cls._to_minutes_after_midnight(time_of_day) % slot_interval_minutes != 0:
             raise seed_file.fail(
                 value_path, f"'{time_of_day:%H:%M}' must fall on the {slot_interval_minutes}-minute slot grid that bookable times follow"
             )
@@ -486,9 +497,9 @@ class SeedDataReader:
         open_weekday: OpenWeekday,
         seating_duration_minutes: int,
     ) -> None:
-        starts_at_minutes: int = cls._to_minutes(starts_at)
-        if starts_at_minutes < cls._to_minutes(open_weekday.opens_at) or (
-            starts_at_minutes + seating_duration_minutes > cls._to_minutes(open_weekday.closes_at)
+        starts_at_minutes: int = cls._to_minutes_after_midnight(starts_at)
+        if starts_at_minutes < cls._to_minutes_after_midnight(open_weekday.opens_at) or (
+            starts_at_minutes + seating_duration_minutes > cls._to_minutes_after_midnight(open_weekday.closes_at)
         ):
             raise reservations_seed_file.fail(
                 starts_at_path,
@@ -502,19 +513,19 @@ class SeedDataReader:
     def _find_overlapping_seed_reservation(
         cls, earlier_seed_reservations: Sequence[SeedReservation], seed_table_seating: _SeedTableSeating, seating_duration_minutes: int
     ) -> SeedReservation | None:
-        starts_at_minutes: int = cls._to_minutes(seed_table_seating.starts_at)
+        starts_at_minutes: int = cls._to_minutes_after_midnight(seed_table_seating.starts_at)
         return next(
             (
                 earlier_seed_reservation
                 for earlier_seed_reservation in earlier_seed_reservations
                 if earlier_seed_reservation.weekday == seed_table_seating.weekday
                 and earlier_seed_reservation.table_id == seed_table_seating.table_id
-                and cls._to_minutes(earlier_seed_reservation.starts_at) < starts_at_minutes + seating_duration_minutes
-                and starts_at_minutes < cls._to_minutes(earlier_seed_reservation.starts_at) + seating_duration_minutes
+                and cls._to_minutes_after_midnight(earlier_seed_reservation.starts_at) < starts_at_minutes + seating_duration_minutes
+                and starts_at_minutes < cls._to_minutes_after_midnight(earlier_seed_reservation.starts_at) + seating_duration_minutes
             ),
             None,
         )
 
     @classmethod
-    def _to_minutes(cls, time_of_day: time) -> int:
+    def _to_minutes_after_midnight(cls, time_of_day: time) -> int:
         return time_of_day.hour * cls.MINUTES_PER_HOUR + time_of_day.minute

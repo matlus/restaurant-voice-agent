@@ -121,7 +121,6 @@ def read_seeded_dishes() -> list[SeededDish]:
 
 
 def read_seeded_booking_weekday(phone_number: str) -> str:
-    """The weekday the bundled seed books the guest with this phone number on."""
     reservations_seed_object: dict[str, Any] = json.loads(_read_bundled_seed_text(RESERVATIONS_SEED_FILE_NAME))
     weekdays: list[str] = [
         reservation_object["weekday"]

@@ -64,7 +64,7 @@ class RestaurantStoreInitializer:
     def _create_store(cls, connection: sqlite3.Connection, now_utc: datetime) -> None:
         store_version: int = cls._read_store_version(connection)
         # A racing first caller may have created the store between the unlocked check and this transaction.
-        if store_version >= STORE_VERSION:
+        if cls._is_store_version_current(store_version):
             return
         if store_version != cls.NEW_FILE_STORE_VERSION:
             raise RestaurantStoreContractViolationException(
@@ -81,7 +81,11 @@ class RestaurantStoreInitializer:
 
     @classmethod
     def _is_current(cls, connection: sqlite3.Connection) -> bool:
-        return cls._read_store_version(connection) >= STORE_VERSION
+        return cls._is_store_version_current(cls._read_store_version(connection))
+
+    @staticmethod
+    def _is_store_version_current(store_version: int) -> bool:
+        return store_version >= STORE_VERSION
 
     @classmethod
     def _read_store_version(cls, connection: sqlite3.Connection) -> int:

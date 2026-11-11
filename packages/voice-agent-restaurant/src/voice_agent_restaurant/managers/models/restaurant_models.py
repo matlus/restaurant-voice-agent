@@ -65,10 +65,7 @@ class RestaurantProfile:
 
 @dataclass(frozen=True)
 class OpeningHours:
-    """The weekly schedule plus the closures that fall inside the booking window.
-
-    last_seating_minutes_before_close is how long before closing the final table can be seated.
-    """
+    """The weekly schedule plus the closures that fall inside the booking window."""
 
     weekly_hours: list[WeekdayHours]
     upcoming_closures: list[Closure]

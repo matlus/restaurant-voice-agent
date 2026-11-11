@@ -42,6 +42,7 @@ from voice_agent_restaurant import (
     AvailabilityRequest,
     ClosedWeekday,
     Dish,
+    DishLookupRequest,
     MenuSearchRequest,
     OpeningHours,
     ReservationPolicyRefusedException,
@@ -225,12 +226,13 @@ class TestAgentTools:
         self, restaurant_database_path: Path
     ) -> None:
         guest_microphone: GuestMicrophone = GuestMicrophone()
+        pinned_dish_id: str = "dry-aged-ribeye"
         async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
-            described_dish: Dish = (
-                await restaurant_domain_facade.search_menu(
-                    MenuSearchRequest(diet_labels=[], excluded_allergens=[], category=None, maximum_calories=None, search_text=None)
-                )
-            ).dishes[0]
+            described_dish: Dish = await restaurant_domain_facade.retrieve_dish(DishLookupRequest(dish_name=pinned_dish_id.replace("-", " ")))
+            assert described_dish.dish_id == pinned_dish_id, (
+                f"This scenario needs the spoken name of '{pinned_dish_id}' to name only that dish, but the seeded menu returned "
+                f"'{described_dish.dish_id}'; the seeded data no longer supports the scenario"
+            )
             expected_dish_answers: list[tuple[str, str]] = [
                 (described_dish.dish_id, (await restaurant_domain_facade.get_restaurant_profile()).allergen_notice)
             ]

@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Collection, Iterable
 
 from voice_agent_restaurant.managers.models.menu_models import FREE_FROM_DIET_LABELS, Allergen, DietLabel, Dish, DishRecord
 
@@ -24,11 +24,11 @@ class DietaryLabelRules:
         )
 
     @classmethod
-    def _derive_lifestyle_labels(cls, recipe_diet_labels: Sequence[DietLabel]) -> list[DietLabel]:
+    def _derive_lifestyle_labels(cls, recipe_diet_labels: Iterable[DietLabel]) -> list[DietLabel]:
         return [diet_label for diet_label in recipe_diet_labels if diet_label not in FREE_FROM_DIET_LABELS]
 
     @staticmethod
-    def _derive_free_from_labels(contains_gluten: bool, allergens: Sequence[Allergen]) -> list[DietLabel]:  # noqa: FBT001 - a plain fact, not a mode switch
+    def _derive_free_from_labels(contains_gluten: bool, allergens: Collection[Allergen]) -> list[DietLabel]:  # noqa: FBT001 - a plain fact, not a mode switch
         free_from_labels: list[DietLabel] = []
         if not contains_gluten and Allergen.WHEAT not in allergens:
             free_from_labels.append(DietLabel.GLUTEN_FREE)

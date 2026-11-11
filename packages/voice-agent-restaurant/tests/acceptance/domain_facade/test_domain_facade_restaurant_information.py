@@ -50,7 +50,6 @@ AFTER_THE_FIRST_CLOSURE_UTC: Final[datetime] = datetime(2026, 11, 30, 21, 0, tzi
 
 @pytest.fixture
 def older_store_database_path(restaurant_database_path: Path) -> Path:
-    # A store an older version of the app created and seeded: it carries an earlier store version.
     with closing(sqlite3.connect(restaurant_database_path)) as connection:
         # SQLite PRAGMA statements take no bound parameters, so the version is interpolated; it is a test constant, never input.
         connection.execute(f"PRAGMA user_version = {OLDER_STORE_VERSION}")

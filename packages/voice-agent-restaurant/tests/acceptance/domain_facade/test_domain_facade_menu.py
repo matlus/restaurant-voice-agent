@@ -294,6 +294,13 @@ class TestDishLookup:
         self, restaurant_database_path: Path
     ) -> None:
         pinned_dish_id: str = "dry-aged-ribeye"
+        seeded_dishes: list[SeededDish] = read_seeded_dishes()
+        full_name_words: list[str] = split_dish_name_into_words(retrieve_pinned_dish(seeded_dishes, pinned_dish_id).name)
+        named_dish_ids: list[str] = [seeded_dish.dish_id for seeded_dish in find_seeded_dishes_named_by(seeded_dishes, full_name_words)]
+        assert named_dish_ids == [pinned_dish_id], (
+            f"This full-name lookup needs {full_name_words!r} to name only '{pinned_dish_id}', but the seeded menu names {named_dish_ids!r}; "
+            "the seeded data no longer supports the scenario"
+        )
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
             pinned_dish: Dish = retrieve_pinned_dish((await domain_facade.search_menu(create_menu_search_request())).dishes, pinned_dish_id)
