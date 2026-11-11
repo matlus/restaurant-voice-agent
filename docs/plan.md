@@ -26,19 +26,25 @@ has one microphone button and no transcript. You press it, talk, and hear the ag
 Browser (mic button, AudioWorklet)
    |  WebSocket: 16-bit PCM audio up, audio chunks and control events down
 FastAPI host (apps/voice-agent-web)
-   |  RealtimeProvider interface: connect, send audio, receive events, send tool result, close
-   +-- OpenAI Realtime adapter (24 kHz audio in and out)
-   +-- Gemini Live adapter (16 kHz in, 24 kHz out)
-   |  tool calls
+   |  calls converse() once per call and relays both directions
+Conversation DomainFacade (packages/voice-agent-conversation)
+   |  realtime voice gateway: open session, send audio, receive events, send tool result, close
+   +-- OpenAI Realtime gateway (24 kHz audio in and out)        built
+   +-- Gemini Live gateway (16 kHz in, 24 kHz out)              planned
+   |  agent toolbox: tool calls
 Restaurant DomainFacade (packages/voice-agent-restaurant)
    |
 SQLite
 ```
 
+The first version of this plan put the provider layer inside the FastAPI host. It was built as its own package,
+`voice-agent-conversation`, so the host stays thin and a second host (Vapi) can reuse it.
+
 Each tool is defined once and translated into each provider's tool format. When the guest starts speaking over the
 agent, the provider reports an interruption and the browser stops playback at once (barge-in). The system prompt
 includes the restaurant's local date and time, so phrases like "this Friday" resolve correctly. The agent answers
-allergy questions only from the data, and always mentions the shared kitchen.
+allergy questions only from the data, and always mentions the shared kitchen. The shared-kitchen part is not built
+yet: the note is in the seed data (`house_notes`), but no tool or instruction gives it to the agent.
 
 For Vapi, the same facade operations are exposed as HTTP endpoints, and Vapi calls them as tool webhooks.
 
@@ -48,7 +54,7 @@ For Vapi, the same facade operations are exposed as HTTP endpoints, and Vapi cal
 | --- | --- |
 | Scaffold the repo and adopt PWI | Done |
 | Seed data: restaurant, hours, closures, tables, menu, existing bookings | Done |
-| Restaurant domain with acceptance tests (46 tests), PWI review findings fixed | Done |
+| Restaurant domain with acceptance tests, PWI review findings fixed | Done |
 | OpenAI Realtime adapter and browser audio, end to end (conversation package, web host, microphone page) | Done |
 | Connect the tools: menu questions and bookings by voice | Done |
 | Voice catalog (four OpenAI voices) | Done |

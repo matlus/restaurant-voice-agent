@@ -18,4 +18,7 @@ Open http://127.0.0.1:8000, choose a voice and press the button. The browser ask
 - `GET /voices` returns `{"voices": [{"voice_key", "presented_gender", "description"}]}`.
 - `WS /conversation?voice=<voice_key>`: the browser sends binary frames of mono 16-bit PCM at the guest sample rate.
   The server sends binary frames of the agent's PCM and JSON text frames: `conversation_started` (with both sample
-  rates), `guest_started_speaking` (stop playback at once), `agent_turn_finished`, and `error` before closing.
+  rates and the voice), `guest_started_speaking` (stop playback at once), `agent_turn_finished`, and `error`
+  (`title` and `detail`) before closing. Text frames from the browser are ignored.
+- Close codes: `1000` when the call ends normally, `1008` when the request is refused (for example an unknown voice),
+  `1013` when the voice service is temporarily unavailable, and `1011` for any other failure.

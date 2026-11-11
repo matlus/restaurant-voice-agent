@@ -52,8 +52,11 @@ Four voices are available, picked on the page before a call: Marin and Coral (fe
 
 ## Try it: test scenarios
 
-The seed data sets up situations worth calling about. Seed bookings land on the next occurrence of their weekday after
-the store is created (today counts), so the scenarios stay in the future.
+The seed data sets up situations worth calling about. Seed bookings land on the next occurrence of their weekday,
+counted from the day the store is created (that day included). The scenarios are therefore in the future for about a
+week. A booking that lands on the creation day can already have started, and after a week the bookings are in the
+past, so delete the store to seed it again (see below). The holiday closures are fixed dates from late November 2026
+to January 1, 2027.
 
 | Scenario | What to try |
 | --- | --- |
@@ -191,11 +194,13 @@ uv run --all-packages --all-groups pytest -q
 
 ### Tests
 
-There are 122 tests, and they never call OpenAI. Most are acceptance tests: they drive each package through its
+There are 130 tests, and they never call OpenAI. Most are acceptance tests: they drive each package through its
 public `DomainFacade` the way a real caller would, against a real SQLite store seeded from the bundled data. For voice,
 the real OpenAI gateway connects over a real WebSocket to a scripted Realtime service that the tests run on the local
 machine. That service plays back the events a real session would send, including tool calls, and records what the
 gateway sent in reply.
+
+The browser page (`app.js` and the audio worklets) has no automated tests.
 
 ### How the code is organized
 
