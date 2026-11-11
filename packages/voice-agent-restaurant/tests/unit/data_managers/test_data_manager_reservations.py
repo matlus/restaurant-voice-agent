@@ -14,6 +14,7 @@ from acceptance_support.service_locator_testing import WEDNESDAY_AFTERNOON_UTC, 
 from voice_agent_restaurant import (
     DomainFacade,
     ExceptionAction,
+    LogEventReservation,
     Reservation,
     ReservationCancellationRequest,
     ReservationChangedConcurrentlyException,
@@ -64,6 +65,7 @@ class TestDataManagerReservationsReschedule:
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,
             reason="The reservation was changed by another request",
             severity=Severity.ERROR,
+            log_event=LogEventReservation.RESERVATION_SCHEDULING,
         )
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
@@ -107,6 +109,7 @@ class TestDataManagerReservationsReschedule:
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,
             reason="The reservation was not found",
             severity=Severity.ERROR,
+            log_event=LogEventReservation.RESERVATION_LOOKUP,
         )
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:

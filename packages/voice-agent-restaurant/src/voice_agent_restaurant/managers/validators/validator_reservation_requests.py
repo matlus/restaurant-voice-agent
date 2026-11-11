@@ -37,6 +37,7 @@ class ValidatorReservationRequests:
 
     MAXIMUM_GUEST_NAME_LENGTH: Final[int] = 100
     MAXIMUM_NOTES_LENGTH: Final[int] = 300
+    PROBLEM_COUNT_CONTEXT_NAME: Final[str] = "Reservation.ProblemCount"
 
     @classmethod
     def validate_availability_request(cls, availability_request: AvailabilityRequest) -> RequestedSeating:
@@ -301,10 +302,10 @@ class ValidatorReservationRequests:
         provided_confirmation_code: str | None = ReservationValueParsing.as_provided(confirmation_code)
         return None if provided_confirmation_code is None else ReservationValueParsing.normalize_confirmation_code(provided_confirmation_code)
 
-    @staticmethod
-    def _create_validation_exception(validation_problems: list[str]) -> ReservationRequestValidationException:
-        return ReservationRequestValidationException(validation_problems, {"Reservation.ProblemCount": len(validation_problems)})
+    @classmethod
+    def _create_validation_exception(cls, validation_problems: list[str]) -> ReservationRequestValidationException:
+        return ReservationRequestValidationException(validation_problems, {cls.PROBLEM_COUNT_CONTEXT_NAME: len(validation_problems)})
 
-    @staticmethod
-    def _create_policy_refusal_exception(policy_problems: list[str]) -> ReservationPolicyRefusedException:
-        return ReservationPolicyRefusedException(policy_problems, {"Reservation.ProblemCount": len(policy_problems)})
+    @classmethod
+    def _create_policy_refusal_exception(cls, policy_problems: list[str]) -> ReservationPolicyRefusedException:
+        return ReservationPolicyRefusedException(policy_problems, {cls.PROBLEM_COUNT_CONTEXT_NAME: len(policy_problems)})

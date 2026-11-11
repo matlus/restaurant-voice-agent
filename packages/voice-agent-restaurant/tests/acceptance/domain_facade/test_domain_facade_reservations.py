@@ -24,6 +24,7 @@ from voice_agent_restaurant import (
     Closure,
     DomainFacade,
     ExceptionAction,
+    LogEventReservation,
     NoTableAvailableException,
     OpeningHours,
     OpenWeekday,
@@ -51,7 +52,6 @@ CLOSED_MONDAY: Final[str] = "2026-11-09"
 # The seed books every table all evening on Tuesday, and leaves Wednesday, today, with only two times for up to four.
 FULLY_BOOKED_TUESDAY: Final[str] = "2026-11-10"
 NEARLY_FULL_WEDNESDAY: Final[str] = "2026-11-04"
-NEARLY_FULL_WEDNESDAY_OPEN_TIMES: Final[list[time]] = [time(18, 30), time(20, 30)]
 SEEDED_PRIYA_PHONE: Final[str] = "5550101001"
 SEEDED_SAM_PHONE: Final[str] = "5550101010"
 FULLWIDTH_DIGIT_ZERO_CODE_POINT: Final[int] = 0xFF10
@@ -108,6 +108,7 @@ def create_validation_refusal_metadata() -> ExpectedExceptionMetadata:
         exception_action=ExceptionAction.USER_ACTION_REQUIRED,
         reason=RESERVATION_VALIDATION_REFUSAL_REASON,
         severity=Severity.ERROR,
+        log_event=LogEventReservation.RESERVATION_REQUEST_VALIDATION_FAILED,
     )
 
 
@@ -117,6 +118,7 @@ def create_policy_refusal_metadata() -> ExpectedExceptionMetadata:
         exception_action=ExceptionAction.USER_ACTION_REQUIRED,
         reason=RESERVATION_POLICY_REFUSAL_REASON,
         severity=Severity.ERROR,
+        log_event=LogEventReservation.RESERVATION_POLICY_REFUSED,
     )
 
 
@@ -287,15 +289,23 @@ class TestCheckAvailability:
         assert actual_availability_result == expected_availability_result
 
     async def test_CheckAvailability_WhenOnlyTwoTimesAreLeft_ThenThoseTwoAreOffered(self, restaurant_database_path: Path) -> None:
-        expected_availability_result: AvailabilityResult = AvailabilityResult(
-            reservation_date=date.fromisoformat(NEARLY_FULL_WEDNESDAY),
-            requested_time=time(19, 0),
-            party_size=2,
-            is_available=False,
-            alternative_times=NEARLY_FULL_WEDNESDAY_OPEN_TIMES,
-        )
+        nearly_full_wednesday: date = date.fromisoformat(NEARLY_FULL_WEDNESDAY)
+        requested_time: time = time(19, 0)
+        party_size: int = 2
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
+            open_times: list[time] = await derive_offered_open_times(domain_facade, nearly_full_wednesday, requested_time, party_size)
+            assert len(open_times) == 2, (
+                f"The nearly full Wednesday needs exactly two open times for a party of {party_size}; the seeded data no longer supports "
+                f"this scenario: {open_times!r}"
+            )
+            expected_availability_result: AvailabilityResult = AvailabilityResult(
+                reservation_date=nearly_full_wednesday,
+                requested_time=requested_time,
+                party_size=party_size,
+                is_available=False,
+                alternative_times=open_times,
+            )
             actual_availability_result: AvailabilityResult = await domain_facade.check_availability(
                 AvailabilityRequest(reservation_date=NEARLY_FULL_WEDNESDAY, reservation_time="19:00", party_size=2)
             )
@@ -311,6 +321,7 @@ class TestCheckAvailability:
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,
             reason="The restaurant is closed on the requested date",
             severity=Severity.ERROR,
+            log_event=LogEventReservation.RESERVATION_SCHEDULING,
         )
         expected_contextual_data_by_name: dict[str, str] = {RESERVATION_DATE_CONTEXT_NAME: CLOSED_MONDAY}
 
@@ -331,6 +342,7 @@ class TestCheckAvailability:
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,
             reason="The restaurant is closed on the requested date",
             severity=Severity.ERROR,
+            log_event=LogEventReservation.RESERVATION_SCHEDULING,
         )
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
@@ -375,6 +387,7 @@ class TestCheckAvailability:
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,
             reason="The requested time is outside seating hours",
             severity=Severity.ERROR,
+            log_event=LogEventReservation.RESERVATION_SCHEDULING,
         )
         expected_contextual_data_by_name: dict[str, str] = {RESERVATION_DATE_CONTEXT_NAME: BUSY_FRIDAY}
 
@@ -437,9 +450,18 @@ class TestCreateReservation:
     ) -> None:
         # Today is NEARLY_FULL_WEDNESDAY, mid-afternoon, so read as morning, "6:30" would already have passed.
         generated_guest: GeneratedGuest = create_generated_guest()
-        expected_booked_seating: tuple[date, time] = (date.fromisoformat(NEARLY_FULL_WEDNESDAY), NEARLY_FULL_WEDNESDAY_OPEN_TIMES[0])
+        nearly_full_wednesday: date = date.fromisoformat(NEARLY_FULL_WEDNESDAY)
+        evening_seating: time = time(18, 30)
+        expected_booked_seating: tuple[date, time] = (nearly_full_wednesday, evening_seating)
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
+            evening_availability_result: AvailabilityResult = await domain_facade.check_availability(
+                AvailabilityRequest(reservation_date=NEARLY_FULL_WEDNESDAY, reservation_time=f"{evening_seating:%H:%M}", party_size=2)
+            )
+            assert evening_availability_result.is_available, (
+                f"Reading '6:30' as the evening needs a free table at {evening_seating:%H:%M} on {NEARLY_FULL_WEDNESDAY}; "
+                f"the seeded data no longer supports this scenario: {evening_availability_result!r}"
+            )
             actual_reservation: Reservation = await domain_facade.create_reservation(
                 create_reservation_request(generated_guest, reservation_date=NEARLY_FULL_WEDNESDAY, reservation_time="6:30")
             )
@@ -491,6 +513,7 @@ class TestCreateReservation:
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,
             reason="No table is available at the requested time",
             severity=Severity.ERROR,
+            log_event=LogEventReservation.RESERVATION_SCHEDULING,
         )
         expected_contextual_data_by_name: dict[str, str | int] = {
             RESERVATION_DATE_CONTEXT_NAME: BUSY_FRIDAY,
@@ -499,6 +522,7 @@ class TestCreateReservation:
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
             expected_alternative_times: list[time] = await derive_offered_open_times(domain_facade, busy_friday, requested_time, party_size)
+            expected_message_phrases: list[str] = [f"{expected_alternative_time:%H:%M}" for expected_alternative_time in expected_alternative_times]
             with pytest.raises(NoTableAvailableException) as raised:
                 await domain_facade.create_reservation(
                     create_reservation_request(
@@ -511,6 +535,7 @@ class TestCreateReservation:
 
         AsserterException.assert_no_table_refusal_is_as_expected(
             expected_alternative_times=expected_alternative_times,
+            expected_message_phrases=expected_message_phrases,
             expected_exception_metadata=expected_exception_metadata,
             expected_contextual_data_by_name=expected_contextual_data_by_name,
             actual_no_table_available_exception=raised.value,
@@ -560,7 +585,7 @@ class TestCreateReservation:
             expected_problem_phrases=expected_problem_phrases,
             expected_exception_metadata=expected_exception_metadata,
             expected_contextual_data_by_name=expected_contextual_data_by_name,
-            actual_policy_refused_exception=raised.value,
+            actual_reservation_policy_refused_exception=raised.value,
         )
 
     async def test_CreateReservation_WhenThePartyIsLargerThanCanBeBookedByPhone_ThenTheRefusalCarriesThePrivateDiningGuidance(
@@ -578,7 +603,7 @@ class TestCreateReservation:
             expected_problem_phrases=expected_problem_phrases,
             expected_exception_metadata=expected_exception_metadata,
             expected_contextual_data_by_name=expected_contextual_data_by_name,
-            actual_policy_refused_exception=raised.value,
+            actual_reservation_policy_refused_exception=raised.value,
         )
 
     @pytest.mark.parametrize("booking_window_edge", ["already passed", "beyond the booking window"])
@@ -606,7 +631,7 @@ class TestCreateReservation:
             expected_problem_phrases=expected_problem_phrases,
             expected_exception_metadata=expected_exception_metadata,
             expected_contextual_data_by_name=expected_contextual_data_by_name,
-            actual_policy_refused_exception=raised.value,
+            actual_reservation_policy_refused_exception=raised.value,
         )
 
 
@@ -708,6 +733,7 @@ class TestChangeReservation:
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,
             reason="No table is available at the requested time",
             severity=Severity.ERROR,
+            log_event=LogEventReservation.RESERVATION_SCHEDULING,
         )
         expected_contextual_data_by_name: dict[str, str | int] = {
             RESERVATION_DATE_CONTEXT_NAME: BUSY_FRIDAY,
@@ -715,7 +741,7 @@ class TestChangeReservation:
         }
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
-            current_reservation: Reservation = await read_seeded_booking(domain_facade, SEEDED_SAM_PHONE)
+            current_reservation: Reservation = await read_unstarted_seeded_booking(domain_facade, SEEDED_SAM_PHONE, "The no-fitting-table change")
             availability_result_at_requested_time: AvailabilityResult = await domain_facade.check_availability(
                 AvailabilityRequest(reservation_date=BUSY_FRIDAY, reservation_time=f"{requested_time:%H:%M}", party_size=party_size)
             )
@@ -727,6 +753,7 @@ class TestChangeReservation:
             )
             expected_reservations: list[Reservation] = [current_reservation]
             expected_alternative_times: list[time] = await derive_offered_open_times(domain_facade, busy_friday, requested_time, party_size)
+            expected_message_phrases: list[str] = [f"{expected_alternative_time:%H:%M}" for expected_alternative_time in expected_alternative_times]
             with pytest.raises(NoTableAvailableException) as raised:
                 await domain_facade.change_reservation(
                     create_change_request(
@@ -743,6 +770,7 @@ class TestChangeReservation:
 
         AsserterException.assert_no_table_refusal_is_as_expected(
             expected_alternative_times=expected_alternative_times,
+            expected_message_phrases=expected_message_phrases,
             expected_exception_metadata=expected_exception_metadata,
             expected_contextual_data_by_name=expected_contextual_data_by_name,
             actual_no_table_available_exception=raised.value,
@@ -756,6 +784,7 @@ class TestChangeReservation:
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,
             reason="The reservation was not found",
             severity=Severity.ERROR,
+            log_event=LogEventReservation.RESERVATION_LOOKUP,
         )
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
@@ -801,6 +830,7 @@ class TestChangeReservation:
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,
             reason="The reservation has already started",
             severity=Severity.ERROR,
+            log_event=LogEventReservation.RESERVATION_SCHEDULING,
         )
 
         async with create_domain_facade(restaurant_database_path, FRIDAY_EVENING_UTC) as domain_facade:
@@ -884,6 +914,7 @@ class TestCancelReservation:
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,
             reason="The reservation was not found",
             severity=Severity.ERROR,
+            log_event=LogEventReservation.RESERVATION_LOOKUP,
         )
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:

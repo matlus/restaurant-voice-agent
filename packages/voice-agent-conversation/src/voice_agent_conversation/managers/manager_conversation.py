@@ -5,7 +5,7 @@ from datetime import datetime
 from types import TracebackType
 from typing import Self
 
-from voice_agent_conversation.managers.agent_tools.agent_toolbox import AgentToolbox
+from voice_agent_conversation.managers.agent_tools.agent_toolbox import AgentToolbox, AgentToolCallAnswer
 from voice_agent_conversation.managers.data_managers.data_manager_voice_catalog import DataManagerVoiceCatalog
 from voice_agent_conversation.managers.exceptions.conversation_exceptions import LogEventConversation, VoiceNotOfferedException
 from voice_agent_conversation.managers.gateways.realtime_voice_gateway_base import RealtimeVoiceGatewayBase, RealtimeVoiceSessionBase
@@ -31,6 +31,7 @@ class ManagerConversation:
 
     def __init__(self, service_locator: ServiceLocatorBase) -> None:
         self._restaurant_domain_facade: RestaurantDomainFacade = service_locator.create_restaurant_domain_facade()
+        self._agent_toolbox: AgentToolbox = AgentToolbox(self._restaurant_domain_facade)
         self._realtime_voice_gateway: RealtimeVoiceGatewayBase = RealtimeVoiceGatewayOpenAI(
             service_locator.get_configuration_provider().get_openai_realtime_settings()
         )
@@ -52,19 +53,19 @@ class ManagerConversation:
     async def converse(self, conversation_request: ConversationRequest, guest_audio: AsyncIterable[bytes]) -> AsyncGenerator[ConversationEvent]:
         voice_key: str = ValidatorConversationRequests.validate_conversation_request(conversation_request)
         voice_option: VoiceOption = await self._retrieve_voice_option(voice_key)
-        # One toolbox per conversation: the corrections it allows for wrong tool calls are counted per call.
-        agent_toolbox: AgentToolbox = AgentToolbox(self._restaurant_domain_facade)
         restaurant_profile: RestaurantProfile = await self._restaurant_domain_facade.get_restaurant_profile()
         voice_session_settings: VoiceSessionSettings = VoiceSessionSettings(
             provider_voice_id=voice_option.provider_voice_id,
             agent_instructions=await self._compose_agent_instructions(restaurant_profile),
-            agent_tool_definitions=agent_toolbox.get_tool_definitions(),
+            agent_tool_definitions=self._agent_toolbox.get_tool_definitions(),
         )
         async with await self._realtime_voice_gateway.open_session(voice_session_settings) as realtime_voice_session:
             yield ConversationStarted(audio_format=realtime_voice_session.audio_format, voice_option=voice_option)
             await realtime_voice_session.request_greeting(AgentInstructions.compose_greeting(restaurant_profile.name))
             # Closing the relay here, in this task, settles guest audio forwarding before the session closes.
-            async with contextlib.aclosing(self._relay_conversation(realtime_voice_session, guest_audio, agent_toolbox)) as agent_session_events:
+            async with contextlib.aclosing(
+                self._relay_conversation(realtime_voice_session, guest_audio, self._agent_toolbox)
+            ) as agent_session_events:
                 agent_session_event: AgentSessionEvent
                 async for agent_session_event in agent_session_events:
                     yield agent_session_event
@@ -94,12 +95,15 @@ class ManagerConversation:
         guest_audio_forwarding: asyncio.Task[None] = asyncio.create_task(
             ManagerConversation._forward_guest_audio(guest_audio, realtime_voice_session, guest_audio_ended)
         )
+        # Wrong tool calls are counted per conversation; the toolbox ends the call when too many come in a row.
+        consecutive_call_repair_count: int = 0
         try:
             session_event: VoiceSessionEvent
             async for session_event in realtime_voice_session.receive_events():
                 if isinstance(session_event, AgentToolCallRequested):
-                    tool_output: str = await agent_toolbox.run_tool_call(session_event)
-                    await realtime_voice_session.send_tool_result(session_event.call_id, tool_output)
+                    agent_tool_call_answer: AgentToolCallAnswer = await agent_toolbox.run_tool_call(session_event, consecutive_call_repair_count)
+                    consecutive_call_repair_count = agent_tool_call_answer.consecutive_call_repair_count
+                    await realtime_voice_session.send_tool_result(session_event.call_id, agent_tool_call_answer.tool_output_json)
                 else:
                     yield session_event
         finally:

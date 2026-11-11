@@ -1,6 +1,7 @@
 """Real-time voice conversations with the restaurant's agent. Import everything from this package's root."""
 
 from voice_agent_conversation.domain_facade import DomainFacade
+from voice_agent_conversation.managers.exceptions.agent_tool_exceptions import AgentToolCallRepairsExhaustedException, LogEventAgentTool
 from voice_agent_conversation.managers.exceptions.configuration_exceptions import ConfigurationSettingException, LogEventConfiguration
 from voice_agent_conversation.managers.exceptions.conversation_exceptions import (
     ConversationRequestValidationException,
@@ -37,6 +38,7 @@ from voice_agent_conversation.managers.models.conversation_models import (
 
 __all__ = [
     "AgentSpeechChunk",
+    "AgentToolCallRepairsExhaustedException",
     "AgentTurnFinished",
     "ConfigurationSettingException",
     "ConversationAudioFormat",
@@ -47,6 +49,7 @@ __all__ = [
     "DomainFacade",
     "ExceptionAction",
     "GuestStartedSpeaking",
+    "LogEventAgentTool",
     "LogEventBase",
     "LogEventConfiguration",
     "LogEventConversation",
