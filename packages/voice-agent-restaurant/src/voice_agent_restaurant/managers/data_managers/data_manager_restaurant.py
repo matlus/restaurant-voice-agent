@@ -23,6 +23,7 @@ from voice_agent_restaurant.managers.models.restaurant_models import (
     Weekday,
     WeekdayHours,
 )
+from voice_agent_restaurant.managers.models.store_models import StoreSeeding
 
 
 @dataclass(frozen=True)
@@ -48,8 +49,8 @@ class DataManagerRestaurant:
     _WEEKDAY_CONTEXT_KEY: Final[str] = "Restaurant.Weekday"
     _RESTAURANT_ROW_ID: Final[int] = 1
 
-    def __init__(self, database_path: Path, seeds_demo_bookings: bool, clock: ClockBase) -> None:  # noqa: FBT001 - a setting's value, not a mode switch
-        restaurant_store_connector: RestaurantStoreConnector = RestaurantStoreConnector(database_path, seeds_demo_bookings, clock)
+    def __init__(self, database_path: Path, store_seeding: StoreSeeding, clock: ClockBase) -> None:
+        restaurant_store_connector: RestaurantStoreConnector = RestaurantStoreConnector(database_path, store_seeding, clock)
         self._restaurant_reference_data: _RestaurantReferenceData = self._read_reference_data(restaurant_store_connector)
 
     async def get_restaurant_profile(self) -> RestaurantProfile:

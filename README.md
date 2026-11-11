@@ -57,7 +57,7 @@ Four voices are available, picked on the page before a call: Marin and Coral (fe
 ## Try it: test scenarios
 
 The seed data sets up situations worth calling about. The demo bookings are seeded only when
-`VOICE_AGENT_RESTAURANT_SEED_DEMO_BOOKINGS` is `true`, as it is in `.env.example` and the hosted demo. They land on the
+`VOICE_AGENT_RESTAURANT_STORE_SEEDING` is `restaurant_and_demo_bookings`, as it is in `.env.example` and the hosted demo. They land on the
 next occurrence of their weekday after the store is created (today counts), so the scenarios stay in the future.
 
 | Scenario | What to try |
@@ -183,7 +183,7 @@ Open http://127.0.0.1:8000, choose a voice and press the call button. The browse
 | --- | --- | --- |
 | `OPENAI_API_KEY` | Yes | Your OpenAI API key. |
 | `VOICE_AGENT_RESTAURANT_DATABASE_PATH` | Yes | Where the SQLite store lives, such as `data/restaurant.sqlite3`. Created and seeded if missing. |
-| `VOICE_AGENT_RESTAURANT_SEED_DEMO_BOOKINGS` | No | `true` seeds a new store with the demo bookings the test scenarios use. Defaults to `false`, so a real deployment starts with no bookings. |
+| `VOICE_AGENT_RESTAURANT_STORE_SEEDING` | No | `restaurant_and_demo_bookings` seeds a new store with the demo bookings the test scenarios use. Defaults to `restaurant_only`, so a real deployment starts with no bookings. |
 | `VOICE_AGENT_OPENAI_REALTIME_MODEL` | No | The speech model. Defaults to `gpt-realtime-2.1`. `gpt-realtime-2.1-mini` costs less. |
 | `VOICE_AGENT_OPENAI_REALTIME_WEBSOCKET_BASE_URL` | No | Another Realtime address. Tests use this to point at a scripted service. |
 | `VOICE_AGENT_WEB_HOST` / `VOICE_AGENT_WEB_PORT` | No | Where the web app listens. Defaults to `127.0.0.1` and `8000`. |

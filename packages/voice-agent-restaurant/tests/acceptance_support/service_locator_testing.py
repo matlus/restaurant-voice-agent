@@ -6,7 +6,7 @@ from typing import Final, override
 from voice_agent_restaurant import ClockBase, ConfigurationProvider, DomainFacade, ServiceLocatorBase
 
 DATABASE_PATH_VARIABLE_NAME: Final[str] = "VOICE_AGENT_RESTAURANT_DATABASE_PATH"
-SEED_DEMO_BOOKINGS_VARIABLE_NAME: Final[str] = "VOICE_AGENT_RESTAURANT_SEED_DEMO_BOOKINGS"
+STORE_SEEDING_VARIABLE_NAME: Final[str] = "VOICE_AGENT_RESTAURANT_STORE_SEEDING"
 
 # Wednesday 2026-11-04 at 15:00 in Riverton (America/Chicago, UTC-6 after daylight saving ends).
 # The seed places its bookings on the next Wednesday (today), Friday, Saturday, Sunday and Tuesday: 2026-11-04, 06, 07,
@@ -47,10 +47,15 @@ def create_domain_facade(database_path: Path, fixed_now_utc: datetime = WEDNESDA
     # The single place tests create the DomainFacade. Each test passes its own temporary database file, which the
     # facade creates and seeds with the demo bookings, so every test starts from the same restaurant and bookings.
     return DomainFacade(
-        ServiceLocatorTesting({DATABASE_PATH_VARIABLE_NAME: str(database_path), SEED_DEMO_BOOKINGS_VARIABLE_NAME: "true"}, fixed_now_utc)
+        ServiceLocatorTesting(
+            {DATABASE_PATH_VARIABLE_NAME: str(database_path), STORE_SEEDING_VARIABLE_NAME: "restaurant_and_demo_bookings"}, fixed_now_utc
+        )
     )
 
 
 def create_domain_facade_without_demo_bookings(database_path: Path, fixed_now_utc: datetime = WEDNESDAY_AFTERNOON_UTC) -> DomainFacade:
-    # As a real deployment starts: the restaurant, its hours, tables and menu, and no bookings.
-    return DomainFacade(ServiceLocatorTesting({DATABASE_PATH_VARIABLE_NAME: str(database_path)}, fixed_now_utc))
+    # As a real deployment starts: the restaurant, its hours, tables and menu, and no bookings. The seeding is stated, not
+    # left to the default, so a value in the process environment cannot change what the store holds.
+    return DomainFacade(
+        ServiceLocatorTesting({DATABASE_PATH_VARIABLE_NAME: str(database_path), STORE_SEEDING_VARIABLE_NAME: "restaurant_only"}, fixed_now_utc)
+    )

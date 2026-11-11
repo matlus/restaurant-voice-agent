@@ -16,7 +16,7 @@ has one microphone button and no transcript. You press it, talk, and hear the ag
 | Diet labels | Vegan, vegetarian, pescatarian, keto, carnivore and paleo from the recipe. Gluten-free, dairy-free and nut-free derived from allergens. |
 | Allergens | The nine major US allergens. |
 | Reservations | The full lifecycle: check, book, look up, change and cancel. Changing or cancelling needs only the confirmation code. A caller without it proves the booking is theirs with the phone number, the name and the date it is under, and that proof is checked again on every change or cancellation. A lookup never returns the confirmation code. Caller ID or a texted one-time code would be stronger, and need a telephony or SMS provider. |
-| Storage | A local, disposable SQLite file in write-ahead-logging mode, seeded from JSON on first use: the restaurant always, the demo bookings only when `VOICE_AGENT_RESTAURANT_SEED_DEMO_BOOKINGS` is `true` (the hosted demo and `.env.example`). A store from another version is refused, not migrated. Reference data is read once at startup. Real use needs a server database for bookings. |
+| Storage | A local, disposable SQLite file in write-ahead-logging mode, seeded from JSON on first use: the restaurant always, the demo bookings only when `VOICE_AGENT_RESTAURANT_STORE_SEEDING` is `restaurant_and_demo_bookings` (the hosted demo and `.env.example`). A store from another version is refused, not migrated. Reference data is read once at startup. Real use needs a server database for bookings. |
 | Secrets | API keys in a gitignored `.env`. `.env.example` is committed. |
 | Practice | PWI (see `AGENTS.md`). |
 

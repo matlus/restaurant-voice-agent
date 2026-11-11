@@ -21,6 +21,7 @@ from acceptance_support.asserters.asserter_reservation import AsserterReservatio
 from acceptance_support.bundled_seed import (
     SeededBookingGuest,
     SeededOpenWeekday,
+    SeededReservationPolicy,
     SeededRestaurant,
     SeededTable,
     read_seeded_booking_guest,
@@ -158,7 +159,6 @@ def create_search_request(phone_number: str, guest_name: str, reservation_date: 
 
 
 def create_booking_search_request(reservation: Reservation) -> ReservationSearchRequest:
-    """The search a guest makes to find this booking again: its own phone number, name and date."""
     return create_search_request(reservation.phone_number, reservation.guest_name, reservation.reservation_date)
 
 
@@ -648,6 +648,7 @@ class TestCreateReservation:
         self, restaurant_database_path: Path
     ) -> None:
         party_size: int = 8
+        requested_time: str = "19:00"
         racing_guests: list[GeneratedGuest] = [create_generated_guest(), create_generated_guest()]
         fitting_table_ids: list[str] = [seeded_table.table_id for seeded_table in read_seeded_tables() if seeded_table.seats >= party_size]
         assert len(fitting_table_ids) == 1, (
@@ -658,14 +659,15 @@ class TestCreateReservation:
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
             availability_result: AvailabilityResult = await domain_facade.check_availability(
-                AvailabilityRequest(reservation_date=QUIET_THURSDAY, reservation_time="19:00", party_size=party_size)
+                AvailabilityRequest(reservation_date=QUIET_THURSDAY, reservation_time=requested_time, party_size=party_size)
             )
             assert availability_result.is_available, (
-                f"The race needs the only table for {party_size} free at 19:00 on {QUIET_THURSDAY}; the seeded data no longer supports this scenario"
+                f"The race needs the only table for {party_size} free at {requested_time} on {QUIET_THURSDAY}; "
+                "the seeded data no longer supports this scenario"
             )
             racing_results: list[Reservation | BaseException] = await asyncio.gather(
                 *(
-                    domain_facade.create_reservation(create_reservation_request(racing_guest, party_size=party_size))
+                    domain_facade.create_reservation(create_reservation_request(racing_guest, reservation_time=requested_time, party_size=party_size))
                     for racing_guest in racing_guests
                 ),
                 return_exceptions=True,
@@ -707,14 +709,25 @@ class TestCreateReservation:
     async def test_CreateReservation_WhenTheSeatingBreaksSeveralBookingRules_ThenEveryRuleProblemIsReportedTogether(
         self, restaurant_database_path: Path
     ) -> None:
-        # The request is well formed, so it is judged against the booking policy, and every policy problem is reported at once.
-        expected_problem_phrases: list[str] = ["the nearest times are 19:00 and 19:15", "'party_size' must be at least 1"]
+        # The request is well formed, so it is judged against the booking policy, and every policy problem is reported at once:
+        # a time between two bookable slots, and a party smaller than the policy allows.
+        seeded_reservation_policy: SeededReservationPolicy = read_seeded_restaurant().reservation_policy
+        earlier_slot_time: time = time(19, 0)
+        later_slot_time: time = to_time(to_minutes(earlier_slot_time) + seeded_reservation_policy.slot_interval_minutes)
+        off_grid_time: time = to_time(to_minutes(earlier_slot_time) + seeded_reservation_policy.slot_interval_minutes // 2)
+        too_small_party_size: int = seeded_reservation_policy.minimum_party_size - 1
+        expected_problem_phrases: list[str] = [
+            f"the nearest times are {earlier_slot_time:%H:%M} and {later_slot_time:%H:%M}",
+            f"'party_size' must be at least {seeded_reservation_policy.minimum_party_size}",
+        ]
         expected_exception_metadata: ExpectedExceptionMetadata = create_policy_refusal_metadata()
         expected_contextual_data_by_name: dict[str, int] = {RESERVATION_PROBLEM_COUNT_CONTEXT_NAME: len(expected_problem_phrases)}
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
             with pytest.raises(ReservationPolicyRefusedException) as raised:
-                await domain_facade.create_reservation(create_reservation_request(create_generated_guest(), reservation_time="19:10", party_size=0))
+                await domain_facade.create_reservation(
+                    create_reservation_request(create_generated_guest(), reservation_time=f"{off_grid_time:%H:%M}", party_size=too_small_party_size)
+                )
 
         AsserterException.assert_policy_problems_are_as_expected(
             expected_problem_phrases=expected_problem_phrases,
@@ -726,13 +739,15 @@ class TestCreateReservation:
     async def test_CreateReservation_WhenThePartyIsLargerThanCanBeBookedByPhone_ThenTheRefusalCarriesThePrivateDiningGuidance(
         self, restaurant_database_path: Path
     ) -> None:
-        expected_problem_phrases: list[str] = ["private dining room"]
+        seeded_reservation_policy: SeededReservationPolicy = read_seeded_restaurant().reservation_policy
+        too_large_party_size: int = seeded_reservation_policy.maximum_party_size + 1
+        expected_problem_phrases: list[str] = [seeded_reservation_policy.large_party_guidance]
         expected_exception_metadata: ExpectedExceptionMetadata = create_policy_refusal_metadata()
         expected_contextual_data_by_name: dict[str, int] = {RESERVATION_PROBLEM_COUNT_CONTEXT_NAME: len(expected_problem_phrases)}
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
             with pytest.raises(ReservationPolicyRefusedException) as raised:
-                await domain_facade.create_reservation(create_reservation_request(create_generated_guest(), party_size=12))
+                await domain_facade.create_reservation(create_reservation_request(create_generated_guest(), party_size=too_large_party_size))
 
         AsserterException.assert_policy_problems_are_as_expected(
             expected_problem_phrases=expected_problem_phrases,

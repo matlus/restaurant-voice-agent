@@ -31,7 +31,7 @@ Store or configuration trouble raises a `VoiceAgentRestaurantTechnicalBaseExcept
 | Variable | Meaning |
 | --- | --- |
 | `VOICE_AGENT_RESTAURANT_DATABASE_PATH` | Path of the SQLite file. It is created and seeded on first use. |
-| `VOICE_AGENT_RESTAURANT_SEED_DEMO_BOOKINGS` | `true` also seeds the demo bookings; `false` (the default) seeds only the restaurant: profile, hours, closures, tables and menu. |
+| `VOICE_AGENT_RESTAURANT_STORE_SEEDING` | `restaurant_and_demo_bookings` also seeds the demo bookings; `restaurant_only` (the default) seeds only the restaurant: profile, hours, closures, tables and menu. |
 
 ## The store
 

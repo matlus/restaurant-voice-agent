@@ -27,7 +27,7 @@ class ManagerRestaurant:
         self._clock: ClockBase = service_locator.create_clock()
         restaurant_store_settings: RestaurantStoreSettings = service_locator.get_configuration_provider().get_restaurant_store_settings()
         self._data_manager_restaurant: DataManagerRestaurant = DataManagerRestaurant(
-            restaurant_store_settings.database_path, restaurant_store_settings.seeds_demo_bookings, self._clock
+            restaurant_store_settings.database_path, restaurant_store_settings.store_seeding, self._clock
         )
 
     async def get_restaurant_profile(self) -> RestaurantProfile:

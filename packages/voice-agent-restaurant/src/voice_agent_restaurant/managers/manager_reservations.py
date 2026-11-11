@@ -90,10 +90,10 @@ class ManagerReservations:
         self._clock: ClockBase = service_locator.create_clock()
         restaurant_store_settings: RestaurantStoreSettings = service_locator.get_configuration_provider().get_restaurant_store_settings()
         self._data_manager_restaurant: DataManagerRestaurant = DataManagerRestaurant(
-            restaurant_store_settings.database_path, restaurant_store_settings.seeds_demo_bookings, self._clock
+            restaurant_store_settings.database_path, restaurant_store_settings.store_seeding, self._clock
         )
         self._data_manager_reservations: DataManagerReservations = DataManagerReservations(
-            restaurant_store_settings.database_path, restaurant_store_settings.seeds_demo_bookings, self._clock
+            restaurant_store_settings.database_path, restaurant_store_settings.store_seeding, self._clock
         )
 
     async def check_availability(self, availability_request: AvailabilityRequest) -> AvailabilityResult:

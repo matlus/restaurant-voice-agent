@@ -20,6 +20,6 @@ ENV PATH="/app/.venv/bin:$PATH" \
     VOICE_AGENT_WEB_HOST=0.0.0.0 \
     VOICE_AGENT_WEB_PORT=8000 \
     VOICE_AGENT_RESTAURANT_DATABASE_PATH=/app/data/restaurant.sqlite3 \
-    VOICE_AGENT_RESTAURANT_SEED_DEMO_BOOKINGS=true
+    VOICE_AGENT_RESTAURANT_STORE_SEEDING=restaurant_and_demo_bookings
 EXPOSE 8000
 CMD ["voice_agent_web"]

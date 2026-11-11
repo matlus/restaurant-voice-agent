@@ -5,16 +5,16 @@ from typing import Final
 from voice_agent_restaurant.managers.configuration_providers.settings_models.restaurant_store_settings import RestaurantStoreSettings
 from voice_agent_restaurant.managers.configuration_providers.settings_providers.settings_source import SettingsSource
 from voice_agent_restaurant.managers.exceptions.configuration_exceptions import ConfigurationSettingException, LogEventConfiguration
+from voice_agent_restaurant.managers.models.store_models import StoreSeeding
 
 
 class SettingsProviderRestaurantStore:
     """Reads and validates the restaurant store settings eagerly, so a bad setting surfaces at startup."""
 
     DATABASE_PATH_VARIABLE_NAME: Final[str] = "VOICE_AGENT_RESTAURANT_DATABASE_PATH"
-    SEED_DEMO_BOOKINGS_VARIABLE_NAME: Final[str] = "VOICE_AGENT_RESTAURANT_SEED_DEMO_BOOKINGS"
-    # Off unless asked for: a real deployment must not start with strangers' bookings holding its tables.
-    SEEDS_DEMO_BOOKINGS_BY_DEFAULT: Final[bool] = False
-    BOOLEAN_BY_SETTING_TEXT: Final[dict[str, bool]] = {"true": True, "false": False}
+    STORE_SEEDING_VARIABLE_NAME: Final[str] = "VOICE_AGENT_RESTAURANT_STORE_SEEDING"
+    # No demo bookings unless asked for: a real deployment must not start with strangers' bookings holding its tables.
+    STORE_SEEDING_BY_DEFAULT: Final[StoreSeeding] = StoreSeeding.RESTAURANT_ONLY
     ENVIRONMENT_VARIABLE_NAME_CONTEXT_KEY: Final[str] = "Configuration.EnvironmentVariableName"
     NUL_CHARACTER: Final[str] = chr(0)
 
@@ -26,7 +26,7 @@ class SettingsProviderRestaurantStore:
         return self._restaurant_store_settings
 
     def _initialize_settings(self) -> RestaurantStoreSettings:
-        return RestaurantStoreSettings(database_path=self._read_database_path(), seeds_demo_bookings=self._read_seeds_demo_bookings())
+        return RestaurantStoreSettings(database_path=self._read_database_path(), store_seeding=self._read_store_seeding())
 
     def _read_database_path(self) -> Path:
         database_path_raw_value: str | None = self._settings_source.read_setting_value(self.DATABASE_PATH_VARIABLE_NAME)
@@ -53,18 +53,18 @@ class SettingsProviderRestaurantStore:
             )
         return Path(database_path_text)
 
-    def _read_seeds_demo_bookings(self) -> bool:
-        seed_demo_bookings_raw_value: str | None = self._settings_source.read_setting_value(self.SEED_DEMO_BOOKINGS_VARIABLE_NAME)
-        if not SettingsSource.is_setting_present(seed_demo_bookings_raw_value):
-            return self.SEEDS_DEMO_BOOKINGS_BY_DEFAULT
-        seeds_demo_bookings: bool | None = self.BOOLEAN_BY_SETTING_TEXT.get(seed_demo_bookings_raw_value.strip().casefold())
-        if seeds_demo_bookings is None:
+    def _read_store_seeding(self) -> StoreSeeding:
+        store_seeding_raw_value: str | None = self._settings_source.read_setting_value(self.STORE_SEEDING_VARIABLE_NAME)
+        if not SettingsSource.is_setting_present(store_seeding_raw_value):
+            return self.STORE_SEEDING_BY_DEFAULT
+        store_seeding_text: str = store_seeding_raw_value.strip().casefold()
+        if store_seeding_text not in StoreSeeding:
             raise ConfigurationSettingException(
                 message=(
-                    f"Configuration setting '{self.SEED_DEMO_BOOKINGS_VARIABLE_NAME}' must be 'true' or 'false' "
-                    f"but was '{seed_demo_bookings_raw_value.strip()}'."
+                    f"Configuration setting '{self.STORE_SEEDING_VARIABLE_NAME}' must be one of "
+                    f"{', '.join(f"'{store_seeding}'" for store_seeding in StoreSeeding)} but was '{store_seeding_raw_value.strip()}'."
                 ),
                 log_event=LogEventConfiguration.RESTAURANT_STORE_SETTINGS_RETRIEVAL,
-                contextual_data_by_name={self.ENVIRONMENT_VARIABLE_NAME_CONTEXT_KEY: self.SEED_DEMO_BOOKINGS_VARIABLE_NAME},
+                contextual_data_by_name={self.ENVIRONMENT_VARIABLE_NAME_CONTEXT_KEY: self.STORE_SEEDING_VARIABLE_NAME},
             )
-        return seeds_demo_bookings
+        return StoreSeeding(store_seeding_text)

@@ -38,8 +38,10 @@ class SeededClosure:
 class SeededReservationPolicy:
     seating_duration_minutes: int
     slot_interval_minutes: int
+    minimum_party_size: int
     maximum_party_size: int
     booking_window_days: int
+    large_party_guidance: str
 
 
 @dataclass(frozen=True)
@@ -99,8 +101,10 @@ def read_seeded_restaurant() -> SeededRestaurant:
         reservation_policy=SeededReservationPolicy(
             seating_duration_minutes=reservation_policy_object["seating_duration_minutes"],
             slot_interval_minutes=reservation_policy_object["slot_interval_minutes"],
+            minimum_party_size=reservation_policy_object["minimum_party_size"],
             maximum_party_size=reservation_policy_object["maximum_party_size"],
             booking_window_days=reservation_policy_object["booking_window_days"],
+            large_party_guidance=reservation_policy_object["large_party_guidance"],
         ),
     )
 

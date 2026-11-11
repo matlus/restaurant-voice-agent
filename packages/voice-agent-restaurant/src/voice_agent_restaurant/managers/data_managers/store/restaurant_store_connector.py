@@ -6,11 +6,12 @@ from typing import Final
 
 from voice_agent_restaurant.managers.clocks.clock_base import ClockBase
 from voice_agent_restaurant.managers.data_managers.store.initialization.restaurant_store_initializer import RestaurantStoreInitializer
+from voice_agent_restaurant.managers.models.store_models import StoreSeeding
 
 
 class RestaurantStoreConnector:
-    """Opens connections to the restaurant SQLite file. A connection to a new file creates and seeds the store first,
-    with the demo bookings only when the settings ask for them.
+    """Opens connections to the restaurant SQLite file. A connection to a new file creates the store first and seeds
+    it as the store seeding says.
 
     Connections are opened per operation and closed right after, in whichever worker thread runs the
     operation. Transactions are explicit (isolation_level=None), so each data manager decides where
@@ -19,15 +20,15 @@ class RestaurantStoreConnector:
 
     BUSY_TIMEOUT_SECONDS: Final[float] = 5.0
 
-    def __init__(self, database_path: Path, seeds_demo_bookings: bool, clock: ClockBase) -> None:  # noqa: FBT001 - a setting's value, not a mode switch
+    def __init__(self, database_path: Path, store_seeding: StoreSeeding, clock: ClockBase) -> None:
         self._database_path: Path = database_path
-        self._seeds_demo_bookings: bool = seeds_demo_bookings
+        self._store_seeding: StoreSeeding = store_seeding
         self._clock: ClockBase = clock
 
     @contextmanager
     def open_connection(self) -> Generator[sqlite3.Connection]:
         with closing(self._connect()) as connection:
-            RestaurantStoreInitializer.ensure_initialized(connection, self._clock.now_utc(), self._seeds_demo_bookings)
+            RestaurantStoreInitializer.ensure_initialized(connection, self._clock.now_utc(), self._store_seeding)
             yield connection
 
     def _connect(self) -> sqlite3.Connection:
