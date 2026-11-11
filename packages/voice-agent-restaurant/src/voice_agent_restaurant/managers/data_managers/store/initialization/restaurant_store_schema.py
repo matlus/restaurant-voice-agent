@@ -86,5 +86,6 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS ix_reservations_date ON reservations (reservation_date, status)",
+    "CREATE INDEX IF NOT EXISTS ix_reservations_table ON reservations (table_id)",
     "CREATE INDEX IF NOT EXISTS ix_reservations_phone ON reservations (phone_number, status)",
 )

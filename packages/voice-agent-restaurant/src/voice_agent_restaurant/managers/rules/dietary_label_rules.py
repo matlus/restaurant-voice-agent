@@ -1,14 +1,11 @@
 from collections.abc import Sequence
-from typing import Final
 
-from voice_agent_restaurant.managers.models.menu_models import Allergen, DietLabel, Dish, DishRecord
+from voice_agent_restaurant.managers.models.menu_models import FREE_FROM_DIET_LABELS, Allergen, DietLabel, Dish, DishRecord
 
 
 class DietaryLabelRules:
     """Composes the menu's view of a dish. The free-from labels are derived from allergen data only, so a dish's
     free-from labels can never disagree with the allergens it lists, whatever its recipe labels say."""
-
-    FREE_FROM_LABELS: Final[frozenset[DietLabel]] = frozenset({DietLabel.GLUTEN_FREE, DietLabel.DAIRY_FREE, DietLabel.NUT_FREE})
 
     @classmethod
     def to_dish(cls, dish_record: DishRecord) -> Dish:
@@ -28,7 +25,7 @@ class DietaryLabelRules:
 
     @classmethod
     def _derive_lifestyle_labels(cls, recipe_diet_labels: Sequence[DietLabel]) -> list[DietLabel]:
-        return [diet_label for diet_label in recipe_diet_labels if diet_label not in cls.FREE_FROM_LABELS]
+        return [diet_label for diet_label in recipe_diet_labels if diet_label not in FREE_FROM_DIET_LABELS]
 
     @staticmethod
     def _derive_free_from_labels(contains_gluten: bool, allergens: Sequence[Allergen]) -> list[DietLabel]:  # noqa: FBT001 - a plain fact, not a mode switch

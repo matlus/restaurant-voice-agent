@@ -41,7 +41,7 @@ class DomainFacade:
         await self.close()
 
     async def close(self) -> None:
-        """Nothing to release yet; see the class description."""
+        pass
 
     async def get_restaurant_profile(self) -> RestaurantProfile:
         return await self._manager_restaurant.get_restaurant_profile()

@@ -1,6 +1,6 @@
 import json
 import sqlite3
-from collections.abc import Generator, Sequence
+from collections.abc import Collection, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import date, datetime, time, timedelta
 from typing import Final
@@ -103,7 +103,11 @@ class RestaurantStoreInitializer:
         cls._insert_dishes(connection, restaurant_seed.dish_records)
         restaurant_today: date = now_utc.astimezone(ZoneInfo(restaurant_profile.time_zone)).date()
         cls._insert_seed_reservations(
-            connection, restaurant_seed.seed_reservations, restaurant_today, restaurant_profile.reservation_policy.seating_duration_minutes, now_utc
+            connection,
+            restaurant_seed.seed_reservations,
+            cls._find_first_open_weekday_dates(restaurant_today, {closure.closed_on for closure in restaurant_seed.closures}),
+            restaurant_profile.reservation_policy.seating_duration_minutes,
+            now_utc,
         )
 
     @staticmethod
@@ -200,18 +204,30 @@ class RestaurantStoreInitializer:
         )
 
     @classmethod
+    def _find_first_open_weekday_dates(cls, restaurant_today: date, closed_dates: Collection[date]) -> dict[Weekday, date]:
+        """The date each seed booking's weekday next falls on, from today on, skipping holiday closures a week at a time,
+        so no seed booking lands on a day the restaurant is closed."""
+        reservation_date_by_weekday: dict[Weekday, date] = {}
+        days_ahead: int
+        for days_ahead in range(cls.DAYS_PER_WEEK):
+            reservation_date: date = restaurant_today + timedelta(days=days_ahead)
+            while reservation_date in closed_dates:
+                reservation_date += timedelta(days=cls.DAYS_PER_WEEK)
+            reservation_date_by_weekday[list(Weekday)[reservation_date.weekday()]] = reservation_date
+        return reservation_date_by_weekday
+
+    @classmethod
     def _insert_seed_reservations(
         cls,
         connection: sqlite3.Connection,
         seed_reservations: Sequence[SeedReservation],
-        restaurant_today: date,
+        reservation_date_by_weekday: Mapping[Weekday, date],
         seating_duration_minutes: int,
         now_utc: datetime,
     ) -> None:
         reservation_rows: list[tuple[_StoredValue, ...]] = []
         for seed_reservation in seed_reservations:
-            days_until_weekday: int = (list(Weekday).index(seed_reservation.weekday) - restaurant_today.weekday()) % cls.DAYS_PER_WEEK
-            reservation_date: date = restaurant_today + timedelta(days=days_until_weekday)
+            reservation_date: date = reservation_date_by_weekday[seed_reservation.weekday]
             starts_at_minutes: int = cls._to_minutes_after_midnight(seed_reservation.starts_at)
             reservation_rows.append(
                 (

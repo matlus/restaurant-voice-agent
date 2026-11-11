@@ -162,7 +162,7 @@ class TestMenuSearch:
         async with create_domain_facade(restaurant_database_path) as domain_facade:
             actual_menu_search_result: MenuSearchResult = await domain_facade.search_menu(menu_search_request)
 
-        assert actual_menu_search_result.filters_on_allergens is expected_filters_on_allergens
+        assert actual_menu_search_result.filters_on_allergens == expected_filters_on_allergens
 
     async def test_SearchMenu_WhenCategoryAndCalorieCeilingAreGiven_ThenOnlyDishesInThatCategoryAtOrUnderTheCeilingAreReturned(
         self, restaurant_database_path: Path

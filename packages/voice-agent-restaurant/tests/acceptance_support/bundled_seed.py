@@ -10,6 +10,7 @@ from typing import Any, Final
 RESTAURANT_SEED_FILE_NAME: Final[str] = "restaurant.json"
 TABLES_SEED_FILE_NAME: Final[str] = "tables.json"
 MENU_SEED_FILE_NAME: Final[str] = "menu.json"
+RESERVATIONS_SEED_FILE_NAME: Final[str] = "reservations.json"
 
 
 @dataclass(frozen=True)
@@ -117,6 +118,18 @@ def read_seeded_dishes() -> list[SeededDish]:
         )
         for dish_object in menu_seed_object["dishes"]
     ]
+
+
+def read_seeded_booking_weekday(phone_number: str) -> str:
+    """The weekday the bundled seed books the guest with this phone number on."""
+    reservations_seed_object: dict[str, Any] = json.loads(_read_bundled_seed_text(RESERVATIONS_SEED_FILE_NAME))
+    weekdays: list[str] = [
+        reservation_object["weekday"]
+        for reservation_object in reservations_seed_object["reservations"]
+        if reservation_object["phone_number"] == phone_number
+    ]
+    assert len(weekdays) == 1, f"The seed must hold exactly one booking for {phone_number}; found {len(weekdays)}"
+    return weekdays[0]
 
 
 def _to_seeded_weekday_hours(weekday: str, opens_at: str | None, closes_at: str | None) -> SeededWeekdayHours:

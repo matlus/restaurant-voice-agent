@@ -17,8 +17,6 @@ class Weekday(StrEnum):
 
 @dataclass(frozen=True)
 class OpenWeekday:
-    """A weekday on which the restaurant opens, with the hours it keeps."""
-
     weekday: Weekday
     opens_at: time
     closes_at: time
@@ -26,8 +24,6 @@ class OpenWeekday:
 
 @dataclass(frozen=True)
 class ClosedWeekday:
-    """A weekday on which the restaurant does not open at all."""
-
     weekday: Weekday
 
 

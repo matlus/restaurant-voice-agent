@@ -14,6 +14,7 @@ from typing import Any, Final
 import pytest
 from conversation_acceptance_support.asserters.asserter_conversation import AsserterConversation
 from conversation_acceptance_support.asserters.asserter_exception import AsserterException, ExpectedExceptionContent, ExpectedExceptionMetadata
+from conversation_acceptance_support.bundled_voice_catalog import read_catalog_voice_option
 from conversation_acceptance_support.guest_microphone import GuestMicrophone
 from conversation_acceptance_support.realtime_voice_service_scripted import (
     SCRIPTED_GREETING_AUDIO,
@@ -34,9 +35,7 @@ from voice_agent_conversation import (
     ConversationStarted,
     ExceptionAction,
     LogEventAgentTool,
-    PresentedGender,
     Severity,
-    SpeechProvider,
     VoiceOption,
 )
 from voice_agent_restaurant import (
@@ -50,9 +49,7 @@ from voice_agent_restaurant import (
     Weekday,
 )
 
-CEDAR_VOICE_OPTION: Final[VoiceOption] = VoiceOption(
-    "openai-cedar", SpeechProvider.OPENAI, "cedar", PresentedGender.MALE, "Calm and grounded, with a low register."
-)
+CEDAR_VOICE_OPTION: Final[VoiceOption] = read_catalog_voice_option("openai-cedar")
 CONVERSATION_REQUEST: Final[ConversationRequest] = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
 PROVIDER_AUDIO_FORMAT: Final[ConversationAudioFormat] = ConversationAudioFormat(guest_audio_sample_rate_hz=24_000, agent_audio_sample_rate_hz=24_000)
 GUEST_QUESTION_AUDIO: Final[bytes] = b"guest asks the agent something"

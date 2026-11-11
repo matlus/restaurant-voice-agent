@@ -7,15 +7,23 @@
 # out from the restaurant's own availability answers for every other bookable time that day.
 
 from dataclasses import dataclass, replace
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Final
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from acceptance_support.asserters.asserter_exception import AsserterException, ExpectedExceptionMetadata
 from acceptance_support.asserters.asserter_reservation import AsserterReservation, ExpectedNewReservation
-from acceptance_support.bundled_seed import SeededOpenWeekday, SeededRestaurant, SeededTable, read_seeded_restaurant, read_seeded_tables
+from acceptance_support.bundled_seed import (
+    SeededOpenWeekday,
+    SeededRestaurant,
+    SeededTable,
+    read_seeded_booking_weekday,
+    read_seeded_restaurant,
+    read_seeded_tables,
+)
 from acceptance_support.generated_guests import GeneratedGuest, create_generated_guest, create_generated_note
 from acceptance_support.service_locator_testing import FRIDAY_EVENING_UTC, THURSDAY_EARLY_EVENING_UTC, create_domain_facade
 from voice_agent_restaurant import (
@@ -53,6 +61,8 @@ CLOSED_MONDAY: Final[str] = "2026-11-09"
 FULLY_BOOKED_TUESDAY: Final[str] = "2026-11-10"
 NEARLY_FULL_WEDNESDAY: Final[str] = "2026-11-04"
 SEEDED_PRIYA_PHONE: Final[str] = "5550101001"
+# Sunday 2026-12-20 at 15:00 in Riverton: the Friday after it is Christmas Day, and the one after that New Year's Day.
+SUNDAY_BEFORE_CHRISTMAS_UTC: Final[datetime] = datetime(2026, 12, 20, 21, 0, tzinfo=UTC)
 SEEDED_SAM_PHONE: Final[str] = "5550101010"
 FULLWIDTH_DIGIT_ZERO_CODE_POINT: Final[int] = 0xFF10
 SEEDED_PRIYA_PHONE_IN_FULLWIDTH_DIGITS: Final[str] = "".join(chr(FULLWIDTH_DIGIT_ZERO_CODE_POINT + int(digit)) for digit in SEEDED_PRIYA_PHONE)
@@ -647,6 +657,31 @@ class TestCreateReservation:
 
 
 class TestFindReservations:
+    async def test_FindReservations_WhenTheStoreIsCreatedTheWeekBeforeAHolidayClosure_ThenTheSeededBookingSkipsTheClosedDays(
+        self, restaurant_database_path: Path
+    ) -> None:
+        # A seed booking lands on the next date its weekday falls on; holiday closures push it on a week at a time.
+        seeded_restaurant: SeededRestaurant = read_seeded_restaurant()
+        closed_dates: set[date] = {seeded_closure.closed_on for seeded_closure in seeded_restaurant.closures}
+        restaurant_today: date = SUNDAY_BEFORE_CHRISTMAS_UTC.astimezone(ZoneInfo(seeded_restaurant.time_zone)).date()
+        booking_weekday_index: int = list(Weekday).index(Weekday(read_seeded_booking_weekday(SEEDED_PRIYA_PHONE)))
+        first_weekday_date: date = restaurant_today + timedelta(days=(booking_weekday_index - restaurant_today.weekday()) % 7)
+        assert first_weekday_date in closed_dates, (
+            f"The holiday-week scenario needs the booking's weekday to fall on a closure first, but {first_weekday_date} is open; "
+            "the seeded data no longer supports this scenario"
+        )
+        expected_reservation_date: date = first_weekday_date
+        while expected_reservation_date in closed_dates:
+            expected_reservation_date += timedelta(days=7)
+
+        async with create_domain_facade(restaurant_database_path, SUNDAY_BEFORE_CHRISTMAS_UTC) as domain_facade:
+            actual_reservation_dates: list[date] = [
+                found_reservation.reservation_date
+                for found_reservation in await domain_facade.find_reservations(ReservationSearchRequest(phone_number=SEEDED_PRIYA_PHONE))
+            ]
+
+        assert actual_reservation_dates == [expected_reservation_date]
+
     async def test_FindReservations_WhenThePhoneNumberIsSpokenWithSeparators_ThenTheSeededBookingIsFound(
         self, restaurant_database_path: Path
     ) -> None:
