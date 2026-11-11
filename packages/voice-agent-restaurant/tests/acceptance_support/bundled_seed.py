@@ -144,7 +144,8 @@ def read_seeded_booking_guest(phone_number: str) -> SeededBookingGuest:
 
 
 def _to_seeded_weekday_hours(weekday: str, opens_at: str | None, closes_at: str | None) -> SeededWeekdayHours:
-    # The seed gives a closed day as null hours; the reader refuses a day with only one of the two.
+    # The seed gives a closed day as null hours. The app's own seed reader refuses a day with only one of the two, so
+    # the bundled seed never holds one, and either being null means the day is closed.
     if opens_at is None or closes_at is None:
         return SeededClosedWeekday(weekday=weekday)
     return SeededOpenWeekday(weekday=weekday, opens_at=time.fromisoformat(opens_at), closes_at=time.fromisoformat(closes_at))

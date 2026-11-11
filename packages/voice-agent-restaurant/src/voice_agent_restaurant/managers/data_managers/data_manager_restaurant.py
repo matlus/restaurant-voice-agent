@@ -110,8 +110,8 @@ class DataManagerRestaurant:
             dish_records=[cls._map_dish_row(dish_row) for dish_row in dish_rows],
         )
 
-    @staticmethod
-    def _map_restaurant_profile_row(restaurant_row: sqlite3.Row) -> RestaurantProfile:
+    @classmethod
+    def _map_restaurant_profile_row(cls, restaurant_row: sqlite3.Row) -> RestaurantProfile:
         return RestaurantProfile(
             name=restaurant_row["name"],
             tagline=restaurant_row["tagline"],
@@ -123,7 +123,7 @@ class DataManagerRestaurant:
             phone_number=restaurant_row["phone_number"],
             time_zone=restaurant_row["time_zone"],
             allergen_notice=restaurant_row["allergen_notice"],
-            house_notes=cast(list[str], json.loads(restaurant_row["house_notes_json"])),
+            house_notes=cls._decode_text_list_column(restaurant_row, "restaurant", "house_notes_json"),
             reservation_policy=ReservationPolicy(
                 seating_duration_minutes=restaurant_row["seating_duration_minutes"],
                 slot_interval_minutes=restaurant_row["slot_interval_minutes"],
@@ -147,18 +147,18 @@ class DataManagerRestaurant:
             closes_at=from_minutes_after_midnight(hours_row["closes_at_minutes"]),
         )
 
-    @staticmethod
-    def _map_dish_row(dish_row: sqlite3.Row) -> DishRecord:
+    @classmethod
+    def _map_dish_row(cls, dish_row: sqlite3.Row) -> DishRecord:
         return DishRecord(
             dish_id=dish_row["dish_id"],
             name=dish_row["name"],
             category=MenuCategory(dish_row["category"]),
             description=dish_row["description"],
             price_cents=dish_row["price_cents"],
-            ingredients=cast(list[str], json.loads(dish_row["ingredients_json"])),
-            allergens=[Allergen(allergen_text) for allergen_text in cast(list[str], json.loads(dish_row["allergens_json"]))],
+            ingredients=cls._decode_text_list_column(dish_row, "dishes", "ingredients_json"),
+            allergens=[Allergen(allergen_text) for allergen_text in cls._decode_text_list_column(dish_row, "dishes", "allergens_json")],
             contains_gluten=bool(dish_row["contains_gluten"]),
-            recipe_diet_labels=[DietLabel(diet_text) for diet_text in cast(list[str], json.loads(dish_row["recipe_diet_labels_json"]))],
+            recipe_diet_labels=[DietLabel(diet_text) for diet_text in cls._decode_text_list_column(dish_row, "dishes", "recipe_diet_labels_json")],
             nutrition=Nutrition(
                 calories=dish_row["calories"],
                 protein_grams=dish_row["protein_grams"],
@@ -166,4 +166,22 @@ class DataManagerRestaurant:
                 fat_grams=dish_row["fat_grams"],
             ),
             cross_contact_note=dish_row["cross_contact_note"],
+        )
+
+    @classmethod
+    def _decode_text_list_column(cls, store_row: sqlite3.Row, table_name: str, column_name: str) -> list[str]:
+        """Reads a column the store keeps as a JSON list of text. Anything else breaks the store's contract."""
+        try:
+            decoded_value: object = json.loads(store_row[column_name])
+        except json.JSONDecodeError as decode_error:
+            raise cls._create_unreadable_column_exception(table_name, column_name) from decode_error
+        if not isinstance(decoded_value, list) or not all(isinstance(list_entry, str) for list_entry in cast(list[object], decoded_value)):
+            raise cls._create_unreadable_column_exception(table_name, column_name)
+        return cast(list[str], decoded_value)
+
+    @staticmethod
+    def _create_unreadable_column_exception(table_name: str, column_name: str) -> RestaurantStoreContractViolationException:
+        return RestaurantStoreContractViolationException(
+            message=f"The restaurant store's '{table_name}.{column_name}' column must hold a JSON list of text, but a row holds something else",
+            contextual_data_by_name={"RestaurantStore.Table": table_name, "RestaurantStore.Column": column_name},
         )

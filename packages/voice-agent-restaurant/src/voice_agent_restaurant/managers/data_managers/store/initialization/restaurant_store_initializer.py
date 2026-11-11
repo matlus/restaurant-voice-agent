@@ -33,7 +33,7 @@ class RestaurantStoreInitializer:
 
     Creating a store has three steps: the schema, the restaurant's reference data (profile, hours, closures, tables
     and menu), and the demo bookings when the store seeding asks for them. Every connection reads the store's version, which costs
-    one PRAGMA. Only a new file is initialized, inside one IMMEDIATE transaction that reads the version again, so two
+    one PRAGMA. Only a new, empty file is initialized, inside one IMMEDIATE transaction that reads the version again, so two
     first callers racing on a new file cannot both seed it. A store from any other version, older or newer, is refused.
     """
 
@@ -46,11 +46,12 @@ class RestaurantStoreInitializer:
     def ensure_initialized(cls, connection: sqlite3.Connection, now_utc: datetime, store_seeding: StoreSeeding) -> None:
         if cls._is_current(connection):
             return
-        # Write-ahead logging lets readers carry on while one writer books. The mode belongs to the file and cannot
-        # change inside a transaction, so it is set before the store is created; setting it twice is harmless.
-        connection.execute("PRAGMA journal_mode = WAL")
         with cls._immediate_transaction(connection):
             cls._create_store(connection, now_utc, store_seeding)
+        # Write-ahead logging lets readers carry on while one writer books. The mode belongs to the file and cannot
+        # change inside a transaction, so it is set once the store exists, never on a file that was refused; setting
+        # it twice, as a racing first caller may, is harmless.
+        connection.execute("PRAGMA journal_mode = WAL")
 
     @staticmethod
     @contextmanager
@@ -79,6 +80,16 @@ class RestaurantStoreInitializer:
                 ),
                 contextual_data_by_name={"RestaurantStore.Version": store_version, "RestaurantStore.RequiredVersion": STORE_VERSION},
             )
+        # Every SQLite file starts at version 0, so the version alone cannot tell a new file from another program's database.
+        table_count: int = cls._count_tables(connection)
+        if table_count != 0:
+            raise RestaurantStoreContractViolationException(
+                message=(
+                    "The file at the configured store path is a SQLite database that already holds tables but no restaurant store "
+                    f"(table count: {table_count}), so it belongs to something else and is left untouched. Point the store path at a new file."
+                ),
+                contextual_data_by_name={"RestaurantStore.TableCount": table_count},
+            )
         restaurant_seed: RestaurantSeed = SeedDataReader.read_restaurant_seed()
         cls._create_schema(connection)
         cls._insert_reference_data(connection, restaurant_seed)
@@ -94,6 +105,11 @@ class RestaurantStoreInitializer:
     @staticmethod
     def _is_store_version_current(store_version: int) -> bool:
         return store_version == STORE_VERSION
+
+    @staticmethod
+    def _count_tables(connection: sqlite3.Connection) -> int:
+        table_count_row: sqlite3.Row = connection.execute("SELECT count(*) FROM sqlite_schema WHERE type = 'table'").fetchone()
+        return int(table_count_row[0])
 
     @classmethod
     def _read_store_version(cls, connection: sqlite3.Connection) -> int:

@@ -37,7 +37,8 @@ Store or configuration trouble raises a `VoiceAgentRestaurantTechnicalBaseExcept
 
 The store is a single SQLite file and is disposable: it holds the bundled seed and the bookings made since. A store
 created by another version of the app is refused at startup, with a message saying to delete it; there are no
-migrations. The file uses write-ahead logging, so lookups carry on while a booking is written, and its own `CHECK`
+migrations. A store is only created in a new, empty file: a path that holds some other program's SQLite database is
+refused and the file is left untouched. The file uses write-ahead logging, so lookups carry on while a booking is written, and its own `CHECK`
 constraints refuse impossible rows (no guests, a seating that ends before it starts, an unknown status) even if the
 domain's validation were bypassed. Two bookings racing for the last fitting table cannot both win: each seats its
 party inside one `IMMEDIATE` transaction, and a test proves exactly one succeeds.

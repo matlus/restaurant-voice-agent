@@ -224,6 +224,67 @@ class TestRestaurantInformation:
             actual_voice_agent_restaurant_exception=raised.value,
         )
 
+    def test_DomainFacade_WhenTheStorePathHoldsAnotherProgramsDatabase_ThenStartupFailsAndLeavesItUntouched(
+        self, restaurant_database_path: Path
+    ) -> None:
+        with closing(sqlite3.connect(restaurant_database_path)) as connection:
+            connection.execute("CREATE TABLE notes (body TEXT)")
+        expected_message_phrases: list[str] = ["already holds tables but no restaurant store", "Point the store path at a new file"]
+        expected_exception_metadata: ExpectedExceptionMetadata = ExpectedExceptionMetadata(
+            http_status_code=500,
+            exception_action=ExceptionAction.DEVELOPER_ACTION_REQUIRED,
+            reason="The restaurant store breaks a contract the domain relies on",
+            severity=Severity.ERROR,
+            log_event=LogEventRestaurantStore.RESTAURANT_STORE_OPERATION,
+        )
+        expected_contextual_data_by_name: dict[str, int] = {"RestaurantStore.TableCount": 1}
+        # The other program's database keeps its own journal mode and holds only its own table.
+        expected_journal_mode_and_table_names: tuple[str, list[str]] = ("delete", ["notes"])
+
+        with pytest.raises(RestaurantStoreContractViolationException) as raised:
+            DomainFacade(ServiceLocatorTesting({DATABASE_PATH_VARIABLE_NAME: str(restaurant_database_path)}, WEDNESDAY_AFTERNOON_UTC))
+
+        AsserterException.assert_message_and_metadata_are_as_expected(
+            expected_exception_content=ExpectedExceptionContent(
+                message_phrases=expected_message_phrases,
+                exception_metadata=expected_exception_metadata,
+                contextual_data_by_name=expected_contextual_data_by_name,
+            ),
+            actual_voice_agent_restaurant_exception=raised.value,
+        )
+        with closing(sqlite3.connect(restaurant_database_path)) as connection:
+            actual_journal_mode_and_table_names: tuple[str, list[str]] = (
+                connection.execute("PRAGMA journal_mode").fetchone()[0],
+                [table_row[0] for table_row in connection.execute("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name")],
+            )
+        assert actual_journal_mode_and_table_names == expected_journal_mode_and_table_names
+
+    def test_DomainFacade_WhenAStoredDishListIsNotJson_ThenStartupFailsNamingTheColumn(self, restaurant_database_path: Path) -> None:
+        create_domain_facade(restaurant_database_path)
+        with closing(sqlite3.connect(restaurant_database_path)) as connection, connection:
+            connection.execute("UPDATE dishes SET allergens_json = 'peanuts, sesame'")
+        expected_message_phrases: list[str] = ["'dishes.allergens_json'", "JSON list of text"]
+        expected_exception_metadata: ExpectedExceptionMetadata = ExpectedExceptionMetadata(
+            http_status_code=500,
+            exception_action=ExceptionAction.DEVELOPER_ACTION_REQUIRED,
+            reason="The restaurant store breaks a contract the domain relies on",
+            severity=Severity.ERROR,
+            log_event=LogEventRestaurantStore.RESTAURANT_STORE_OPERATION,
+        )
+        expected_contextual_data_by_name: dict[str, str] = {"RestaurantStore.Table": "dishes", "RestaurantStore.Column": "allergens_json"}
+
+        with pytest.raises(RestaurantStoreContractViolationException) as raised:
+            DomainFacade(ServiceLocatorTesting({DATABASE_PATH_VARIABLE_NAME: str(restaurant_database_path)}, WEDNESDAY_AFTERNOON_UTC))
+
+        AsserterException.assert_message_and_metadata_are_as_expected(
+            expected_exception_content=ExpectedExceptionContent(
+                message_phrases=expected_message_phrases,
+                exception_metadata=expected_exception_metadata,
+                contextual_data_by_name=expected_contextual_data_by_name,
+            ),
+            actual_voice_agent_restaurant_exception=raised.value,
+        )
+
     @pytest.mark.parametrize(
         ("environment_variables", "expected_absence_phrase", "expected_setting_was_missing"),
         [
