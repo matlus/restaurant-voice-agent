@@ -54,6 +54,14 @@ class SeededRestaurant:
 
 
 @dataclass(frozen=True)
+class SeededBookingGuest:
+    """Who a seeded booking is under and the weekday the seed books it on."""
+
+    guest_name: str
+    weekday: str
+
+
+@dataclass(frozen=True)
 class SeededTable:
     table_id: str
     seats: int
@@ -120,15 +128,15 @@ def read_seeded_dishes() -> list[SeededDish]:
     ]
 
 
-def read_seeded_booking_weekday(phone_number: str) -> str:
+def read_seeded_booking_guest(phone_number: str) -> SeededBookingGuest:
     reservations_seed_object: dict[str, Any] = json.loads(_read_bundled_seed_text(RESERVATIONS_SEED_FILE_NAME))
-    weekdays: list[str] = [
-        reservation_object["weekday"]
+    seeded_booking_guests: list[SeededBookingGuest] = [
+        SeededBookingGuest(guest_name=reservation_object["guest_name"], weekday=reservation_object["weekday"])
         for reservation_object in reservations_seed_object["reservations"]
         if reservation_object["phone_number"] == phone_number
     ]
-    assert len(weekdays) == 1, f"The seed must hold exactly one booking for {phone_number}; found {len(weekdays)}"
-    return weekdays[0]
+    assert len(seeded_booking_guests) == 1, f"The seed must hold exactly one booking for {phone_number}; found {len(seeded_booking_guests)}"
+    return seeded_booking_guests[0]
 
 
 def _to_seeded_weekday_hours(weekday: str, opens_at: str | None, closes_at: str | None) -> SeededWeekdayHours:

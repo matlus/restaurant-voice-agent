@@ -65,16 +65,41 @@ class ReservationRequest:
 
 @dataclass(frozen=True)
 class ReservationSearchRequest:
+    """A guest's search for their own bookings on one date: date as YYYY-MM-DD. A booking is found only when the phone
+    number, the name and the date all match it, so a phone number alone reveals nothing."""
+
+    phone_number: str | None
+    guest_name: str | None
+    reservation_date: str | None
+
+
+@dataclass(frozen=True)
+class ConfirmationCodeReference:
+    """A booking named by its confirmation code, exactly as it arrived. A phone number, when given, must be the booking's own."""
+
+    confirmation_code: str | None
     phone_number: str | None
 
 
 @dataclass(frozen=True)
-class ReservationChangeRequest:
-    """A change to a booking, found by its confirmation code. A phone number, when given, must be the booking's own.
-    Any other field left as None keeps its current value."""
+class GuestDetailsReference:
+    """A booking named without its code, by the phone number, name, date (YYYY-MM-DD) and time (HH:MM) it is booked
+    under, exactly as they arrived."""
 
-    confirmation_code: str | None
     phone_number: str | None
+    guest_name: str | None
+    booked_date: str | None
+    booked_time: str | None
+
+
+type BookingReference = ConfirmationCodeReference | GuestDetailsReference
+
+
+@dataclass(frozen=True)
+class ReservationChangeRequest:
+    """A change to the booking the reference names. Any other field left as None keeps its current value."""
+
+    booking_reference: BookingReference
     reservation_date: str | None
     reservation_time: str | None
     party_size: int | None
@@ -83,8 +108,7 @@ class ReservationChangeRequest:
 
 @dataclass(frozen=True)
 class ReservationCancellationRequest:
-    confirmation_code: str | None
-    phone_number: str | None
+    booking_reference: BookingReference
 
 
 @dataclass(frozen=True)
@@ -113,6 +137,26 @@ class ReservationIdentity:
 
 
 @dataclass(frozen=True)
+class GuestBookingSearch:
+    """What a guest must know to find their bookings: the phone number, the name and the date they are booked under."""
+
+    phone_number: str
+    guest_name: str
+    reservation_date: date
+
+
+@dataclass(frozen=True)
+class GuestBookingIdentity:
+    """A booking identified without its confirmation code, by everything the guest must know about it."""
+
+    guest_booking_search: GuestBookingSearch
+    starts_at: time
+
+
+type BookingIdentity = ReservationIdentity | GuestBookingIdentity
+
+
+@dataclass(frozen=True)
 class ValidatedReservationRequest:
     guest_name: str
     phone_number: str
@@ -133,7 +177,7 @@ class SeatingChange:
 class ValidatedReservationChange:
     """A validated change. Notes left as None keep the booking's current notes."""
 
-    reservation_identity: ReservationIdentity
+    booking_identity: BookingIdentity
     seating_change: SeatingChange
     notes: str | None
 
@@ -171,6 +215,15 @@ class BookedSchedule:
     ends_at: time
     table_id: str
     notes: str | None
+
+
+@dataclass(frozen=True)
+class ReservationCancellation:
+    """A cancellation ready for the store. current_booked_schedule is the booking as it stood when the cancellation was
+    decided; the store cancels it only while it still stands that way."""
+
+    confirmation_code: str
+    current_booked_schedule: BookedSchedule
 
 
 @dataclass(frozen=True)

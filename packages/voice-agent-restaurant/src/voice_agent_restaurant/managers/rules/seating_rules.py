@@ -61,11 +61,13 @@ class SeatingRules:
         return SeatingWindow(first_seating_time=weekday_hours.opens_at, last_seating_time=cls._from_minutes(last_seating_minutes))
 
     @staticmethod
-    def apply_seating_change(current_seating: RequestedSeating, seating_change: SeatingChange) -> RequestedSeating:
+    def apply_seating_change(current_requested_seating: RequestedSeating, seating_change: SeatingChange) -> RequestedSeating:
         return RequestedSeating(
-            reservation_date=current_seating.reservation_date if seating_change.reservation_date is None else seating_change.reservation_date,
-            starts_at=current_seating.starts_at if seating_change.starts_at is None else seating_change.starts_at,
-            party_size=current_seating.party_size if seating_change.party_size is None else seating_change.party_size,
+            reservation_date=(
+                current_requested_seating.reservation_date if seating_change.reservation_date is None else seating_change.reservation_date
+            ),
+            starts_at=current_requested_seating.starts_at if seating_change.starts_at is None else seating_change.starts_at,
+            party_size=current_requested_seating.party_size if seating_change.party_size is None else seating_change.party_size,
         )
 
     @staticmethod
@@ -80,6 +82,13 @@ class SeatingRules:
             return requested_time
         evening_time: time = requested_time.replace(hour=requested_time.hour + cls._NOON_HOUR)
         return evening_time if cls.is_within_window(evening_time, seating_window) else requested_time
+
+    @classmethod
+    def read_as_seatable_time_on(cls, weekday_hours: WeekdayHours, requested_time: time, seating_duration_minutes: int) -> time:
+        """The requested time read as callers say it on a day with these hours. A day the restaurant does not open keeps
+        the time as it is; whether that day can be booked is decided separately."""
+        seating_window: SeatingWindow | None = cls.get_seating_window(weekday_hours, seating_duration_minutes)
+        return requested_time if seating_window is None else cls.read_as_seatable_time(requested_time, seating_window)
 
     @classmethod
     def get_ends_at(cls, starts_at: time, seating_duration_minutes: int) -> time:
@@ -132,11 +141,16 @@ class SeatingRules:
             slot_time
             for slot_time in cls._get_slot_times(seating_day.seating_window, seating_rhythm.slot_interval_minutes)
             if slot_time != requested_time
-            and datetime.combine(seating_day.reservation_date, slot_time, tzinfo=restaurant_now.tzinfo) >= restaurant_now
+            and cls._is_still_bookable(seating_day.reservation_date, slot_time, restaurant_now)
             and cls.has_free_table(
                 seating_day.fitting_tables, seating_day.seatings, slot_time, cls.get_ends_at(slot_time, seating_rhythm.seating_duration_minutes)
             )
         ]
+
+    @staticmethod
+    def _is_still_bookable(reservation_date: date, slot_time: time, restaurant_now: datetime) -> bool:
+        """A slot starting right now can still be offered; one that has already begun cannot."""
+        return datetime.combine(reservation_date, slot_time, tzinfo=restaurant_now.tzinfo) >= restaurant_now
 
     @classmethod
     def _get_nearest_slot_times(cls, open_slot_times: Sequence[time], requested_time: time) -> list[time]:

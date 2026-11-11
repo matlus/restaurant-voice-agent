@@ -9,6 +9,7 @@ from voice_agent_restaurant.managers.exceptions.menu_exceptions import (
     MenuSearchValidationException,
 )
 from voice_agent_restaurant.managers.exceptions.reservation_exceptions import (
+    GuestReservationNotFoundException,
     LogEventReservation,
     NoTableAvailableException,
     OutsideSeatingHoursException,
@@ -46,6 +47,8 @@ from voice_agent_restaurant.managers.models.menu_models import (
 from voice_agent_restaurant.managers.models.reservation_models import (
     AvailabilityRequest,
     AvailabilityResult,
+    ConfirmationCodeReference,
+    GuestDetailsReference,
     Reservation,
     ReservationCancellationRequest,
     ReservationChangeRequest,
@@ -74,6 +77,7 @@ __all__ = [
     "Closure",
     "ConfigurationProvider",
     "ConfigurationSettingException",
+    "ConfirmationCodeReference",
     "DietLabel",
     "Dish",
     "DishLookupRequest",
@@ -81,6 +85,8 @@ __all__ = [
     "DishNotFoundException",
     "DomainFacade",
     "ExceptionAction",
+    "GuestDetailsReference",
+    "GuestReservationNotFoundException",
     "LogEventBase",
     "LogEventConfiguration",
     "LogEventMenu",

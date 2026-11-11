@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from acceptance_support.asserters.asserter_exception import AsserterException, ExpectedExceptionMetadata
+from acceptance_support.asserters.asserter_exception import AsserterException, ExpectedExceptionContent, ExpectedExceptionMetadata
 from acceptance_support.asserters.asserter_restaurant_profile import AsserterRestaurantProfile
 from acceptance_support.bundled_seed import SeededClosedWeekday, SeededRestaurant, SeededWeekdayHours, read_seeded_restaurant
 from acceptance_support.generated_guests import GeneratedGuest, create_generated_guest
@@ -144,13 +144,14 @@ class TestRestaurantInformation:
 
     async def test_FindReservations_WhenTheStoreAlreadyExists_ThenItIsReusedAndEarlierBookingsRemain(self, restaurant_database_path: Path) -> None:
         generated_guest: GeneratedGuest = create_generated_guest()
+        reservation_date: str = "2026-11-05"
         async with create_domain_facade(restaurant_database_path) as first_domain_facade:
             created_reservation: Reservation = await first_domain_facade.create_reservation(
                 ReservationRequest(
                     guest_name=generated_guest.guest_name,
                     phone_number=generated_guest.phone_digits,
                     party_size=2,
-                    reservation_date="2026-11-05",
+                    reservation_date=reservation_date,
                     reservation_time="18:00",
                     notes=None,
                 )
@@ -159,7 +160,9 @@ class TestRestaurantInformation:
 
         async with create_domain_facade(restaurant_database_path) as second_domain_facade:
             actual_found_reservations: list[Reservation] = await second_domain_facade.find_reservations(
-                ReservationSearchRequest(phone_number=generated_guest.phone_digits)
+                ReservationSearchRequest(
+                    phone_number=generated_guest.phone_digits, guest_name=generated_guest.guest_name, reservation_date=reservation_date
+                )
             )
 
         assert actual_found_reservations == expected_reservations
@@ -183,11 +186,13 @@ class TestRestaurantInformation:
                 await domain_facade.get_restaurant_profile()
 
         AsserterException.assert_message_and_metadata_are_as_expected(
-            expected_message_phrases=expected_message_phrases,
-            expected_exception_metadata=expected_exception_metadata,
-            expected_contextual_data_by_name=expected_contextual_data_by_name,
+            expected_exception_content=ExpectedExceptionContent(
+                message_phrases=expected_message_phrases,
+                exception_metadata=expected_exception_metadata,
+                contextual_data_by_name=expected_contextual_data_by_name,
+                present_contextual_data_names=expected_present_contextual_data_names,
+            ),
             actual_voice_agent_restaurant_exception=raised.value,
-            expected_present_contextual_data_names=expected_present_contextual_data_names,
         )
 
     async def test_GetRestaurantProfile_WhenTheStoreFileIsNotASqliteDatabase_ThenTheFailureIsReportedAsPermanent(
@@ -211,28 +216,41 @@ class TestRestaurantInformation:
                 await domain_facade.get_restaurant_profile()
 
         AsserterException.assert_message_and_metadata_are_as_expected(
-            expected_message_phrases=expected_message_phrases,
-            expected_exception_metadata=expected_exception_metadata,
-            expected_contextual_data_by_name=expected_contextual_data_by_name,
+            expected_exception_content=ExpectedExceptionContent(
+                message_phrases=expected_message_phrases,
+                exception_metadata=expected_exception_metadata,
+                contextual_data_by_name=expected_contextual_data_by_name,
+                present_contextual_data_names=expected_present_contextual_data_names,
+            ),
             actual_voice_agent_restaurant_exception=raised.value,
-            expected_present_contextual_data_names=expected_present_contextual_data_names,
         )
 
-    def test_DomainFacade_WhenTheDatabasePathSettingIsMissing_ThenConstructionFailsNamingTheSetting(self) -> None:
-        expected_message_phrases: list[str] = [DATABASE_PATH_VARIABLE_NAME, "empty or whitespace"]
+    @pytest.mark.parametrize(
+        ("environment_variables", "expected_absence_phrase", "expected_setting_was_missing"),
+        [
+            ({}, "was missing", True),
+            ({DATABASE_PATH_VARIABLE_NAME: "   "}, "was empty or whitespace", False),
+        ],
+    )
+    def test_DomainFacade_WhenTheDatabasePathSettingIsMissingOrBlank_ThenConstructionFailsNamingTheSetting(
+        self, environment_variables: dict[str, str], expected_absence_phrase: str, expected_setting_was_missing: bool
+    ) -> None:
+        expected_message_phrases: list[str] = [DATABASE_PATH_VARIABLE_NAME, expected_absence_phrase]
         expected_exception_metadata: ExpectedExceptionMetadata = create_configuration_refusal_metadata()
         expected_contextual_data_by_name: dict[str, str | bool] = {
             ENVIRONMENT_VARIABLE_NAME_CONTEXT_NAME: DATABASE_PATH_VARIABLE_NAME,
-            "Configuration.SettingWasMissing": False,
+            "Configuration.SettingWasMissing": expected_setting_was_missing,
         }
 
         with pytest.raises(ConfigurationSettingException) as raised:
-            DomainFacade(ServiceLocatorTesting({DATABASE_PATH_VARIABLE_NAME: "   "}, WEDNESDAY_AFTERNOON_UTC))
+            DomainFacade(ServiceLocatorTesting(environment_variables, WEDNESDAY_AFTERNOON_UTC))
 
         AsserterException.assert_message_and_metadata_are_as_expected(
-            expected_message_phrases=expected_message_phrases,
-            expected_exception_metadata=expected_exception_metadata,
-            expected_contextual_data_by_name=expected_contextual_data_by_name,
+            expected_exception_content=ExpectedExceptionContent(
+                message_phrases=expected_message_phrases,
+                exception_metadata=expected_exception_metadata,
+                contextual_data_by_name=expected_contextual_data_by_name,
+            ),
             actual_voice_agent_restaurant_exception=raised.value,
         )
 
@@ -246,8 +264,10 @@ class TestRestaurantInformation:
             DomainFacade(ServiceLocatorTesting({DATABASE_PATH_VARIABLE_NAME: unusable_database_path}, WEDNESDAY_AFTERNOON_UTC))
 
         AsserterException.assert_message_and_metadata_are_as_expected(
-            expected_message_phrases=expected_message_phrases,
-            expected_exception_metadata=expected_exception_metadata,
-            expected_contextual_data_by_name=expected_contextual_data_by_name,
+            expected_exception_content=ExpectedExceptionContent(
+                message_phrases=expected_message_phrases,
+                exception_metadata=expected_exception_metadata,
+                contextual_data_by_name=expected_contextual_data_by_name,
+            ),
             actual_voice_agent_restaurant_exception=raised.value,
         )

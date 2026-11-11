@@ -34,12 +34,14 @@ phone, like "5 to 10 PM", not "17:00".
   open times that day. If the day is fully booked, it says so.
 - **Book** with a name and phone number. Before booking, the agent checks the details in one short line and waits for
   a yes. It then gives a six-character confirmation code, slowly, one character at a time.
-- **Find bookings** by phone number, for a caller who doesn't have their code.
+- **Find bookings** by the phone number, name and date they are under, for a caller who doesn't have their code.
 - **Change** the date, time, party size or notes of a booking.
 - **Cancel** a booking.
 
-To change or cancel, the confirmation code alone is enough. A caller who doesn't have it gives their phone number, and
-the agent looks the booking up. If a request can't be done, for example because the restaurant is closed that day or
+To change or cancel, the confirmation code alone is enough. A caller who doesn't have it gives the phone number, the
+name (the family name, or any name after the first, is enough) and the date the booking is under, and the agent looks it up. A phone number alone
+reveals nothing, and a lookup never gives out the confirmation code. Tool answers carry only what the agent must say:
+no table numbers, phone numbers or guest notes. If a request can't be done, for example because the restaurant is closed that day or
 the time is too close to closing, the agent explains why in plain words and offers what the restaurant suggests.
 
 ### How the agent talks
@@ -64,7 +66,7 @@ the store is created (today counts), so the scenarios stay in the future.
 | Nearly full Wednesday | Only 6:30 PM and 8:30 PM are left, for up to four people. Ask for 7 and hear those two offered. |
 | Closed Monday | The restaurant doesn't open on Mondays. |
 | Holidays | Closed on Thanksgiving, Christmas Eve, Christmas Day and New Year's Day. |
-| Existing booking | Priya Raman has a Friday booking under phone number 555-010-1001, confirmation code `KX4TPA`. Change or cancel it. |
+| Existing booking | Priya Raman has a Friday booking under phone number 555-010-1001, confirmation code `KX4TPA`. Change or cancel it with the code, or by phone number, name and date. |
 | Large party | Parties over eight are pointed to the private dining room instead. |
 
 To start over with fresh data, stop the app and delete the SQLite file (`data/restaurant.sqlite3` by default). It is
@@ -123,9 +125,11 @@ A call goes like this:
 | `get_opening_hours` | Weekly hours and upcoming holiday closures. |
 | `check_availability` | Whether a table fits, with nearby open times when it doesn't. |
 | `book_table` | Books a table and returns the confirmation code. |
-| `find_bookings` | Upcoming bookings for a phone number. |
-| `change_booking` | Changes date, time, party size or notes. |
-| `cancel_booking` | Cancels a booking. |
+| `find_bookings` | The times and party sizes of a caller's bookings on one date, found by phone number, name and date. |
+| `change_booking` | Changes date, time, party size or notes of a booking found by its confirmation code. |
+| `change_booking_by_details` | The same change, for a caller without the code: the booking is found by phone number, name, date and time. |
+| `cancel_booking` | Cancels a booking found by its confirmation code. |
+| `cancel_booking_by_details` | Cancels a booking found by phone number, name, date and time. |
 
 Each tool is a standalone class with a Pydantic input model. Pydantic is a validation library, and here it also
 produces the JSON schema that tells the model what arguments the tool takes. The toolbox treats three outcomes

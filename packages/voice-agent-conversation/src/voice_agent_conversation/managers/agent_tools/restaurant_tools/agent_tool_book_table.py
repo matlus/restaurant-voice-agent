@@ -3,6 +3,10 @@ from typing import ClassVar, final, override
 from pydantic import BaseModel, ConfigDict, Field
 
 from voice_agent_conversation.managers.agent_tools.agent_tool_base import AgentToolBase
+from voice_agent_conversation.managers.agent_tools.restaurant_tools.booking_answers.booking_answer_mapping import (
+    BookingAnswerMapping,
+    BookingConfirmation,
+)
 from voice_agent_restaurant import DomainFacade as RestaurantDomainFacade, Reservation, ReservationRequest
 
 
@@ -19,7 +23,7 @@ class BookTableInput(BaseModel):
 
 
 @final
-class AgentToolBookTable(AgentToolBase[BookTableInput, Reservation]):
+class AgentToolBookTable(AgentToolBase[BookTableInput, BookingConfirmation]):
     def __init__(self, restaurant_domain_facade: RestaurantDomainFacade) -> None:
         self._restaurant_domain_facade: RestaurantDomainFacade = restaurant_domain_facade
 
@@ -43,8 +47,8 @@ class AgentToolBookTable(AgentToolBase[BookTableInput, Reservation]):
         return BookTableInput
 
     @override
-    async def run(self, tool_input: BookTableInput) -> Reservation:
-        return await self._restaurant_domain_facade.create_reservation(
+    async def run(self, tool_input: BookTableInput) -> BookingConfirmation:
+        reservation: Reservation = await self._restaurant_domain_facade.create_reservation(
             ReservationRequest(
                 guest_name=tool_input.guest_name,
                 phone_number=tool_input.phone_number,
@@ -54,3 +58,4 @@ class AgentToolBookTable(AgentToolBase[BookTableInput, Reservation]):
                 notes=tool_input.notes,
             )
         )
+        return BookingAnswerMapping.to_booking_confirmation(reservation)

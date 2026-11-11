@@ -3,7 +3,8 @@ from typing import ClassVar, final, override
 from pydantic import BaseModel, ConfigDict, Field
 
 from voice_agent_conversation.managers.agent_tools.agent_tool_base import AgentToolBase
-from voice_agent_restaurant import DomainFacade as RestaurantDomainFacade, Reservation, ReservationCancellationRequest
+from voice_agent_conversation.managers.agent_tools.restaurant_tools.booking_answers.booking_answer_mapping import BookingAnswerMapping, BookingSummary
+from voice_agent_restaurant import ConfirmationCodeReference, DomainFacade as RestaurantDomainFacade, Reservation, ReservationCancellationRequest
 
 
 @final
@@ -15,7 +16,7 @@ class CancelBookingInput(BaseModel):
 
 
 @final
-class AgentToolCancelBooking(AgentToolBase[CancelBookingInput, Reservation]):
+class AgentToolCancelBooking(AgentToolBase[CancelBookingInput, BookingSummary]):
     def __init__(self, restaurant_domain_facade: RestaurantDomainFacade) -> None:
         self._restaurant_domain_facade: RestaurantDomainFacade = restaurant_domain_facade
 
@@ -28,8 +29,8 @@ class AgentToolCancelBooking(AgentToolBase[CancelBookingInput, Reservation]):
     @override
     def description(self) -> str:
         return (
-            "Cancels a booking, found by its confirmation code, and returns it marked cancelled. "
-            "If the caller does not have the code, get it with find_bookings first. "
+            "Cancels a booking, found by its confirmation code, and returns the date, time and party size that were cancelled. "
+            "If the caller does not have the code, use cancel_booking_by_details instead. "
             "Only call it after the caller has confirmed they want to cancel."
         )
 
@@ -39,7 +40,10 @@ class AgentToolCancelBooking(AgentToolBase[CancelBookingInput, Reservation]):
         return CancelBookingInput
 
     @override
-    async def run(self, tool_input: CancelBookingInput) -> Reservation:
-        return await self._restaurant_domain_facade.cancel_reservation(
-            ReservationCancellationRequest(confirmation_code=tool_input.confirmation_code, phone_number=tool_input.phone_number)
+    async def run(self, tool_input: CancelBookingInput) -> BookingSummary:
+        cancelled_reservation: Reservation = await self._restaurant_domain_facade.cancel_reservation(
+            ReservationCancellationRequest(
+                booking_reference=ConfirmationCodeReference(confirmation_code=tool_input.confirmation_code, phone_number=tool_input.phone_number)
+            )
         )
+        return BookingAnswerMapping.to_booking_summary(cancelled_reservation)
