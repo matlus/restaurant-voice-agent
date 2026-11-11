@@ -18,8 +18,10 @@ The restaurant domain for the voice agent. Everything goes through `DomainFacade
 Requests arrive as plain values (dates as `YYYY-MM-DD`, times as 24-hour `HH:MM` or as spoken, like `6:30 PM`), the
 way a voice model's tool call supplies them. The validators normalize them (phone numbers to digits, confirmation codes
 to upper case, diet labels like `Gluten-Free` to `gluten_free`) and validate them before anything else, reporting every
-problem in one exception. Callers rarely say AM or PM, so a morning time the restaurant can't seat is read as the same
-time in the evening when that one can be seated.
+problem in one `ReservationRequestValidationException` (or its menu equivalent). A request that reads well but breaks
+the booking policy, such as a party over eight, a time that has passed or a time between bookable times, raises
+`ReservationPolicyRefusedException` instead, with every reason together. Callers rarely say AM or PM, so a morning
+time the restaurant can't seat is read as the same time in the evening when that one can be seated.
 
 A refusal raises a `VoiceAgentRestaurantBusinessBaseException` descendant whose message can be read to a guest.
 Store or configuration trouble raises a `VoiceAgentRestaurantTechnicalBaseException` descendant, whose message must not.

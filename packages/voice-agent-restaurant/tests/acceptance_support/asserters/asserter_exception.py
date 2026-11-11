@@ -8,6 +8,7 @@ from voice_agent_restaurant import (
     ExceptionAction,
     MenuSearchValidationException,
     NoTableAvailableException,
+    ReservationPolicyRefusedException,
     ReservationRequestValidationException,
     Severity,
     VoiceAgentRestaurantBaseException,
@@ -69,23 +70,28 @@ class AsserterException:
         expected_contextual_data_by_name: Mapping[str, ContextualDataValue],
         actual_validation_exception: ValidationException,
     ) -> None:
-        assertion_failures: list[str] = []
-        if len(actual_validation_exception.validation_problems) != len(expected_problem_phrases):
-            assertion_failures.append(
-                f"Problem count: expected {len(expected_problem_phrases)}; actual {len(actual_validation_exception.validation_problems)} "
-                f"({actual_validation_exception.validation_problems!r})."
-            )
-        assertion_failures.extend(AsserterException._find_message_mismatches(expected_problem_phrases, actual_validation_exception.message))
-        assertion_failures.extend(AsserterException._find_metadata_mismatches(expected_exception_metadata, actual_validation_exception))
-        assertion_failures.extend(
-            AsserterException._find_contextual_data_mismatches(expected_contextual_data_by_name, (), actual_validation_exception)
+        AsserterException._assert_problems_are_as_expected(
+            expected_problem_phrases,
+            expected_exception_metadata,
+            expected_contextual_data_by_name,
+            actual_validation_exception.validation_problems,
+            actual_validation_exception,
         )
-        AsserterException._assert_no_mismatches(
-            assertion_failures,
-            failure_claim=(
-                f"{type(actual_validation_exception).__name__} must report one problem per expected phrase with the validation refusal "
-                f"metadata and context (actual problems: {actual_validation_exception.validation_problems!r})"
-            ),
+
+    @staticmethod
+    def assert_policy_problems_are_as_expected(
+        *,
+        expected_problem_phrases: Sequence[str],
+        expected_exception_metadata: ExpectedExceptionMetadata,
+        expected_contextual_data_by_name: Mapping[str, ContextualDataValue],
+        actual_policy_refused_exception: ReservationPolicyRefusedException,
+    ) -> None:
+        AsserterException._assert_problems_are_as_expected(
+            expected_problem_phrases,
+            expected_exception_metadata,
+            expected_contextual_data_by_name,
+            actual_policy_refused_exception.policy_problems,
+            actual_policy_refused_exception,
         )
 
     @staticmethod
@@ -205,6 +211,34 @@ class AsserterException:
             if present_contextual_data_name not in actual_contextual_data_by_name
         )
         return assertion_failures
+
+    @staticmethod
+    def _assert_problems_are_as_expected(
+        expected_problem_phrases: Sequence[str],
+        expected_exception_metadata: ExpectedExceptionMetadata,
+        expected_contextual_data_by_name: Mapping[str, ContextualDataValue],
+        actual_problems: Sequence[str],
+        actual_voice_agent_restaurant_exception: VoiceAgentRestaurantBaseException,
+    ) -> None:
+        assertion_failures: list[str] = []
+        if len(actual_problems) != len(expected_problem_phrases):
+            assertion_failures.append(
+                f"Problem count: expected {len(expected_problem_phrases)}; actual {len(actual_problems)} ({actual_problems!r})."
+            )
+        assertion_failures.extend(
+            AsserterException._find_message_mismatches(expected_problem_phrases, actual_voice_agent_restaurant_exception.message)
+        )
+        assertion_failures.extend(AsserterException._find_metadata_mismatches(expected_exception_metadata, actual_voice_agent_restaurant_exception))
+        assertion_failures.extend(
+            AsserterException._find_contextual_data_mismatches(expected_contextual_data_by_name, (), actual_voice_agent_restaurant_exception)
+        )
+        AsserterException._assert_no_mismatches(
+            assertion_failures,
+            failure_claim=(
+                f"{type(actual_voice_agent_restaurant_exception).__name__} must report one problem per expected phrase with the expected "
+                f"refusal metadata and context (actual problems: {actual_problems!r})"
+            ),
+        )
 
     @staticmethod
     def _assert_no_mismatches(assertion_failures: Iterable[str], *, failure_claim: str) -> None:

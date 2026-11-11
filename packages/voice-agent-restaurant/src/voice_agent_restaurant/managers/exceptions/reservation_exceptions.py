@@ -10,6 +10,7 @@ from voice_agent_restaurant.managers.exceptions.voice_agent_restaurant_exception
 
 class LogEventReservation(LogEventBase):
     RESERVATION_REQUEST_VALIDATION_FAILED = "ReservationRequestValidationFailed"
+    RESERVATION_POLICY_REFUSED = "ReservationPolicyRefused"
     RESERVATION_SCHEDULING = "ReservationScheduling"
     RESERVATION_LOOKUP = "ReservationLookup"
 
@@ -20,8 +21,11 @@ def _format_time(time_of_day: time) -> str:
 
 @final
 class ReservationRequestValidationException(VoiceAgentRestaurantBusinessBaseException):
-    """Everything wrong with a reservation request itself, reported together: every missing or malformed value first,
-    and only for a well-formed request, every conflict with the booking policy and booking window."""
+    """The reservation request could not be read: every missing or malformed value, reported together.
+
+    The sender must correct the request itself; a request that reads well but is not allowed raises
+    ReservationPolicyRefusedException instead.
+    """
 
     def __init__(self, validation_problems: list[str], contextual_data_by_name: ContextualDataDict | None = None) -> None:
         super().__init__(
@@ -35,6 +39,25 @@ class ReservationRequestValidationException(VoiceAgentRestaurantBusinessBaseExce
     @override
     def reason(self) -> str:
         return "Reservation request failed validation"
+
+
+@final
+class ReservationPolicyRefusedException(VoiceAgentRestaurantBusinessBaseException):
+    """A well-formed reservation request that the booking policy or booking window does not allow, such as a party too
+    large to book by phone or a time that has passed. Every reason is reported together, written to be told to the guest."""
+
+    def __init__(self, policy_problems: list[str], contextual_data_by_name: ContextualDataDict | None = None) -> None:
+        super().__init__(
+            message=f"The restaurant cannot take this reservation: {'; '.join(policy_problems)}",
+            log_event=LogEventReservation.RESERVATION_POLICY_REFUSED,
+            contextual_data_by_name=contextual_data_by_name,
+        )
+        self.policy_problems: list[str] = policy_problems
+
+    @property
+    @override
+    def reason(self) -> str:
+        return "Reservation request is not allowed by the booking policy"
 
 
 @final

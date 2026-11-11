@@ -49,7 +49,8 @@ class AgentToolCallRejection:
 class AgentToolbox:
     """The tools one conversation's agent can call, run on its behalf.
 
-    A refusal by the restaurant, such as a full evening or a closed day, comes back as an answer the agent passes on.
+    A refusal by the restaurant, such as a full evening, a closed day or a party too large to book by phone, comes back
+    as an answer the agent passes on.
     A wrong call by the agent, such as an unknown tool, arguments that do not fit or a value the restaurant cannot read
     (a time given as "6:30 PM"), comes back as a correction the agent acts on without troubling the caller. Only a run of
     wrong calls with nothing accepted between them ends the call, because a misheard detail now and then is ordinary.

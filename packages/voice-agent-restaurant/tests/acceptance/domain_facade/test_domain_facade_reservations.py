@@ -34,6 +34,7 @@ from voice_agent_restaurant import (
     ReservationChangeRequest,
     ReservationNotFoundException,
     ReservationPolicy,
+    ReservationPolicyRefusedException,
     ReservationRequest,
     ReservationRequestValidationException,
     ReservationSearchRequest,
@@ -59,6 +60,7 @@ SEEDED_PRIYA_PHONE_IN_FULLWIDTH_DIGITS: Final[str] = "".join(chr(FULLWIDTH_DIGIT
 OFFERED_ALTERNATIVE_TIME_COUNT: Final[int] = 3
 MINUTES_PER_HOUR: Final[int] = 60
 RESERVATION_VALIDATION_REFUSAL_REASON: Final[str] = "Reservation request failed validation"
+RESERVATION_POLICY_REFUSAL_REASON: Final[str] = "Reservation request is not allowed by the booking policy"
 RESERVATION_DATE_CONTEXT_NAME: Final[str] = "Reservation.Date"
 RESERVATION_PARTY_SIZE_CONTEXT_NAME: Final[str] = "Reservation.PartySize"
 RESERVATION_PROBLEM_COUNT_CONTEXT_NAME: Final[str] = "Reservation.ProblemCount"
@@ -105,6 +107,15 @@ def create_validation_refusal_metadata() -> ExpectedExceptionMetadata:
         http_status_code=400,
         exception_action=ExceptionAction.USER_ACTION_REQUIRED,
         reason=RESERVATION_VALIDATION_REFUSAL_REASON,
+        severity=Severity.ERROR,
+    )
+
+
+def create_policy_refusal_metadata() -> ExpectedExceptionMetadata:
+    return ExpectedExceptionMetadata(
+        http_status_code=400,
+        exception_action=ExceptionAction.USER_ACTION_REQUIRED,
+        reason=RESERVATION_POLICY_REFUSAL_REASON,
         severity=Severity.ERROR,
     )
 
@@ -537,44 +548,44 @@ class TestCreateReservation:
         self, restaurant_database_path: Path
     ) -> None:
         # The request is well formed, so it is judged against the booking policy, and every policy problem is reported at once.
-        expected_problem_phrases: list[str] = ["15-minute boundary", "'party_size' must be at least 1"]
-        expected_exception_metadata: ExpectedExceptionMetadata = create_validation_refusal_metadata()
+        expected_problem_phrases: list[str] = ["the nearest times are 19:00 and 19:15", "'party_size' must be at least 1"]
+        expected_exception_metadata: ExpectedExceptionMetadata = create_policy_refusal_metadata()
         expected_contextual_data_by_name: dict[str, int] = {RESERVATION_PROBLEM_COUNT_CONTEXT_NAME: len(expected_problem_phrases)}
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
-            with pytest.raises(ReservationRequestValidationException) as raised:
+            with pytest.raises(ReservationPolicyRefusedException) as raised:
                 await domain_facade.create_reservation(create_reservation_request(create_generated_guest(), reservation_time="19:10", party_size=0))
 
-        AsserterException.assert_validation_problems_are_as_expected(
+        AsserterException.assert_policy_problems_are_as_expected(
             expected_problem_phrases=expected_problem_phrases,
             expected_exception_metadata=expected_exception_metadata,
             expected_contextual_data_by_name=expected_contextual_data_by_name,
-            actual_validation_exception=raised.value,
+            actual_policy_refused_exception=raised.value,
         )
 
     async def test_CreateReservation_WhenThePartyIsLargerThanCanBeBookedByPhone_ThenTheRefusalCarriesThePrivateDiningGuidance(
         self, restaurant_database_path: Path
     ) -> None:
         expected_problem_phrases: list[str] = ["private dining room"]
-        expected_exception_metadata: ExpectedExceptionMetadata = create_validation_refusal_metadata()
+        expected_exception_metadata: ExpectedExceptionMetadata = create_policy_refusal_metadata()
         expected_contextual_data_by_name: dict[str, int] = {RESERVATION_PROBLEM_COUNT_CONTEXT_NAME: len(expected_problem_phrases)}
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
-            with pytest.raises(ReservationRequestValidationException) as raised:
+            with pytest.raises(ReservationPolicyRefusedException) as raised:
                 await domain_facade.create_reservation(create_reservation_request(create_generated_guest(), party_size=12))
 
-        AsserterException.assert_validation_problems_are_as_expected(
+        AsserterException.assert_policy_problems_are_as_expected(
             expected_problem_phrases=expected_problem_phrases,
             expected_exception_metadata=expected_exception_metadata,
             expected_contextual_data_by_name=expected_contextual_data_by_name,
-            actual_validation_exception=raised.value,
+            actual_policy_refused_exception=raised.value,
         )
 
     @pytest.mark.parametrize("booking_window_edge", ["already passed", "beyond the booking window"])
     async def test_CreateReservation_WhenTheTimeIsOutsideTheBookingWindow_ThenTheRequestIsRefused(
         self, restaurant_database_path: Path, booking_window_edge: str
     ) -> None:
-        expected_exception_metadata: ExpectedExceptionMetadata = create_validation_refusal_metadata()
+        expected_exception_metadata: ExpectedExceptionMetadata = create_policy_refusal_metadata()
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
             reservation_policy: ReservationPolicy = (await domain_facade.get_restaurant_profile()).reservation_policy
@@ -582,7 +593,7 @@ class TestCreateReservation:
             booking_window_breach: BookingWindowBreach = derive_booking_window_breach(booking_window_edge, restaurant_local_now, reservation_policy)
             expected_problem_phrases: list[str] = [booking_window_breach.expected_problem_phrase]
             expected_contextual_data_by_name: dict[str, int] = {RESERVATION_PROBLEM_COUNT_CONTEXT_NAME: len(expected_problem_phrases)}
-            with pytest.raises(ReservationRequestValidationException) as raised:
+            with pytest.raises(ReservationPolicyRefusedException) as raised:
                 await domain_facade.create_reservation(
                     create_reservation_request(
                         create_generated_guest(),
@@ -591,11 +602,11 @@ class TestCreateReservation:
                     )
                 )
 
-        AsserterException.assert_validation_problems_are_as_expected(
+        AsserterException.assert_policy_problems_are_as_expected(
             expected_problem_phrases=expected_problem_phrases,
             expected_exception_metadata=expected_exception_metadata,
             expected_contextual_data_by_name=expected_contextual_data_by_name,
-            actual_validation_exception=raised.value,
+            actual_policy_refused_exception=raised.value,
         )
 
 

@@ -127,8 +127,9 @@ Each tool is a standalone class with a Pydantic input model. Pydantic is a valid
 produces the JSON schema that tells the model what arguments the tool takes. The toolbox treats three outcomes
 differently:
 
-- **A refusal from the restaurant**, such as "closed that day" or "no table free", comes back to the model as an
-  answer with the reason, which the agent relays to the caller. It is not an error.
+- **A refusal from the restaurant**, such as "closed that day", "no table free" or "parties over eight book the
+  private dining room", comes back to the model as an answer with the reason, which the agent relays to the caller.
+  It is not an error, and it never counts as a malformed call.
 - **A malformed call**, such as an unknown tool, bad arguments or a value the restaurant can't read, goes back to the
   model with what was wrong so it can correct itself without mentioning it to the caller. Three malformed calls in a
   row are allowed; a fourth with nothing accepted in between ends the conversation with an error.

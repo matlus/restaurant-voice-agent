@@ -6,6 +6,7 @@
 import asyncio
 import json
 from contextlib import aclosing
+from dataclasses import asdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Final
@@ -38,6 +39,7 @@ from voice_agent_restaurant import (
     Dish,
     MenuSearchRequest,
     OpeningHours,
+    ReservationPolicyRefusedException,
     RestaurantClosedOnDateException,
     Weekday,
 )
@@ -49,14 +51,15 @@ PROVIDER_AUDIO_FORMAT: Final[ConversationAudioFormat] = ConversationAudioFormat(
 GUEST_QUESTION_AUDIO: Final[bytes] = b"guest asks the agent something"
 CONVERSATION_TIME_LIMIT_SECONDS: Final[float] = 5.0
 TOOL_CALL_ID: Final[str] = "call_guest_question"
-# The greeting, then the reply the agent gives once its tool call is answered.
-EXPECTED_CONVERSATION_EVENTS: Final[list[ConversationEvent]] = [
+WRONG_CALLS_ALLOWED_IN_A_ROW: Final[int] = 3
+GREETING_EVENTS: Final[list[ConversationEvent]] = [
     ConversationStarted(audio_format=PROVIDER_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
     AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
     AgentTurnFinished(),
-    AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
-    AgentTurnFinished(),
 ]
+# The reply the agent gives once its tool call is answered.
+ANSWER_EVENTS: Final[list[ConversationEvent]] = [AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO), AgentTurnFinished()]
+EXPECTED_CONVERSATION_EVENTS: Final[list[ConversationEvent]] = GREETING_EVENTS + ANSWER_EVENTS
 RESTAURANT_TOOL_NAMES: Final[tuple[str, ...]] = (
     "search_menu",
     "describe_dish",
@@ -70,9 +73,9 @@ RESTAURANT_TOOL_NAMES: Final[tuple[str, ...]] = (
 
 
 async def hold_tool_call_conversation(
-    restaurant_database_path: Path, tool_name: str, arguments_json: str
+    restaurant_database_path: Path, tool_name: str, arguments_json: str, guest_question_count: int = 1
 ) -> tuple[list[ConversationEvent], RealtimeVoiceServiceScripted]:
-    """A call in which the guest asks one question and the model answers it by calling the given tool."""
+    """A call in which the guest asks the given number of questions and the model answers each by calling the given tool."""
     guest_microphone: GuestMicrophone = GuestMicrophone()
     async with (
         RealtimeVoiceServiceScripted(
@@ -85,7 +88,9 @@ async def hold_tool_call_conversation(
         ) as conversation,
     ):
         actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
-            conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=len(EXPECTED_CONVERSATION_EVENTS)
+            conversation,
+            [GUEST_QUESTION_AUDIO] * guest_question_count,
+            hang_up_after_event_count=len(GREETING_EVENTS) + len(ANSWER_EVENTS) * guest_question_count,
         )
     return actual_conversation_events, realtime_voice_service_scripted
 
@@ -103,6 +108,21 @@ def count_agent_response_requests(realtime_voice_service_scripted: RealtimeVoice
         captured_realtime_session.agent_response_request_count
         for captured_realtime_session in realtime_voice_service_scripted.captured_realtime_sessions
     )
+
+
+async def create_tomorrows_availability_request(restaurant_database_path: Path, reservation_time: str, party_size: int) -> AvailabilityRequest:
+    async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
+        restaurant_local_now: datetime = await restaurant_domain_facade.get_restaurant_local_now()
+    tomorrow: date = restaurant_local_now.date() + timedelta(days=1)
+    return AvailabilityRequest(reservation_date=tomorrow.isoformat(), reservation_time=reservation_time, party_size=party_size)
+
+
+async def read_policy_refusal(restaurant_database_path: Path, availability_request: AvailabilityRequest) -> str:
+    """What the restaurant itself says when its booking policy does not allow the availability request."""
+    async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
+        with pytest.raises(ReservationPolicyRefusedException) as raised:
+            await restaurant_domain_facade.check_availability(availability_request)
+    return raised.value.message
 
 
 def find_next_closed_date(restaurant_local_now: datetime, opening_hours: OpeningHours) -> date:
@@ -248,3 +268,60 @@ class TestAgentTools:
             expected_conversation_events=EXPECTED_CONVERSATION_EVENTS, actual_conversation_events=actual_conversation_events
         )
         assert actual_call_rejections == expected_call_rejections
+
+    @pytest.mark.parametrize(
+        ("reservation_time", "party_size", "expected_reason_phrase"),
+        [
+            pytest.param("19:00", 10, "private dining room", id="party-too-large-to-book-by-phone"),
+            pytest.param("18:40", 2, "the nearest times are 18:30 and 18:45", id="time-between-bookable-times"),
+        ],
+    )
+    async def test_Converse_WhenTheBookingPolicyRefusesTheAgentsRequest_ThenTheAgentIsToldWhySoItCanTellTheCaller(
+        self, restaurant_database_path: Path, reservation_time: str, party_size: int, expected_reason_phrase: str
+    ) -> None:
+        availability_request: AvailabilityRequest = await create_tomorrows_availability_request(
+            restaurant_database_path, reservation_time, party_size
+        )
+        policy_refusal: str = await read_policy_refusal(restaurant_database_path, availability_request)
+        assert expected_reason_phrase in policy_refusal, (
+            f"The restaurant's refusal no longer gives the reason this scenario needs: {policy_refusal!r}"
+        )
+        expected_tool_answers: list[dict[str, object]] = [{"refused": True, "reason": policy_refusal}]
+
+        actual_conversation_events: list[ConversationEvent]
+        realtime_voice_service_scripted: RealtimeVoiceServiceScripted
+        actual_conversation_events, realtime_voice_service_scripted = await hold_tool_call_conversation(
+            restaurant_database_path, "check_availability", json.dumps(asdict(availability_request))
+        )
+
+        actual_tool_answers: list[dict[str, object]] = [
+            json.loads(actual_tool_output.output) for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted)
+        ]
+        AsserterConversation.assert_conversation_events_are_as_expected(
+            expected_conversation_events=EXPECTED_CONVERSATION_EVENTS, actual_conversation_events=actual_conversation_events
+        )
+        assert actual_tool_answers == expected_tool_answers
+
+    async def test_Converse_WhenTheBookingPolicyRefusesMoreTimesInARowThanWrongCallsAreAllowed_ThenTheCallGoesOn(
+        self, restaurant_database_path: Path
+    ) -> None:
+        # A refusal is the restaurant's answer, not a wrong call by the agent, so it never counts toward the wrong calls allowed.
+        refusal_count: int = WRONG_CALLS_ALLOWED_IN_A_ROW + 1
+        availability_request: AvailabilityRequest = await create_tomorrows_availability_request(restaurant_database_path, "19:00", 10)
+        policy_refusal: str = await read_policy_refusal(restaurant_database_path, availability_request)
+        expected_conversation_events: list[ConversationEvent] = GREETING_EVENTS + ANSWER_EVENTS * refusal_count
+        expected_tool_answers: list[dict[str, object]] = [{"refused": True, "reason": policy_refusal}] * refusal_count
+
+        actual_conversation_events: list[ConversationEvent]
+        realtime_voice_service_scripted: RealtimeVoiceServiceScripted
+        actual_conversation_events, realtime_voice_service_scripted = await hold_tool_call_conversation(
+            restaurant_database_path, "check_availability", json.dumps(asdict(availability_request)), guest_question_count=refusal_count
+        )
+
+        actual_tool_answers: list[dict[str, object]] = [
+            json.loads(actual_tool_output.output) for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted)
+        ]
+        AsserterConversation.assert_conversation_events_are_as_expected(
+            expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
+        )
+        assert actual_tool_answers == expected_tool_answers
