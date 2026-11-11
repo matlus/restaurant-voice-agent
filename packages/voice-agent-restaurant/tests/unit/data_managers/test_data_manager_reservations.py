@@ -72,7 +72,9 @@ class TestDataManagerReservationsReschedule:
     async def test_RescheduleReservation_WhenTheBookingChangedAfterItWasRead_ThenTheChangeIsRefusedAndTheOtherChangeKept(
         self, restaurant_database_path: Path
     ) -> None:
-        data_manager_reservations: DataManagerReservations = DataManagerReservations(restaurant_database_path, ClockFixed(WEDNESDAY_AFTERNOON_UTC))
+        data_manager_reservations: DataManagerReservations = DataManagerReservations(
+            restaurant_database_path, True, ClockFixed(WEDNESDAY_AFTERNOON_UTC)
+        )
         expected_exception_metadata: ExpectedExceptionMetadata = ExpectedExceptionMetadata(
             http_status_code=409,
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,
@@ -123,7 +125,9 @@ class TestDataManagerReservationsReschedule:
         assert actual_found_reservations == expected_reservations
 
     async def test_RescheduleReservation_WhenTheBookingWasCancelledAfterItWasRead_ThenItIsNotFound(self, restaurant_database_path: Path) -> None:
-        data_manager_reservations: DataManagerReservations = DataManagerReservations(restaurant_database_path, ClockFixed(WEDNESDAY_AFTERNOON_UTC))
+        data_manager_reservations: DataManagerReservations = DataManagerReservations(
+            restaurant_database_path, True, ClockFixed(WEDNESDAY_AFTERNOON_UTC)
+        )
         expected_found_reservations: list[Reservation] = []
         expected_exception_metadata: ExpectedExceptionMetadata = ExpectedExceptionMetadata(
             http_status_code=404,
@@ -171,7 +175,9 @@ class TestDataManagerReservationsCancel:
     async def test_CancelReservation_WhenTheBookingChangedAfterItWasRead_ThenTheCancellationIsRefusedAndTheChangeKept(
         self, restaurant_database_path: Path
     ) -> None:
-        data_manager_reservations: DataManagerReservations = DataManagerReservations(restaurant_database_path, ClockFixed(WEDNESDAY_AFTERNOON_UTC))
+        data_manager_reservations: DataManagerReservations = DataManagerReservations(
+            restaurant_database_path, True, ClockFixed(WEDNESDAY_AFTERNOON_UTC)
+        )
         expected_exception_metadata: ExpectedExceptionMetadata = ExpectedExceptionMetadata(
             http_status_code=409,
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,

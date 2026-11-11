@@ -70,8 +70,8 @@ class DataManagerReservations:
         LIMIT 1
     """
 
-    def __init__(self, database_path: Path, clock: ClockBase) -> None:
-        self._restaurant_store_connector: RestaurantStoreConnector = RestaurantStoreConnector(database_path, clock)
+    def __init__(self, database_path: Path, seeds_demo_bookings: bool, clock: ClockBase) -> None:  # noqa: FBT001 - a setting's value, not a mode switch
+        self._restaurant_store_connector: RestaurantStoreConnector = RestaurantStoreConnector(database_path, seeds_demo_bookings, clock)
 
     async def find_seatings_on(self, reservation_date: date) -> list[Seating]:
         return await asyncio.to_thread(self._find_seatings_on_synchronously, reservation_date)

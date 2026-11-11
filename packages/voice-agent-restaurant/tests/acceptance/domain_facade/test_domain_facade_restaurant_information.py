@@ -17,6 +17,7 @@ from acceptance_support.bundled_seed import SeededClosedWeekday, SeededRestauran
 from acceptance_support.generated_guests import GeneratedGuest, create_generated_guest
 from acceptance_support.service_locator_testing import (
     DATABASE_PATH_VARIABLE_NAME,
+    SEED_DEMO_BOOKINGS_VARIABLE_NAME,
     WEDNESDAY_AFTERNOON_UTC,
     ServiceLocatorTesting,
     create_domain_facade,
@@ -167,7 +168,7 @@ class TestRestaurantInformation:
 
         assert actual_found_reservations == expected_reservations
 
-    async def test_GetRestaurantProfile_WhenTheStoreWasCreatedByAnOlderVersion_ThenTheFailureSaysToDeleteTheStore(
+    def test_DomainFacade_WhenTheStoreWasCreatedByAnOlderVersion_ThenStartupFailsSayingToDeleteTheStore(
         self, older_store_database_path: Path
     ) -> None:
         expected_message_phrases: list[str] = [f"store version {OLDER_STORE_VERSION}", "Delete the store file"]
@@ -181,9 +182,8 @@ class TestRestaurantInformation:
         expected_contextual_data_by_name: dict[str, int] = {"RestaurantStore.Version": OLDER_STORE_VERSION}
         expected_present_contextual_data_names: list[str] = ["RestaurantStore.RequiredVersion"]
 
-        async with create_domain_facade(older_store_database_path) as domain_facade:
-            with pytest.raises(RestaurantStoreContractViolationException) as raised:
-                await domain_facade.get_restaurant_profile()
+        with pytest.raises(RestaurantStoreContractViolationException) as raised:
+            create_domain_facade(older_store_database_path)
 
         AsserterException.assert_message_and_metadata_are_as_expected(
             expected_exception_content=ExpectedExceptionContent(
@@ -195,10 +195,8 @@ class TestRestaurantInformation:
             actual_voice_agent_restaurant_exception=raised.value,
         )
 
-    async def test_GetRestaurantProfile_WhenTheStoreFileIsNotASqliteDatabase_ThenTheFailureIsReportedAsPermanent(
-        self, foreign_file_database_path: Path
-    ) -> None:
-        store_operation: str = "read the restaurant profile"
+    def test_DomainFacade_WhenTheStoreFileIsNotASqliteDatabase_ThenStartupFailsReportingItAsPermanent(self, foreign_file_database_path: Path) -> None:
+        store_operation: str = "read the restaurant's reference data"
         expected_message_phrases: list[str] = [store_operation, "retrying will not help"]
         expected_exception_metadata: ExpectedExceptionMetadata = ExpectedExceptionMetadata(
             http_status_code=500,
@@ -211,9 +209,8 @@ class TestRestaurantInformation:
         # The driver's error type and text are its own; that they are recorded is what the diagnosis needs.
         expected_present_contextual_data_names: list[str] = ["RestaurantStore.ErrorType", "RestaurantStore.Error"]
 
-        async with create_domain_facade(foreign_file_database_path) as domain_facade:
-            with pytest.raises(RestaurantStoreContractViolationException) as raised:
-                await domain_facade.get_restaurant_profile()
+        with pytest.raises(RestaurantStoreContractViolationException) as raised:
+            create_domain_facade(foreign_file_database_path)
 
         AsserterException.assert_message_and_metadata_are_as_expected(
             expected_exception_content=ExpectedExceptionContent(
@@ -244,6 +241,31 @@ class TestRestaurantInformation:
 
         with pytest.raises(ConfigurationSettingException) as raised:
             DomainFacade(ServiceLocatorTesting(environment_variables, WEDNESDAY_AFTERNOON_UTC))
+
+        AsserterException.assert_message_and_metadata_are_as_expected(
+            expected_exception_content=ExpectedExceptionContent(
+                message_phrases=expected_message_phrases,
+                exception_metadata=expected_exception_metadata,
+                contextual_data_by_name=expected_contextual_data_by_name,
+            ),
+            actual_voice_agent_restaurant_exception=raised.value,
+        )
+
+    def test_DomainFacade_WhenTheDemoBookingsSettingIsNotTrueOrFalse_ThenConstructionFailsNamingTheSettingAndValue(
+        self, restaurant_database_path: Path
+    ) -> None:
+        unreadable_setting_value: str = "sometimes"
+        expected_message_phrases: list[str] = [SEED_DEMO_BOOKINGS_VARIABLE_NAME, "'true' or 'false'", unreadable_setting_value]
+        expected_exception_metadata: ExpectedExceptionMetadata = create_configuration_refusal_metadata()
+        expected_contextual_data_by_name: dict[str, str] = {ENVIRONMENT_VARIABLE_NAME_CONTEXT_NAME: SEED_DEMO_BOOKINGS_VARIABLE_NAME}
+
+        with pytest.raises(ConfigurationSettingException) as raised:
+            DomainFacade(
+                ServiceLocatorTesting(
+                    {DATABASE_PATH_VARIABLE_NAME: str(restaurant_database_path), SEED_DEMO_BOOKINGS_VARIABLE_NAME: unreadable_setting_value},
+                    WEDNESDAY_AFTERNOON_UTC,
+                )
+            )
 
         AsserterException.assert_message_and_metadata_are_as_expected(
             expected_exception_content=ExpectedExceptionContent(

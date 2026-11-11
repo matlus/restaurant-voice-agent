@@ -14,10 +14,12 @@ WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
 RUN mkdir /app/data && chown voiceagent /app/data
 USER voiceagent
-# The SQLite store lives inside the container, so it is seeded afresh whenever a new replica starts.
+# The SQLite store lives inside the container, so it is seeded afresh whenever a new replica starts. This image is the
+# hosted demo, so it seeds the demo bookings the test scenarios rely on; a real deployment leaves them out.
 ENV PATH="/app/.venv/bin:$PATH" \
     VOICE_AGENT_WEB_HOST=0.0.0.0 \
     VOICE_AGENT_WEB_PORT=8000 \
-    VOICE_AGENT_RESTAURANT_DATABASE_PATH=/app/data/restaurant.sqlite3
+    VOICE_AGENT_RESTAURANT_DATABASE_PATH=/app/data/restaurant.sqlite3 \
+    VOICE_AGENT_RESTAURANT_SEED_DEMO_BOOKINGS=true
 EXPOSE 8000
 CMD ["voice_agent_web"]

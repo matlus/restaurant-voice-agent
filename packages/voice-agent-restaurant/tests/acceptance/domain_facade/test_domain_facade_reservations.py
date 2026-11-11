@@ -7,6 +7,7 @@
 # they read; the open times a refusal must offer are worked out from the restaurant's own availability answers for every
 # other bookable time that day.
 
+import asyncio
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
@@ -28,7 +29,12 @@ from acceptance_support.bundled_seed import (
 )
 from acceptance_support.generated_guests import GeneratedGuest, create_generated_guest, create_generated_note
 from acceptance_support.seeded_bookings import derive_next_weekday_date, retrieve_seeded_booking
-from acceptance_support.service_locator_testing import FRIDAY_EVENING_UTC, THURSDAY_EARLY_EVENING_UTC, create_domain_facade
+from acceptance_support.service_locator_testing import (
+    FRIDAY_EVENING_UTC,
+    THURSDAY_EARLY_EVENING_UTC,
+    create_domain_facade,
+    create_domain_facade_without_demo_bookings,
+)
 from voice_agent_restaurant import (
     AvailabilityRequest,
     AvailabilityResult,
@@ -481,6 +487,25 @@ class TestCheckAvailability:
         assert (raised.value.first_seating_time, raised.value.last_seating_time) == expected_seating_hours
 
 
+class TestDemoBookings:
+    async def test_CheckAvailability_WhenDemoBookingsAreNotSeeded_ThenTheEveningTheDemoFillsIsFree(self, restaurant_database_path: Path) -> None:
+        # The demo bookings fill every table on this evening; a store without them starts with no bookings at all.
+        expected_availability_result: AvailabilityResult = AvailabilityResult(
+            reservation_date=date.fromisoformat(FULLY_BOOKED_TUESDAY),
+            requested_time=time(19, 0),
+            party_size=2,
+            is_available=True,
+            alternative_times=[],
+        )
+
+        async with create_domain_facade_without_demo_bookings(restaurant_database_path) as domain_facade:
+            actual_availability_result: AvailabilityResult = await domain_facade.check_availability(
+                AvailabilityRequest(reservation_date=FULLY_BOOKED_TUESDAY, reservation_time="19:00", party_size=2)
+            )
+
+        assert actual_availability_result == expected_availability_result
+
+
 class TestCreateReservation:
     async def test_CreateReservation_WhenATableIsFree_ThenTheSmallestFittingTableIsBookedAndCanBeFoundByPhone(
         self, restaurant_database_path: Path
@@ -618,6 +643,39 @@ class TestCreateReservation:
             actual_no_table_available_exception=raised.value,
         )
         assert actual_found_reservations == expected_found_reservations
+
+    async def test_CreateReservation_WhenTwoGuestsRaceForTheOnlyFittingTable_ThenExactlyOneIsBookedAndTheOtherRefused(
+        self, restaurant_database_path: Path
+    ) -> None:
+        party_size: int = 8
+        racing_guests: list[GeneratedGuest] = [create_generated_guest(), create_generated_guest()]
+        fitting_table_ids: list[str] = [seeded_table.table_id for seeded_table in read_seeded_tables() if seeded_table.seats >= party_size]
+        assert len(fitting_table_ids) == 1, (
+            f"The race needs exactly one table to seat {party_size}; the seeded tables offer {fitting_table_ids!r}, so the seeded data "
+            "no longer supports this scenario"
+        )
+        expected_outcome: tuple[list[str], list[type[BaseException]]] = (fitting_table_ids, [NoTableAvailableException])
+
+        async with create_domain_facade(restaurant_database_path) as domain_facade:
+            availability_result: AvailabilityResult = await domain_facade.check_availability(
+                AvailabilityRequest(reservation_date=QUIET_THURSDAY, reservation_time="19:00", party_size=party_size)
+            )
+            assert availability_result.is_available, (
+                f"The race needs the only table for {party_size} free at 19:00 on {QUIET_THURSDAY}; the seeded data no longer supports this scenario"
+            )
+            racing_results: list[Reservation | BaseException] = await asyncio.gather(
+                *(
+                    domain_facade.create_reservation(create_reservation_request(racing_guest, party_size=party_size))
+                    for racing_guest in racing_guests
+                ),
+                return_exceptions=True,
+            )
+
+        actual_outcome: tuple[list[str], list[type[BaseException]]] = (
+            [racing_result.table_id for racing_result in racing_results if isinstance(racing_result, Reservation)],
+            [type(racing_result) for racing_result in racing_results if isinstance(racing_result, BaseException)],
+        )
+        assert actual_outcome == expected_outcome
 
     async def test_CreateReservation_WhenSeveralValuesAreMissingOrMalformed_ThenEveryProblemIsReportedTogether(
         self, restaurant_database_path: Path

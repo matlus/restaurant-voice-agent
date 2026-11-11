@@ -31,3 +31,17 @@ Store or configuration trouble raises a `VoiceAgentRestaurantTechnicalBaseExcept
 | Variable | Meaning |
 | --- | --- |
 | `VOICE_AGENT_RESTAURANT_DATABASE_PATH` | Path of the SQLite file. It is created and seeded on first use. |
+| `VOICE_AGENT_RESTAURANT_SEED_DEMO_BOOKINGS` | `true` also seeds the demo bookings; `false` (the default) seeds only the restaurant: profile, hours, closures, tables and menu. |
+
+## The store
+
+The store is a single SQLite file and is disposable: it holds the bundled seed and the bookings made since. A store
+created by another version of the app is refused at startup, with a message saying to delete it; there are no
+migrations. The file uses write-ahead logging, so lookups carry on while a booking is written, and its own `CHECK`
+constraints refuse impossible rows (no guests, a seating that ends before it starts, an unknown status) even if the
+domain's validation were bypassed. Two bookings racing for the last fitting table cannot both win: each seats its
+party inside one `IMMEDIATE` transaction, and a test proves exactly one succeeds.
+
+The restaurant's reference data (profile, hours, closures, tables and menu) never changes while the app runs, so it
+is read once when the `DomainFacade` is built and served from memory after that. A booking then reads the store only
+for the bookings it must check and the one it writes.

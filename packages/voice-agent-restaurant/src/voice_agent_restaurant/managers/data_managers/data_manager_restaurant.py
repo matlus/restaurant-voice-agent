@@ -1,6 +1,6 @@
-import asyncio
 import json
 import sqlite3
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Final, cast
@@ -25,104 +25,89 @@ from voice_agent_restaurant.managers.models.restaurant_models import (
 )
 
 
-class DataManagerRestaurant:
-    """Reads the restaurant's reference data: profile, hours, closures, tables and menu.
+@dataclass(frozen=True)
+class _RestaurantReferenceData:
+    """Everything about the restaurant that no request changes, read from the store in one go."""
 
-    Every method runs its blocking SQLite work on a worker thread. Nothing SQLite-shaped leaves this class.
+    restaurant_profile: RestaurantProfile
+    weekly_hours: list[WeekdayHours]
+    closures: list[Closure]
+    dining_tables: list[DiningTable]
+    dish_records: list[DishRecord]
+
+
+class DataManagerRestaurant:
+    """Serves the restaurant's reference data: profile, hours, closures, tables and menu.
+
+    No request changes this data, so it is read from the store once, when the data manager is built, and every
+    method answers from that snapshot without touching the store. Building it creates and seeds a new store first,
+    so a store that cannot be read fails at startup rather than on the first call. Nothing SQLite-shaped leaves
+    this class.
     """
 
     _WEEKDAY_CONTEXT_KEY: Final[str] = "Restaurant.Weekday"
+    _RESTAURANT_ROW_ID: Final[int] = 1
 
-    def __init__(self, database_path: Path, clock: ClockBase) -> None:
-        self._restaurant_store_connector: RestaurantStoreConnector = RestaurantStoreConnector(database_path, clock)
+    def __init__(self, database_path: Path, seeds_demo_bookings: bool, clock: ClockBase) -> None:  # noqa: FBT001 - a setting's value, not a mode switch
+        restaurant_store_connector: RestaurantStoreConnector = RestaurantStoreConnector(database_path, seeds_demo_bookings, clock)
+        self._restaurant_reference_data: _RestaurantReferenceData = self._read_reference_data(restaurant_store_connector)
 
     async def get_restaurant_profile(self) -> RestaurantProfile:
-        return await asyncio.to_thread(self._get_restaurant_profile_synchronously)
+        return self._restaurant_reference_data.restaurant_profile
 
     async def get_weekly_hours(self) -> list[WeekdayHours]:
-        return await asyncio.to_thread(self._get_weekly_hours_synchronously)
+        return list(self._restaurant_reference_data.weekly_hours)
 
     async def retrieve_weekday_hours(self, weekday: Weekday) -> WeekdayHours:
-        return await asyncio.to_thread(self._retrieve_weekday_hours_synchronously, weekday)
+        matching_weekday_hours: list[WeekdayHours] = [
+            weekday_hours for weekday_hours in self._restaurant_reference_data.weekly_hours if weekday_hours.weekday == weekday
+        ]
+        if len(matching_weekday_hours) != 1:
+            raise RestaurantStoreContractViolationException(
+                message=(
+                    f"The restaurant store holds no single set of opening hours for {weekday.value}, "
+                    "though every seeded store lists each weekday once"
+                ),
+                contextual_data_by_name={self._WEEKDAY_CONTEXT_KEY: weekday.value, "Restaurant.MatchingWeekdayCount": len(matching_weekday_hours)},
+            )
+        return matching_weekday_hours[0]
 
     async def find_closures_between(self, first_date: date, last_date: date) -> list[Closure]:
-        return await asyncio.to_thread(self._find_closures_between_synchronously, first_date, last_date)
+        return [closure for closure in self._restaurant_reference_data.closures if first_date <= closure.closed_on <= last_date]
 
     async def get_dining_tables(self) -> list[DiningTable]:
-        return await asyncio.to_thread(self._get_dining_tables_synchronously)
+        return list(self._restaurant_reference_data.dining_tables)
 
     async def get_dish_records(self) -> list[DishRecord]:
-        return await asyncio.to_thread(self._get_dish_records_synchronously)
+        return list(self._restaurant_reference_data.dish_records)
 
-    def _get_restaurant_profile_synchronously(self) -> RestaurantProfile:
+    @classmethod
+    def _read_reference_data(cls, restaurant_store_connector: RestaurantStoreConnector) -> _RestaurantReferenceData:
         try:
-            with self._restaurant_store_connector.open_connection() as connection:
-                restaurant_row: sqlite3.Row | None = connection.execute("SELECT * FROM restaurant WHERE restaurant_id = 1").fetchone()
+            with restaurant_store_connector.open_connection() as connection:
+                restaurant_row: sqlite3.Row | None = connection.execute(
+                    "SELECT * FROM restaurant WHERE restaurant_id = ?", (cls._RESTAURANT_ROW_ID,)
+                ).fetchone()
+                hours_rows: list[sqlite3.Row] = connection.execute(
+                    "SELECT weekday_index, opens_at_minutes, closes_at_minutes FROM weekly_hours ORDER BY weekday_index"
+                ).fetchall()
+                closure_rows: list[sqlite3.Row] = connection.execute("SELECT closed_on, reason FROM closures ORDER BY closed_on").fetchall()
+                table_rows: list[sqlite3.Row] = connection.execute("SELECT table_id, seats, area FROM dining_tables ORDER BY table_id").fetchall()
+                dish_rows: list[sqlite3.Row] = connection.execute("SELECT * FROM dishes ORDER BY menu_position").fetchall()
         except (sqlite3.Error, OSError) as store_error:
-            raise TranslatorRestaurantStoreExceptions.translate(store_error, "read the restaurant profile") from store_error
+            raise TranslatorRestaurantStoreExceptions.translate(store_error, "read the restaurant's reference data") from store_error
         if restaurant_row is None:
             raise RestaurantStoreContractViolationException(
                 message="The restaurant store holds no restaurant row, though every seeded store has exactly one",
                 contextual_data_by_name={"RestaurantStore.Table": "restaurant"},
             )
-        return self._map_restaurant_profile_row(restaurant_row)
-
-    def _get_weekly_hours_synchronously(self) -> list[WeekdayHours]:
-        try:
-            with self._restaurant_store_connector.open_connection() as connection:
-                hours_rows: list[sqlite3.Row] = connection.execute(
-                    "SELECT weekday_index, opens_at_minutes, closes_at_minutes FROM weekly_hours ORDER BY weekday_index"
-                ).fetchall()
-        except (sqlite3.Error, OSError) as store_error:
-            raise TranslatorRestaurantStoreExceptions.translate(store_error, "read the weekly opening hours") from store_error
-        return [self._map_weekday_hours_row(hours_row) for hours_row in hours_rows]
-
-    def _retrieve_weekday_hours_synchronously(self, weekday: Weekday) -> WeekdayHours:
-        weekday_index: int = list(Weekday).index(weekday)
-        try:
-            with self._restaurant_store_connector.open_connection() as connection:
-                hours_row: sqlite3.Row | None = connection.execute(
-                    "SELECT weekday_index, opens_at_minutes, closes_at_minutes FROM weekly_hours WHERE weekday_index = ?", (weekday_index,)
-                ).fetchone()
-        except (sqlite3.Error, OSError) as store_error:
-            raise TranslatorRestaurantStoreExceptions.translate(
-                store_error, "read the opening hours for a weekday", {self._WEEKDAY_CONTEXT_KEY: weekday.value}
-            ) from store_error
-        if hours_row is None:
-            raise RestaurantStoreContractViolationException(
-                message=f"The restaurant store holds no opening hours for {weekday.value}, though every seeded store lists each weekday",
-                contextual_data_by_name={self._WEEKDAY_CONTEXT_KEY: weekday.value},
-            )
-        return self._map_weekday_hours_row(hours_row)
-
-    def _find_closures_between_synchronously(self, first_date: date, last_date: date) -> list[Closure]:
-        try:
-            with self._restaurant_store_connector.open_connection() as connection:
-                closure_rows: list[sqlite3.Row] = connection.execute(
-                    "SELECT closed_on, reason FROM closures WHERE closed_on BETWEEN ? AND ? ORDER BY closed_on",
-                    (first_date.isoformat(), last_date.isoformat()),
-                ).fetchall()
-        except (sqlite3.Error, OSError) as store_error:
-            raise TranslatorRestaurantStoreExceptions.translate(
-                store_error, "read the closure dates", {"Closure.FirstDate": first_date.isoformat(), "Closure.LastDate": last_date.isoformat()}
-            ) from store_error
-        return [Closure(closed_on=date.fromisoformat(closure_row["closed_on"]), reason=closure_row["reason"]) for closure_row in closure_rows]
-
-    def _get_dining_tables_synchronously(self) -> list[DiningTable]:
-        try:
-            with self._restaurant_store_connector.open_connection() as connection:
-                table_rows: list[sqlite3.Row] = connection.execute("SELECT table_id, seats, area FROM dining_tables ORDER BY table_id").fetchall()
-        except (sqlite3.Error, OSError) as store_error:
-            raise TranslatorRestaurantStoreExceptions.translate(store_error, "read the dining tables") from store_error
-        return [DiningTable(table_id=table_row["table_id"], seats=table_row["seats"], area=table_row["area"]) for table_row in table_rows]
-
-    def _get_dish_records_synchronously(self) -> list[DishRecord]:
-        try:
-            with self._restaurant_store_connector.open_connection() as connection:
-                dish_rows: list[sqlite3.Row] = connection.execute("SELECT * FROM dishes ORDER BY menu_position").fetchall()
-        except (sqlite3.Error, OSError) as store_error:
-            raise TranslatorRestaurantStoreExceptions.translate(store_error, "read the menu") from store_error
-        return [self._map_dish_row(dish_row) for dish_row in dish_rows]
+        return _RestaurantReferenceData(
+            restaurant_profile=cls._map_restaurant_profile_row(restaurant_row),
+            weekly_hours=[cls._map_weekday_hours_row(hours_row) for hours_row in hours_rows],
+            closures=[Closure(closed_on=date.fromisoformat(closure_row["closed_on"]), reason=closure_row["reason"]) for closure_row in closure_rows],
+            dining_tables=[DiningTable(table_id=table_row["table_id"], seats=table_row["seats"], area=table_row["area"]) for table_row in table_rows],
+            dish_records=[cls._map_dish_row(dish_row) for dish_row in dish_rows],
+        )
 
     @staticmethod
     def _map_restaurant_profile_row(restaurant_row: sqlite3.Row) -> RestaurantProfile:

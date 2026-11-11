@@ -1,7 +1,14 @@
 from typing import Final
 
+from voice_agent_restaurant.managers.models.reservation_models import ReservationStatus
+
 # The store's version lives in SQLite's PRAGMA user_version. A new, empty file reads 0; a created and seeded store reads this.
-STORE_VERSION: Final[int] = 2
+# The store is disposable: it holds the bundled seed and the bookings made since, and a store from another version is
+# refused rather than migrated, so it is deleted and created again.
+STORE_VERSION: Final[int] = 3
+
+# The status values the reservations table accepts, from the one enum that defines them.
+_RESERVATION_STATUS_VALUES: Final[str] = ", ".join(f"'{reservation_status.value}'" for reservation_status in ReservationStatus)
 
 # Times of day are stored as minutes after midnight and dates as ISO text, so range
 # comparisons in SQL are plain integer and string comparisons.
@@ -69,20 +76,21 @@ SCHEMA_STATEMENTS: Final[tuple[str, ...]] = (
         recipe_diet_labels_json TEXT NOT NULL
     )
     """,
-    """
+    f"""
     CREATE TABLE IF NOT EXISTS reservations (
         confirmation_code TEXT PRIMARY KEY,
         guest_name TEXT NOT NULL,
         phone_number TEXT NOT NULL,
-        party_size INTEGER NOT NULL,
+        party_size INTEGER NOT NULL CHECK (party_size > 0),
         reservation_date TEXT NOT NULL,
-        starts_at_minutes INTEGER NOT NULL,
-        ends_at_minutes INTEGER NOT NULL,
+        starts_at_minutes INTEGER NOT NULL CHECK (starts_at_minutes BETWEEN 0 AND 1439),
+        ends_at_minutes INTEGER NOT NULL CHECK (ends_at_minutes <= 1440),
         table_id TEXT NOT NULL REFERENCES dining_tables (table_id),
         notes TEXT NULL,
-        status TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ({_RESERVATION_STATUS_VALUES})),
         created_at_utc TEXT NOT NULL,
-        updated_at_utc TEXT NOT NULL
+        updated_at_utc TEXT NOT NULL,
+        CHECK (ends_at_minutes > starts_at_minutes)
     )
     """,
     "CREATE INDEX IF NOT EXISTS ix_reservations_date ON reservations (reservation_date, status)",
