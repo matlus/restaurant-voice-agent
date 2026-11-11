@@ -98,25 +98,44 @@ class ManagerConversation:
         # Wrong tool calls are counted per conversation; the toolbox ends the call when too many come in a row.
         consecutive_call_repair_count: int = 0
         try:
-            session_event: VoiceSessionEvent
-            async for session_event in realtime_voice_session.receive_events():
-                if isinstance(session_event, AgentToolCallRequested):
-                    agent_tool_call_answer: AgentToolCallAnswer = await agent_toolbox.run_tool_call(session_event, consecutive_call_repair_count)
-                    consecutive_call_repair_count = agent_tool_call_answer.consecutive_call_repair_count
-                    await realtime_voice_session.send_tool_result(session_event.call_id, agent_tool_call_answer.tool_output_json)
+            voice_session_event: VoiceSessionEvent
+            async for voice_session_event in realtime_voice_session.receive_events():
+                if isinstance(voice_session_event, AgentToolCallRequested):
+                    consecutive_call_repair_count = await ManagerConversation._answer_tool_call(
+                        realtime_voice_session, agent_toolbox, voice_session_event, consecutive_call_repair_count, guest_audio_ended
+                    )
                 else:
-                    yield session_event
+                    yield voice_session_event
         finally:
-            # Once the guest audio has ended, forwarding is closing the session and finishes by itself; awaiting it
-            # re-raises a forwarding failure. Before that it would wait for guest audio forever, so it is cancelled.
-            if not guest_audio_ended.is_set():
-                guest_audio_forwarding.cancel()
-            try:
-                await guest_audio_forwarding
-            except asyncio.CancelledError:
-                # Only the cancellation the relay requested ends here; one aimed at the task holding the call goes on.
-                if ManagerConversation._is_current_task_being_cancelled():
-                    raise
+            await ManagerConversation._settle_guest_audio_forwarding(guest_audio_forwarding, guest_audio_ended)
+
+    @staticmethod
+    async def _answer_tool_call(
+        realtime_voice_session: RealtimeVoiceSessionBase,
+        agent_toolbox: AgentToolbox,
+        agent_tool_call_requested: AgentToolCallRequested,
+        consecutive_call_repair_count: int,
+        guest_audio_ended: asyncio.Event,
+    ) -> int:
+        """Runs the tool the agent asked for and sends the answer back, and returns how many wrong calls in a row now stand.
+        A guest who hung up while the tool ran is not answered: the session is already closing."""
+        agent_tool_call_answer: AgentToolCallAnswer = await agent_toolbox.run_tool_call(agent_tool_call_requested, consecutive_call_repair_count)
+        if not guest_audio_ended.is_set():
+            await realtime_voice_session.send_tool_result(agent_tool_call_requested.call_id, agent_tool_call_answer.tool_output_json)
+        return agent_tool_call_answer.consecutive_call_repair_count
+
+    @staticmethod
+    async def _settle_guest_audio_forwarding(guest_audio_forwarding: asyncio.Task[None], guest_audio_ended: asyncio.Event) -> None:
+        # Once the guest audio has ended, forwarding is closing the session and finishes by itself; awaiting it
+        # re-raises a forwarding failure. Before that it would wait for guest audio forever, so it is cancelled.
+        if not guest_audio_ended.is_set():
+            guest_audio_forwarding.cancel()
+        try:
+            await guest_audio_forwarding
+        except asyncio.CancelledError:
+            # Only the cancellation the relay requested ends here; one aimed at the task holding the call goes on.
+            if ManagerConversation._is_current_task_being_cancelled():
+                raise
 
     @staticmethod
     def _is_current_task_being_cancelled() -> bool:

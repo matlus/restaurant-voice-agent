@@ -196,6 +196,17 @@ async def derive_offered_open_times(domain_facade: DomainFacade, reservation_dat
     return sorted(nearest_open_times[:OFFERED_ALTERNATIVE_TIME_COUNT])
 
 
+async def derive_busy_friday_open_times(domain_facade: DomainFacade, requested_time: time, party_size: int) -> list[time]:
+    """The open times a refusal on the busy Friday must offer, guarded to be a full set, so that a refusal offering no
+    times at all could not pass as matching."""
+    busy_friday_open_times: list[time] = await derive_offered_open_times(domain_facade, date.fromisoformat(BUSY_FRIDAY), requested_time, party_size)
+    assert len(busy_friday_open_times) == OFFERED_ALTERNATIVE_TIME_COUNT, (
+        f"The busy Friday needs {OFFERED_ALTERNATIVE_TIME_COUNT} open times near {requested_time:%H:%M} for a party of {party_size}; "
+        f"the seeded data no longer supports this scenario: {busy_friday_open_times!r}"
+    )
+    return busy_friday_open_times
+
+
 def retrieve_smallest_fitting_table_id(party_size: int) -> str:
     """The table a new booking takes when every table is free: the fewest seats that hold the party, then the lowest table id."""
     fitting_tables: list[SeededTable] = [seeded_table for seeded_table in read_seeded_tables() if seeded_table.seats >= party_size]
@@ -264,7 +275,7 @@ class TestCheckAvailability:
                 requested_time=requested_time,
                 party_size=party_size,
                 is_available=False,
-                alternative_times=await derive_offered_open_times(domain_facade, busy_friday, requested_time, party_size),
+                alternative_times=await derive_busy_friday_open_times(domain_facade, requested_time, party_size),
             )
             actual_availability_result: AvailabilityResult = await domain_facade.check_availability(
                 AvailabilityRequest(reservation_date=BUSY_FRIDAY, reservation_time=f"{requested_time:%H:%M}", party_size=party_size)
@@ -450,6 +461,7 @@ class TestCreateReservation:
     ) -> None:
         # Today is NEARLY_FULL_WEDNESDAY, mid-afternoon, so read as morning, "6:30" would already have passed.
         generated_guest: GeneratedGuest = create_generated_guest()
+        spoken_time: str = "6:30"
         nearly_full_wednesday: date = date.fromisoformat(NEARLY_FULL_WEDNESDAY)
         evening_seating: time = time(18, 30)
         expected_booked_seating: tuple[date, time] = (nearly_full_wednesday, evening_seating)
@@ -459,11 +471,11 @@ class TestCreateReservation:
                 AvailabilityRequest(reservation_date=NEARLY_FULL_WEDNESDAY, reservation_time=f"{evening_seating:%H:%M}", party_size=2)
             )
             assert evening_availability_result.is_available, (
-                f"Reading '6:30' as the evening needs a free table at {evening_seating:%H:%M} on {NEARLY_FULL_WEDNESDAY}; "
+                f"Reading '{spoken_time}' as the evening needs a free table at {evening_seating:%H:%M} on {NEARLY_FULL_WEDNESDAY}; "
                 f"the seeded data no longer supports this scenario: {evening_availability_result!r}"
             )
             actual_reservation: Reservation = await domain_facade.create_reservation(
-                create_reservation_request(generated_guest, reservation_date=NEARLY_FULL_WEDNESDAY, reservation_time="6:30")
+                create_reservation_request(generated_guest, reservation_date=NEARLY_FULL_WEDNESDAY, reservation_time=spoken_time)
             )
 
         assert (actual_reservation.reservation_date, actual_reservation.starts_at) == expected_booked_seating
@@ -504,7 +516,6 @@ class TestCreateReservation:
         self, restaurant_database_path: Path
     ) -> None:
         generated_guest: GeneratedGuest = create_generated_guest()
-        busy_friday: date = date.fromisoformat(BUSY_FRIDAY)
         requested_time: time = time(19, 0)
         party_size: int = 4
         expected_found_reservations: list[Reservation] = []
@@ -521,7 +532,7 @@ class TestCreateReservation:
         }
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
-            expected_alternative_times: list[time] = await derive_offered_open_times(domain_facade, busy_friday, requested_time, party_size)
+            expected_alternative_times: list[time] = await derive_busy_friday_open_times(domain_facade, requested_time, party_size)
             expected_message_phrases: list[str] = [f"{expected_alternative_time:%H:%M}" for expected_alternative_time in expected_alternative_times]
             with pytest.raises(NoTableAvailableException) as raised:
                 await domain_facade.create_reservation(
@@ -725,6 +736,7 @@ class TestChangeReservation:
     async def test_ChangeReservation_WhenTheNewTimeHasNoFittingTable_ThenTheBookingIsUnchangedAndOpenTimesAreOffered(
         self, restaurant_database_path: Path
     ) -> None:
+        scenario: str = "The no-fitting-table change"
         busy_friday: date = date.fromisoformat(BUSY_FRIDAY)
         requested_time: time = time(19, 0)
         party_size: int = 4
@@ -741,18 +753,18 @@ class TestChangeReservation:
         }
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
-            current_reservation: Reservation = await read_unstarted_seeded_booking(domain_facade, SEEDED_SAM_PHONE, "The no-fitting-table change")
+            current_reservation: Reservation = await read_unstarted_seeded_booking(domain_facade, SEEDED_SAM_PHONE, scenario)
             availability_result_at_requested_time: AvailabilityResult = await domain_facade.check_availability(
                 AvailabilityRequest(reservation_date=BUSY_FRIDAY, reservation_time=f"{requested_time:%H:%M}", party_size=party_size)
             )
             # A change keeps the booking's own table, so a booking already on that evening could keep a table that fits.
             assert (current_reservation.reservation_date != busy_friday, availability_result_at_requested_time.is_available) == (True, False), (
-                f"The no-fitting-table change needs booking {current_reservation.confirmation_code} to sit on another day and no table free "
+                f"{scenario} needs booking {current_reservation.confirmation_code} to sit on another day and no table free "
                 f"for a party of {party_size} at {requested_time:%H:%M} on {BUSY_FRIDAY}; the seeded data no longer supports this scenario: "
                 f"{current_reservation!r}"
             )
             expected_reservations: list[Reservation] = [current_reservation]
-            expected_alternative_times: list[time] = await derive_offered_open_times(domain_facade, busy_friday, requested_time, party_size)
+            expected_alternative_times: list[time] = await derive_busy_friday_open_times(domain_facade, requested_time, party_size)
             expected_message_phrases: list[str] = [f"{expected_alternative_time:%H:%M}" for expected_alternative_time in expected_alternative_times]
             with pytest.raises(NoTableAvailableException) as raised:
                 await domain_facade.change_reservation(
