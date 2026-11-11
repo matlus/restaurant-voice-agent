@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Final
 
@@ -10,9 +9,12 @@ from voice_agent_restaurant.managers.models.reservation_models import (
     CONFIRMATION_CODE_LENGTH,
     AvailabilityRequest,
     BookingIdentity,
+    BookingReference,
     BookingWindow,
+    ConfirmationCodeReference,
     GuestBookingIdentity,
     GuestBookingSearch,
+    GuestDetailsReference,
     RequestedSeating,
     ReservationCancellationRequest,
     ReservationChangeRequest,
@@ -25,24 +27,6 @@ from voice_agent_restaurant.managers.models.reservation_models import (
 )
 from voice_agent_restaurant.managers.models.restaurant_models import ReservationPolicy
 from voice_agent_restaurant.managers.validators.value_parsing.reservation_value_parsing import ReservationValueParsing
-
-
-@dataclass(frozen=True)
-class _StatedBookingIdentity:
-    """How a change or cancellation identifies its booking, trimmed and in stored form but not yet judged."""
-
-    confirmation_code: str | None
-    phone_number: str | None
-    guest_name: str | None
-    booked_date_text: str | None
-    booked_time_text: str | None
-
-    @property
-    def is_empty(self) -> bool:
-        return all(
-            stated_value is None
-            for stated_value in (self.confirmation_code, self.phone_number, self.guest_name, self.booked_date_text, self.booked_time_text)
-        )
 
 
 class ValidatorReservationRequests:
@@ -64,6 +48,7 @@ class ValidatorReservationRequests:
     RESERVATION_TIME_FIELD_NAME: Final[str] = "reservation_time"
     BOOKED_DATE_FIELD_NAME: Final[str] = "booked_date"
     BOOKED_TIME_FIELD_NAME: Final[str] = "booked_time"
+    REQUIRED_FIELD_PROBLEM_TEMPLATE: Final[str] = "'{field_name}' is required but was not provided"
 
     @classmethod
     def validate_availability_request(cls, availability_request: AvailabilityRequest) -> RequestedSeating:
@@ -115,15 +100,9 @@ class ValidatorReservationRequests:
 
     @classmethod
     def validate_cancellation_request(cls, reservation_cancellation_request: ReservationCancellationRequest) -> BookingIdentity:
-        stated_booking_identity: _StatedBookingIdentity = cls._as_stated_booking_identity(
-            reservation_cancellation_request.confirmation_code,
-            reservation_cancellation_request.phone_number,
-            reservation_cancellation_request.guest_name,
-            reservation_cancellation_request.booked_date,
-            reservation_cancellation_request.booked_time,
-        )
-        validation_problems: list[str] = cls._collect_booking_identity_problems(stated_booking_identity)
-        booking_identity: BookingIdentity | None = cls._to_booking_identity(stated_booking_identity)
+        booking_reference: BookingReference = reservation_cancellation_request.booking_reference
+        validation_problems: list[str] = cls._collect_booking_reference_problems(booking_reference)
+        booking_identity: BookingIdentity | None = cls._to_booking_identity(booking_reference)
         if booking_identity is None or validation_problems:
             raise cls._create_validation_exception(validation_problems)
         return booking_identity
@@ -132,24 +111,17 @@ class ValidatorReservationRequests:
     def validate_change_request(cls, reservation_change_request: ReservationChangeRequest) -> ValidatedReservationChange:
         """Judges the change request on its own. The changed seating is judged by validate_changed_seating once the
         current booking supplies the values left unchanged."""
-        stated_booking_identity: _StatedBookingIdentity = cls._as_stated_booking_identity(
-            reservation_change_request.confirmation_code,
-            reservation_change_request.phone_number,
-            reservation_change_request.guest_name,
-            reservation_change_request.booked_date,
-            reservation_change_request.booked_time,
-        )
         reservation_date_text: str | None = ReservationValueParsing.as_provided(reservation_change_request.reservation_date)
         reservation_time_text: str | None = ReservationValueParsing.as_provided(reservation_change_request.reservation_time)
         notes: str | None = ReservationValueParsing.as_provided(reservation_change_request.notes)
-        validation_problems: list[str] = cls._collect_booking_identity_problems(stated_booking_identity)
+        validation_problems: list[str] = cls._collect_booking_reference_problems(reservation_change_request.booking_reference)
         validation_problems.extend(
             cls._collect_requested_change_problems(reservation_date_text, reservation_time_text, reservation_change_request.party_size, notes)
         )
         validation_problems.extend(cls._collect_optional_date_problems(reservation_date_text, cls.RESERVATION_DATE_FIELD_NAME))
         validation_problems.extend(cls._collect_optional_time_problems(reservation_time_text, cls.RESERVATION_TIME_FIELD_NAME))
         validation_problems.extend(cls._collect_notes_problems(notes))
-        booking_identity: BookingIdentity | None = cls._to_booking_identity(stated_booking_identity)
+        booking_identity: BookingIdentity | None = cls._to_booking_identity(reservation_change_request.booking_reference)
         if booking_identity is None or validation_problems:
             raise cls._create_validation_exception(validation_problems)
         return ValidatedReservationChange(
@@ -177,19 +149,24 @@ class ValidatorReservationRequests:
     @classmethod
     def validate_changed_seating(
         cls,
-        current_seating: RequestedSeating,
-        changed_seating: RequestedSeating,
+        current_requested_seating: RequestedSeating,
+        changed_requested_seating: RequestedSeating,
         reservation_policy: ReservationPolicy,
         booking_window: BookingWindow,
     ) -> None:
         """Judges only what a change moves. A new date or time must be bookable now and a new party size must be allowed;
         a booking left at its time and size keeps what it was booked under."""
         policy_problems: list[str] = []
-        if (changed_seating.reservation_date, changed_seating.starts_at) != (current_seating.reservation_date, current_seating.starts_at):
-            policy_problems.extend(cls._collect_slot_boundary_problems(changed_seating.starts_at, reservation_policy.slot_interval_minutes))
-            policy_problems.extend(cls._collect_booking_window_problems(changed_seating.reservation_date, changed_seating.starts_at, booking_window))
-        if changed_seating.party_size != current_seating.party_size:
-            policy_problems.extend(cls._collect_party_size_problems(changed_seating.party_size, reservation_policy))
+        if (changed_requested_seating.reservation_date, changed_requested_seating.starts_at) != (
+            current_requested_seating.reservation_date,
+            current_requested_seating.starts_at,
+        ):
+            policy_problems.extend(cls._collect_slot_boundary_problems(changed_requested_seating.starts_at, reservation_policy.slot_interval_minutes))
+            policy_problems.extend(
+                cls._collect_booking_window_problems(changed_requested_seating.reservation_date, changed_requested_seating.starts_at, booking_window)
+            )
+        if changed_requested_seating.party_size != current_requested_seating.party_size:
+            policy_problems.extend(cls._collect_party_size_problems(changed_requested_seating.party_size, reservation_policy))
         if policy_problems:
             raise cls._create_policy_refusal_exception(policy_problems)
 
@@ -216,7 +193,7 @@ class ValidatorReservationRequests:
     @classmethod
     def _collect_required_date_problems(cls, date_text: str | None, field_name: str) -> list[str]:
         if date_text is None:
-            return [f"'{field_name}' is required but was not provided"]
+            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name=field_name)]
         return cls._collect_optional_date_problems(date_text, field_name)
 
     @staticmethod
@@ -228,7 +205,7 @@ class ValidatorReservationRequests:
     @classmethod
     def _collect_required_time_problems(cls, time_text: str | None, field_name: str) -> list[str]:
         if time_text is None:
-            return [f"'{field_name}' is required but was not provided"]
+            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name=field_name)]
         return cls._collect_optional_time_problems(time_text, field_name)
 
     @staticmethod
@@ -238,55 +215,44 @@ class ValidatorReservationRequests:
         return []
 
     @classmethod
-    def _as_stated_booking_identity(
-        cls,
-        confirmation_code: str | None,
-        phone_number: str | None,
-        guest_name: str | None,
-        booked_date: str | None,
-        booked_time: str | None,
-    ) -> _StatedBookingIdentity:
-        return _StatedBookingIdentity(
-            confirmation_code=cls._as_confirmation_code(confirmation_code),
-            phone_number=cls._as_phone_number(phone_number),
-            guest_name=ReservationValueParsing.as_provided(guest_name),
-            booked_date_text=ReservationValueParsing.as_provided(booked_date),
-            booked_time_text=ReservationValueParsing.as_provided(booked_time),
-        )
-
-    @classmethod
-    def _collect_booking_identity_problems(cls, stated_booking_identity: _StatedBookingIdentity) -> list[str]:
-        # With its code a booking needs nothing else; without it, the guest must give everything they booked it under.
-        if stated_booking_identity.confirmation_code is not None:
-            validation_problems: list[str] = cls._collect_confirmation_code_problems(stated_booking_identity.confirmation_code)
-            validation_problems.extend(cls._collect_optional_phone_number_problems(stated_booking_identity.phone_number))
+    def _collect_booking_reference_problems(cls, booking_reference: BookingReference) -> list[str]:
+        if isinstance(booking_reference, ConfirmationCodeReference):
+            validation_problems: list[str] = cls._collect_confirmation_code_problems(cls._as_confirmation_code(booking_reference.confirmation_code))
+            validation_problems.extend(cls._collect_optional_phone_number_problems(cls._as_phone_number(booking_reference.phone_number)))
             return validation_problems
-        if stated_booking_identity.is_empty:
-            return [
-                (
-                    "the booking must be identified by its 'confirmation_code', or by the 'phone_number', 'guest_name', "
-                    "'booked_date' and 'booked_time' it is booked under"
-                )
-            ]
         validation_problems = cls._collect_guest_booking_search_problems(
-            stated_booking_identity.phone_number,
-            stated_booking_identity.guest_name,
-            stated_booking_identity.booked_date_text,
+            cls._as_phone_number(booking_reference.phone_number),
+            ReservationValueParsing.as_provided(booking_reference.guest_name),
+            ReservationValueParsing.as_provided(booking_reference.booked_date),
             cls.BOOKED_DATE_FIELD_NAME,
         )
-        validation_problems.extend(cls._collect_required_time_problems(stated_booking_identity.booked_time_text, cls.BOOKED_TIME_FIELD_NAME))
+        validation_problems.extend(
+            cls._collect_required_time_problems(ReservationValueParsing.as_provided(booking_reference.booked_time), cls.BOOKED_TIME_FIELD_NAME)
+        )
         return validation_problems
 
     @classmethod
-    def _to_booking_identity(cls, stated_booking_identity: _StatedBookingIdentity) -> BookingIdentity | None:
-        if stated_booking_identity.confirmation_code is not None:
-            return ReservationIdentity(confirmation_code=stated_booking_identity.confirmation_code, phone_number=stated_booking_identity.phone_number)
+    def _to_booking_identity(cls, booking_reference: BookingReference) -> BookingIdentity | None:
+        if isinstance(booking_reference, ConfirmationCodeReference):
+            return cls._to_reservation_identity(booking_reference)
+        return cls._to_guest_booking_identity(booking_reference)
+
+    @classmethod
+    def _to_reservation_identity(cls, confirmation_code_reference: ConfirmationCodeReference) -> ReservationIdentity | None:
+        confirmation_code: str | None = cls._as_confirmation_code(confirmation_code_reference.confirmation_code)
+        if confirmation_code is None:
+            return None
+        return ReservationIdentity(confirmation_code=confirmation_code, phone_number=cls._as_phone_number(confirmation_code_reference.phone_number))
+
+    @classmethod
+    def _to_guest_booking_identity(cls, guest_details_reference: GuestDetailsReference) -> GuestBookingIdentity | None:
         guest_booking_search: GuestBookingSearch | None = cls._to_guest_booking_search(
-            stated_booking_identity.phone_number, stated_booking_identity.guest_name, stated_booking_identity.booked_date_text
+            cls._as_phone_number(guest_details_reference.phone_number),
+            ReservationValueParsing.as_provided(guest_details_reference.guest_name),
+            ReservationValueParsing.as_provided(guest_details_reference.booked_date),
         )
-        starts_at: time | None = (
-            None if stated_booking_identity.booked_time_text is None else ReservationValueParsing.parse_time(stated_booking_identity.booked_time_text)
-        )
+        booked_time_text: str | None = ReservationValueParsing.as_provided(guest_details_reference.booked_time)
+        starts_at: time | None = None if booked_time_text is None else ReservationValueParsing.parse_time(booked_time_text)
         if guest_booking_search is None or starts_at is None:
             return None
         return GuestBookingIdentity(guest_booking_search=guest_booking_search, starts_at=starts_at)
@@ -323,10 +289,10 @@ class ValidatorReservationRequests:
             )
         ]
 
-    @staticmethod
-    def _collect_required_party_size_problems(party_size: int | None) -> list[str]:
+    @classmethod
+    def _collect_required_party_size_problems(cls, party_size: int | None) -> list[str]:
         if party_size is None:
-            return ["'party_size' is required but was not provided"]
+            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name="party_size")]
         return []
 
     @staticmethod
@@ -369,7 +335,7 @@ class ValidatorReservationRequests:
     @classmethod
     def _collect_guest_name_problems(cls, guest_name: str | None) -> list[str]:
         if guest_name is None:
-            return ["'guest_name' is required but was not provided"]
+            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name="guest_name")]
         if len(guest_name) > cls.MAXIMUM_GUEST_NAME_LENGTH:
             return [f"'guest_name' must contain at most {cls.MAXIMUM_GUEST_NAME_LENGTH} characters"]
         return []
@@ -378,18 +344,18 @@ class ValidatorReservationRequests:
     def _collect_optional_phone_number_problems(cls, phone_number: str | None) -> list[str]:
         return [] if phone_number is None else cls._collect_phone_number_problems(phone_number)
 
-    @staticmethod
-    def _collect_phone_number_problems(phone_number: str | None) -> list[str]:
+    @classmethod
+    def _collect_phone_number_problems(cls, phone_number: str | None) -> list[str]:
         if phone_number is None:
-            return ["'phone_number' is required but was not provided"]
+            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name="phone_number")]
         if not ReservationValueParsing.is_phone_number(phone_number):
             return [f"'phone_number' value '{phone_number}' must be a 10-digit phone number"]
         return []
 
-    @staticmethod
-    def _collect_confirmation_code_problems(confirmation_code: str | None) -> list[str]:
+    @classmethod
+    def _collect_confirmation_code_problems(cls, confirmation_code: str | None) -> list[str]:
         if confirmation_code is None:
-            return ["'confirmation_code' is required but was not provided"]
+            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name="confirmation_code")]
         if not ReservationValueParsing.is_confirmation_code(confirmation_code):
             return [f"'confirmation_code' value '{confirmation_code}' is not a {CONFIRMATION_CODE_LENGTH}-character confirmation code"]
         return []

@@ -11,7 +11,7 @@ def derive_next_weekday_date(restaurant_today: date, weekday: Weekday) -> date:
     return restaurant_today + timedelta(days=(list(Weekday).index(weekday) - restaurant_today.weekday()) % DAYS_PER_WEEK)
 
 
-async def find_seeded_booking(domain_facade: DomainFacade, phone_number: str) -> Reservation:
+async def retrieve_seeded_booking(domain_facade: DomainFacade, phone_number: str) -> Reservation:
     """The seeded booking for the phone number, found as its guest finds it: by the phone number, the name it is under and
     its date, the next date its seeded weekday falls on."""
     seeded_booking_guest: SeededBookingGuest = read_seeded_booking_guest(phone_number)

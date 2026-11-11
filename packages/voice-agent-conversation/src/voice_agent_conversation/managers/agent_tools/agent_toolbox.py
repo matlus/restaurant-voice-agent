@@ -6,7 +6,9 @@ import pydantic_core
 from voice_agent_conversation.managers.agent_tools.agent_tool_protocol import AgentToolProtocol
 from voice_agent_conversation.managers.agent_tools.restaurant_tools.agent_tool_book_table import AgentToolBookTable
 from voice_agent_conversation.managers.agent_tools.restaurant_tools.agent_tool_cancel_booking import AgentToolCancelBooking
+from voice_agent_conversation.managers.agent_tools.restaurant_tools.agent_tool_cancel_booking_by_details import AgentToolCancelBookingByDetails
 from voice_agent_conversation.managers.agent_tools.restaurant_tools.agent_tool_change_booking import AgentToolChangeBooking
+from voice_agent_conversation.managers.agent_tools.restaurant_tools.agent_tool_change_booking_by_details import AgentToolChangeBookingByDetails
 from voice_agent_conversation.managers.agent_tools.restaurant_tools.agent_tool_check_availability import AgentToolCheckAvailability
 from voice_agent_conversation.managers.agent_tools.restaurant_tools.agent_tool_describe_dish import AgentToolDescribeDish
 from voice_agent_conversation.managers.agent_tools.restaurant_tools.agent_tool_find_bookings import AgentToolFindBookings
@@ -81,7 +83,9 @@ class AgentToolbox:
             AgentToolBookTable(restaurant_domain_facade),
             AgentToolFindBookings(restaurant_domain_facade),
             AgentToolChangeBooking(restaurant_domain_facade),
+            AgentToolChangeBookingByDetails(restaurant_domain_facade),
             AgentToolCancelBooking(restaurant_domain_facade),
+            AgentToolCancelBookingByDetails(restaurant_domain_facade),
         ]
         self._agent_tools_by_name: dict[str, AgentToolProtocol] = {agent_tool.name: agent_tool for agent_tool in agent_tools}
 

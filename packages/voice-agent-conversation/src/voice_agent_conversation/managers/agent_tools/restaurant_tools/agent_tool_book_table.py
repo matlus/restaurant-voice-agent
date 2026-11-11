@@ -3,7 +3,10 @@ from typing import ClassVar, final, override
 from pydantic import BaseModel, ConfigDict, Field
 
 from voice_agent_conversation.managers.agent_tools.agent_tool_base import AgentToolBase
-from voice_agent_conversation.managers.agent_tools.restaurant_tools.booking_answers import BookingAnswerMapping, BookingConfirmation
+from voice_agent_conversation.managers.agent_tools.restaurant_tools.booking_answers.booking_answer_mapping import (
+    BookingAnswerMapping,
+    BookingConfirmation,
+)
 from voice_agent_restaurant import DomainFacade as RestaurantDomainFacade, Reservation, ReservationRequest
 
 

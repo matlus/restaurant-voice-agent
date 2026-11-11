@@ -3,7 +3,7 @@ from typing import ClassVar, final, override
 from pydantic import BaseModel, ConfigDict, Field
 
 from voice_agent_conversation.managers.agent_tools.agent_tool_base import AgentToolBase
-from voice_agent_conversation.managers.agent_tools.restaurant_tools.booking_answers import BookingAnswerMapping, BookingSummary
+from voice_agent_conversation.managers.agent_tools.restaurant_tools.booking_answers.booking_answer_mapping import BookingAnswerMapping, BookingSummary
 from voice_agent_restaurant import DomainFacade as RestaurantDomainFacade, Reservation, ReservationSearchRequest
 
 
@@ -32,7 +32,8 @@ class AgentToolFindBookings(AgentToolBase[FindBookingsInput, list[BookingSummary
         return (
             "Lists the caller's upcoming bookings on one date, found by the phone number, name and date they are booked under, "
             "each with its time and party size. Use it when the caller wants to check, change or cancel a booking but does not "
-            "have the confirmation code. It never gives the confirmation code."
+            "have the confirmation code, then change or cancel it with change_booking_by_details or cancel_booking_by_details. "
+            "It never gives the confirmation code."
         )
 
     @property

@@ -39,7 +39,7 @@ phone, like "5 to 10 PM", not "17:00".
 - **Cancel** a booking.
 
 To change or cancel, the confirmation code alone is enough. A caller who doesn't have it gives the phone number, the
-name (the family name is enough) and the date the booking is under, and the agent looks it up. A phone number alone
+name (the family name, or any name after the first, is enough) and the date the booking is under, and the agent looks it up. A phone number alone
 reveals nothing, and a lookup never gives out the confirmation code. Tool answers carry only what the agent must say:
 no table numbers, phone numbers or guest notes. If a request can't be done, for example because the restaurant is closed that day or
 the time is too close to closing, the agent explains why in plain words and offers what the restaurant suggests.
@@ -126,8 +126,10 @@ A call goes like this:
 | `check_availability` | Whether a table fits, with nearby open times when it doesn't. |
 | `book_table` | Books a table and returns the confirmation code. |
 | `find_bookings` | The times and party sizes of a caller's bookings on one date, found by phone number, name and date. |
-| `change_booking` | Changes date, time, party size or notes, by confirmation code or by phone number, name, date and time. |
-| `cancel_booking` | Cancels a booking, identified the same way. |
+| `change_booking` | Changes date, time, party size or notes of a booking found by its confirmation code. |
+| `change_booking_by_details` | The same change, for a caller without the code: the booking is found by phone number, name, date and time. |
+| `cancel_booking` | Cancels a booking found by its confirmation code. |
+| `cancel_booking_by_details` | Cancels a booking found by phone number, name, date and time. |
 
 Each tool is a standalone class with a Pydantic input model. Pydantic is a validation library, and here it also
 produces the JSON schema that tells the model what arguments the tool takes. The toolbox treats three outcomes

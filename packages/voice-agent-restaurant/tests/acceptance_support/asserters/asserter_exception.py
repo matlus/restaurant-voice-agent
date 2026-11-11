@@ -30,39 +30,31 @@ class ExpectedExceptionMetadata:
     log_event: LogEventBase
 
 
-class AsserterException:
-    """Compares a raised exception with the test's expectations and reports every mismatch in one failure.
+@dataclass(frozen=True)
+class ExpectedExceptionContent:
+    """What one raised restaurant exception must say and carry.
 
-    Expected message phrases must each appear in the message; the message may say more, but never a withheld phrase, such
-    as a confirmation code the caller must not hear. Each expected contextual entry
-    must be present with its value, and each expected present name must be present with any value; the exception may
-    carry other entries.
+    Each message phrase must appear in the message, which may say more, and no withheld phrase, such as a confirmation
+    code the caller must not hear, may appear in it. Each contextual entry must be present with its value, and each
+    present name must be present with any value; the exception may carry other entries.
     """
+
+    message_phrases: Sequence[str]
+    exception_metadata: ExpectedExceptionMetadata
+    contextual_data_by_name: Mapping[str, ContextualDataValue]
+    present_contextual_data_names: Sequence[str] = ()
+    withheld_message_phrases: Sequence[str] = ()
+
+
+class AsserterException:
+    """Compares a raised exception with the test's expectations and reports every mismatch in one failure."""
 
     @staticmethod
     def assert_message_and_metadata_are_as_expected(
-        *,
-        expected_message_phrases: Iterable[str],
-        expected_exception_metadata: ExpectedExceptionMetadata,
-        expected_contextual_data_by_name: Mapping[str, ContextualDataValue],
-        actual_voice_agent_restaurant_exception: VoiceAgentRestaurantBaseException,
-        expected_present_contextual_data_names: Iterable[str] = (),
-        withheld_message_phrases: Iterable[str] = (),
+        *, expected_exception_content: ExpectedExceptionContent, actual_voice_agent_restaurant_exception: VoiceAgentRestaurantBaseException
     ) -> None:
-        assertion_failures: list[str] = AsserterException._find_message_mismatches(
-            expected_message_phrases, actual_voice_agent_restaurant_exception.message
-        )
-        assertion_failures.extend(
-            AsserterException._find_withheld_message_phrases(withheld_message_phrases, actual_voice_agent_restaurant_exception.message)
-        )
-        assertion_failures.extend(AsserterException._find_metadata_mismatches(expected_exception_metadata, actual_voice_agent_restaurant_exception))
-        assertion_failures.extend(
-            AsserterException._find_contextual_data_mismatches(
-                expected_contextual_data_by_name, expected_present_contextual_data_names, actual_voice_agent_restaurant_exception
-            )
-        )
         AsserterException._assert_no_mismatches(
-            assertion_failures,
+            AsserterException._find_exception_content_mismatches(expected_exception_content, actual_voice_agent_restaurant_exception),
             failure_claim=(
                 f"{type(actual_voice_agent_restaurant_exception).__name__} must carry the expected message phrases, HTTP status, action, "
                 f"reason, severity and context (actual message: {actual_voice_agent_restaurant_exception.message!r})"
@@ -78,9 +70,11 @@ class AsserterException:
         actual_validation_exception: ValidationException,
     ) -> None:
         AsserterException._assert_problems_are_as_expected(
-            expected_problem_phrases,
-            expected_exception_metadata,
-            expected_contextual_data_by_name,
+            ExpectedExceptionContent(
+                message_phrases=expected_problem_phrases,
+                exception_metadata=expected_exception_metadata,
+                contextual_data_by_name=expected_contextual_data_by_name,
+            ),
             actual_validation_exception.validation_problems,
             actual_validation_exception,
         )
@@ -94,9 +88,11 @@ class AsserterException:
         actual_reservation_policy_refused_exception: ReservationPolicyRefusedException,
     ) -> None:
         AsserterException._assert_problems_are_as_expected(
-            expected_problem_phrases,
-            expected_exception_metadata,
-            expected_contextual_data_by_name,
+            ExpectedExceptionContent(
+                message_phrases=expected_problem_phrases,
+                exception_metadata=expected_exception_metadata,
+                contextual_data_by_name=expected_contextual_data_by_name,
+            ),
             actual_reservation_policy_refused_exception.policy_problems,
             actual_reservation_policy_refused_exception,
         )
@@ -105,9 +101,7 @@ class AsserterException:
     def assert_no_table_refusal_is_as_expected(
         *,
         expected_alternative_times: Sequence[time],
-        expected_message_phrases: Iterable[str],
-        expected_exception_metadata: ExpectedExceptionMetadata,
-        expected_contextual_data_by_name: Mapping[str, ContextualDataValue],
+        expected_exception_content: ExpectedExceptionContent,
         actual_no_table_available_exception: NoTableAvailableException,
     ) -> None:
         assertion_failures: list[str] = []
@@ -115,17 +109,14 @@ class AsserterException:
             assertion_failures.append(
                 f"Alternative times: expected {list(expected_alternative_times)!r}; actual {actual_no_table_available_exception.alternative_times!r}."
             )
-        assertion_failures.extend(AsserterException._find_message_mismatches(expected_message_phrases, actual_no_table_available_exception.message))
-        assertion_failures.extend(AsserterException._find_metadata_mismatches(expected_exception_metadata, actual_no_table_available_exception))
         assertion_failures.extend(
-            AsserterException._find_contextual_data_mismatches(expected_contextual_data_by_name, (), actual_no_table_available_exception)
+            AsserterException._find_exception_content_mismatches(expected_exception_content, actual_no_table_available_exception)
         )
         AsserterException._assert_no_mismatches(
             assertion_failures,
             failure_claim=(
                 f"{type(actual_no_table_available_exception).__name__} must refuse with the expected alternative times, message, refusal metadata "
-                f"and context "
-                f"(actual message: {actual_no_table_available_exception.message!r})"
+                f"and context (actual message: {actual_no_table_available_exception.message!r})"
             ),
         )
 
@@ -133,9 +124,7 @@ class AsserterException:
     def assert_dish_not_found_refusal_is_as_expected(
         *,
         expected_close_match_names: Sequence[str],
-        expected_message_phrases: Iterable[str],
-        expected_exception_metadata: ExpectedExceptionMetadata,
-        expected_contextual_data_by_name: Mapping[str, ContextualDataValue],
+        expected_exception_content: ExpectedExceptionContent,
         actual_dish_not_found_exception: DishNotFoundException,
     ) -> None:
         assertion_failures: list[str] = []
@@ -143,15 +132,8 @@ class AsserterException:
             assertion_failures.append(
                 f"Close match names: expected {list(expected_close_match_names)!r}; actual {actual_dish_not_found_exception.close_match_names!r}."
             )
-        assertion_failures.extend(
-            AsserterException._find_message_mismatches(
-                [*expected_message_phrases, *expected_close_match_names], actual_dish_not_found_exception.message
-            )
-        )
-        assertion_failures.extend(AsserterException._find_metadata_mismatches(expected_exception_metadata, actual_dish_not_found_exception))
-        assertion_failures.extend(
-            AsserterException._find_contextual_data_mismatches(expected_contextual_data_by_name, (), actual_dish_not_found_exception)
-        )
+        assertion_failures.extend(AsserterException._find_message_mismatches(expected_close_match_names, actual_dish_not_found_exception.message))
+        assertion_failures.extend(AsserterException._find_exception_content_mismatches(expected_exception_content, actual_dish_not_found_exception))
         AsserterException._assert_no_mismatches(
             assertion_failures,
             failure_claim=(
@@ -159,6 +141,30 @@ class AsserterException:
                 f"metadata and context (actual message: {actual_dish_not_found_exception.message!r})"
             ),
         )
+
+    @staticmethod
+    def _find_exception_content_mismatches(
+        expected_exception_content: ExpectedExceptionContent, actual_voice_agent_restaurant_exception: VoiceAgentRestaurantBaseException
+    ) -> list[str]:
+        assertion_failures: list[str] = AsserterException._find_message_mismatches(
+            expected_exception_content.message_phrases, actual_voice_agent_restaurant_exception.message
+        )
+        assertion_failures.extend(
+            AsserterException._find_withheld_message_phrases(
+                expected_exception_content.withheld_message_phrases, actual_voice_agent_restaurant_exception.message
+            )
+        )
+        assertion_failures.extend(
+            AsserterException._find_metadata_mismatches(expected_exception_content.exception_metadata, actual_voice_agent_restaurant_exception)
+        )
+        assertion_failures.extend(
+            AsserterException._find_contextual_data_mismatches(
+                expected_exception_content.contextual_data_by_name,
+                expected_exception_content.present_contextual_data_names,
+                actual_voice_agent_restaurant_exception,
+            )
+        )
+        return assertion_failures
 
     @staticmethod
     def _find_message_mismatches(expected_message_phrases: Iterable[str], actual_exception_message: str) -> list[str]:
@@ -169,11 +175,11 @@ class AsserterException:
         ]
 
     @staticmethod
-    def _find_withheld_message_phrases(withheld_message_phrases: Iterable[str], actual_exception_message: str) -> list[str]:
+    def _find_withheld_message_phrases(expected_withheld_message_phrases: Iterable[str], actual_exception_message: str) -> list[str]:
         return [
-            f"Message reveals withheld {withheld_message_phrase!r}. Actual message: {actual_exception_message!r}."
-            for withheld_message_phrase in withheld_message_phrases
-            if withheld_message_phrase in actual_exception_message
+            f"Message reveals withheld {expected_withheld_message_phrase!r}. Actual message: {actual_exception_message!r}."
+            for expected_withheld_message_phrase in expected_withheld_message_phrases
+            if expected_withheld_message_phrase in actual_exception_message
         ]
 
     @staticmethod
@@ -231,23 +237,17 @@ class AsserterException:
 
     @staticmethod
     def _assert_problems_are_as_expected(
-        expected_problem_phrases: Sequence[str],
-        expected_exception_metadata: ExpectedExceptionMetadata,
-        expected_contextual_data_by_name: Mapping[str, ContextualDataValue],
+        expected_exception_content: ExpectedExceptionContent,
         actual_problems: Sequence[str],
         actual_voice_agent_restaurant_exception: VoiceAgentRestaurantBaseException,
     ) -> None:
         assertion_failures: list[str] = []
-        if len(actual_problems) != len(expected_problem_phrases):
+        if len(actual_problems) != len(expected_exception_content.message_phrases):
             assertion_failures.append(
-                f"Problem count: expected {len(expected_problem_phrases)}; actual {len(actual_problems)} ({actual_problems!r})."
+                f"Problem count: expected {len(expected_exception_content.message_phrases)}; actual {len(actual_problems)} ({actual_problems!r})."
             )
         assertion_failures.extend(
-            AsserterException._find_message_mismatches(expected_problem_phrases, actual_voice_agent_restaurant_exception.message)
-        )
-        assertion_failures.extend(AsserterException._find_metadata_mismatches(expected_exception_metadata, actual_voice_agent_restaurant_exception))
-        assertion_failures.extend(
-            AsserterException._find_contextual_data_mismatches(expected_contextual_data_by_name, (), actual_voice_agent_restaurant_exception)
+            AsserterException._find_exception_content_mismatches(expected_exception_content, actual_voice_agent_restaurant_exception)
         )
         AsserterException._assert_no_mismatches(
             assertion_failures,

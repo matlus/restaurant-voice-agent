@@ -74,16 +74,32 @@ class ReservationSearchRequest:
 
 
 @dataclass(frozen=True)
-class ReservationChangeRequest:
-    """A change to a booking. The booking is identified by its confirmation code, or, without the code, by the phone
-    number, name, date and time it is booked under (booked_date as YYYY-MM-DD, booked_time as 24-hour HH:MM). A phone
-    number given with a code must be the booking's own. Any of the other fields left as None keeps its current value."""
+class ConfirmationCodeReference:
+    """A booking named by its confirmation code, exactly as it arrived. A phone number, when given, must be the booking's own."""
 
     confirmation_code: str | None
+    phone_number: str | None
+
+
+@dataclass(frozen=True)
+class GuestDetailsReference:
+    """A booking named without its code, by the phone number, name, date (YYYY-MM-DD) and time (HH:MM) it is booked
+    under, exactly as they arrived."""
+
     phone_number: str | None
     guest_name: str | None
     booked_date: str | None
     booked_time: str | None
+
+
+type BookingReference = ConfirmationCodeReference | GuestDetailsReference
+
+
+@dataclass(frozen=True)
+class ReservationChangeRequest:
+    """A change to the booking the reference names. Any other field left as None keeps its current value."""
+
+    booking_reference: BookingReference
     reservation_date: str | None
     reservation_time: str | None
     party_size: int | None
@@ -92,13 +108,7 @@ class ReservationChangeRequest:
 
 @dataclass(frozen=True)
 class ReservationCancellationRequest:
-    """A cancellation, with the booking identified as for a change."""
-
-    confirmation_code: str | None
-    phone_number: str | None
-    guest_name: str | None
-    booked_date: str | None
-    booked_time: str | None
+    booking_reference: BookingReference
 
 
 @dataclass(frozen=True)
@@ -205,6 +215,15 @@ class BookedSchedule:
     ends_at: time
     table_id: str
     notes: str | None
+
+
+@dataclass(frozen=True)
+class ReservationCancellation:
+    """A cancellation ready for the store. current_booked_schedule is the booking as it stood when the cancellation was
+    decided; the store cancels it only while it still stands that way."""
+
+    confirmation_code: str
+    current_booked_schedule: BookedSchedule
 
 
 @dataclass(frozen=True)

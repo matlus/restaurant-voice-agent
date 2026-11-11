@@ -82,6 +82,13 @@ class SeatingRules:
         return evening_time if cls.is_within_window(evening_time, seating_window) else requested_time
 
     @classmethod
+    def read_as_seatable_time_on(cls, weekday_hours: WeekdayHours, requested_time: time, seating_duration_minutes: int) -> time:
+        """The requested time read as callers say it on a day with these hours. A day the restaurant does not open keeps
+        the time as it is; whether that day can be booked is decided separately."""
+        seating_window: SeatingWindow | None = cls.get_seating_window(weekday_hours, seating_duration_minutes)
+        return requested_time if seating_window is None else cls.read_as_seatable_time(requested_time, seating_window)
+
+    @classmethod
     def get_ends_at(cls, starts_at: time, seating_duration_minutes: int) -> time:
         return cls._shift(starts_at, seating_duration_minutes)
 

@@ -11,7 +11,7 @@ from typing import Final
 import pytest
 
 from acceptance_support.asserters.asserter_dish import AsserterDish
-from acceptance_support.asserters.asserter_exception import AsserterException, ExpectedExceptionMetadata
+from acceptance_support.asserters.asserter_exception import AsserterException, ExpectedExceptionContent, ExpectedExceptionMetadata
 from acceptance_support.bundled_seed import SeededDish, read_seeded_dishes
 from acceptance_support.service_locator_testing import create_domain_facade
 from voice_agent_restaurant import (
@@ -368,9 +368,11 @@ class TestDishLookup:
 
         AsserterException.assert_dish_not_found_refusal_is_as_expected(
             expected_close_match_names=expected_close_match_names,
-            expected_message_phrases=expected_message_phrases,
-            expected_exception_metadata=expected_exception_metadata,
-            expected_contextual_data_by_name=expected_contextual_data_by_name,
+            expected_exception_content=ExpectedExceptionContent(
+                message_phrases=expected_message_phrases,
+                exception_metadata=expected_exception_metadata,
+                contextual_data_by_name=expected_contextual_data_by_name,
+            ),
             actual_dish_not_found_exception=raised.value,
         )
 
@@ -407,9 +409,11 @@ class TestDishLookup:
 
         AsserterException.assert_dish_not_found_refusal_is_as_expected(
             expected_close_match_names=expected_close_match_names,
-            expected_message_phrases=expected_message_phrases,
-            expected_exception_metadata=expected_exception_metadata,
-            expected_contextual_data_by_name=expected_contextual_data_by_name,
+            expected_exception_content=ExpectedExceptionContent(
+                message_phrases=expected_message_phrases,
+                exception_metadata=expected_exception_metadata,
+                contextual_data_by_name=expected_contextual_data_by_name,
+            ),
             actual_dish_not_found_exception=raised.value,
         )
 

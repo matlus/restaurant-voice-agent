@@ -230,8 +230,8 @@ class ReservationChangedConcurrentlyException(VoiceAgentRestaurantBusinessBaseEx
     def __init__(self, confirmation_code: str, contextual_data_by_name: ContextualDataDict | None = None) -> None:
         super().__init__(
             message=(
-                "That booking was changed by another request while this change was being made, so nothing was changed. "
-                "Look the booking up again and repeat the change."
+                "That booking was changed by another request while this request was being made, so nothing was changed. "
+                "Look the booking up again and repeat the request."
             ),
             log_event=LogEventReservation.RESERVATION_SCHEDULING,
             contextual_data_by_name=contextual_data_by_name,
