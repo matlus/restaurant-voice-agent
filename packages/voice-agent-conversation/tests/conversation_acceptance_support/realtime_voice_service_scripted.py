@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import contextlib
 import json
 import threading
 from collections.abc import Mapping, Sequence
@@ -310,7 +311,9 @@ class RealtimeVoiceServiceScripted:
             await self._send_event(server_connection, {"type": "session.created", "event_id": "event_session_created", "session": {}})
             client_message: str | bytes
             async for client_message in server_connection:
-                await self._answer_client_event(server_connection, captured_realtime_session, json.loads(client_message))
+                # A reply can fail once the client has closed; the events it sent before closing are still captured.
+                with contextlib.suppress(ConnectionClosed):
+                    await self._answer_client_event(server_connection, captured_realtime_session, json.loads(client_message))
         except ConnectionClosed:
             pass
         captured_realtime_session.was_closed_by_client = server_connection.protocol.close_rcvd_then_sent is True

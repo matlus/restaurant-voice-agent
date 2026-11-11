@@ -15,6 +15,7 @@ from voice_agent_restaurant.managers.exceptions.reservation_exceptions import (
     ReservationAlreadyStartedException,
     ReservationChangedConcurrentlyException,
     ReservationNotFoundException,
+    ReservationPolicyRefusedException,
     ReservationRequestValidationException,
     RestaurantClosedOnDateException,
 )
@@ -99,6 +100,7 @@ __all__ = [
     "ReservationChangedConcurrentlyException",
     "ReservationNotFoundException",
     "ReservationPolicy",
+    "ReservationPolicyRefusedException",
     "ReservationRequest",
     "ReservationRequestValidationException",
     "ReservationSearchRequest",

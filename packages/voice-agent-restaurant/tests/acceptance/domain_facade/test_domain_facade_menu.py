@@ -22,6 +22,7 @@ from voice_agent_restaurant import (
     DishLookupValidationException,
     DishNotFoundException,
     ExceptionAction,
+    LogEventMenu,
     MenuCategory,
     MenuSearchRequest,
     MenuSearchValidationException,
@@ -194,6 +195,7 @@ class TestMenuSearch:
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,
             reason="Menu search failed validation",
             severity=Severity.ERROR,
+            log_event=LogEventMenu.MENU_SEARCH_REQUEST_VALIDATION_FAILED,
         )
         expected_contextual_data_by_name: dict[str, int] = {"MenuSearch.ProblemCount": len(expected_problem_phrases)}
 
@@ -327,6 +329,7 @@ class TestDishLookup:
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,
             reason="No single dish matches the name",
             severity=Severity.ERROR,
+            log_event=LogEventMenu.DISH_LOOKUP,
         )
         expected_contextual_data_by_name: dict[str, str | int] = {
             REQUESTED_DISH_NAME_CONTEXT_NAME: spoken_dish_name,
@@ -365,6 +368,7 @@ class TestDishLookup:
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,
             reason="No single dish matches the name",
             severity=Severity.ERROR,
+            log_event=LogEventMenu.DISH_LOOKUP,
         )
         expected_contextual_data_by_name: dict[str, str | int] = {
             REQUESTED_DISH_NAME_CONTEXT_NAME: spoken_dish_name,
@@ -390,6 +394,7 @@ class TestDishLookup:
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,
             reason="Dish lookup failed validation",
             severity=Severity.ERROR,
+            log_event=LogEventMenu.DISH_LOOKUP_REQUEST_VALIDATION_FAILED,
         )
         expected_contextual_data_by_name: dict[str, int] = {"DishLookup.ProblemCount": len(expected_problem_phrases)}
 

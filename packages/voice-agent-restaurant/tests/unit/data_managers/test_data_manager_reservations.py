@@ -3,6 +3,7 @@
 # change from a booking they read through the facade, let the facade change or cancel that booking first, and only then
 # ask the store to apply the change decided from the stale read.
 
+from datetime import datetime
 from pathlib import Path
 from typing import Final
 
@@ -14,6 +15,7 @@ from acceptance_support.service_locator_testing import WEDNESDAY_AFTERNOON_UTC, 
 from voice_agent_restaurant import (
     DomainFacade,
     ExceptionAction,
+    LogEventReservation,
     Reservation,
     ReservationCancellationRequest,
     ReservationChangedConcurrentlyException,
@@ -28,14 +30,22 @@ from voice_agent_restaurant.managers.models.reservation_models import BookedSche
 SEEDED_PRIYA_PHONE: Final[str] = "5550101001"
 
 
-async def read_seeded_booking(domain_facade: DomainFacade, phone_number: str) -> Reservation:
+async def read_unstarted_seeded_booking(domain_facade: DomainFacade, phone_number: str) -> Reservation:
+    """The seeded booking for the phone number, guarded to start after the restaurant's local now, because the facade
+    change or cancel each test makes first refuses a booking that has started."""
     found_reservations: list[Reservation] = await domain_facade.find_reservations(ReservationSearchRequest(phone_number=phone_number))
     assert len(found_reservations) == 1, f"The seed must hold exactly one upcoming booking for {phone_number}; found {found_reservations!r}"
-    return found_reservations[0]
+    seeded_reservation: Reservation = found_reservations[0]
+    restaurant_local_now: datetime = await domain_facade.get_restaurant_local_now()
+    seeded_start: datetime = datetime.combine(seeded_reservation.reservation_date, seeded_reservation.starts_at, tzinfo=restaurant_local_now.tzinfo)
+    assert seeded_start > restaurant_local_now, (
+        f"The lost-update scenarios need booking {seeded_reservation.confirmation_code} to start after {restaurant_local_now}, but it "
+        f"starts at {seeded_start}; the seeded data no longer supports these scenarios"
+    )
+    return seeded_reservation
 
 
 def create_notes_reschedule(read_reservation: Reservation, requested_notes: str) -> ReservationReschedule:
-    """A change of notes alone, decided from read_reservation, so the booking keeps its own table and time."""
     return ReservationReschedule(
         confirmation_code=read_reservation.confirmation_code,
         current_booked_schedule=BookedSchedule(
@@ -64,10 +74,11 @@ class TestDataManagerReservationsReschedule:
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,
             reason="The reservation was changed by another request",
             severity=Severity.ERROR,
+            log_event=LogEventReservation.RESERVATION_SCHEDULING,
         )
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
-            read_reservation: Reservation = await read_seeded_booking(domain_facade, SEEDED_PRIYA_PHONE)
+            read_reservation: Reservation = await read_unstarted_seeded_booking(domain_facade, SEEDED_PRIYA_PHONE)
             stale_reservation_reschedule: ReservationReschedule = create_notes_reschedule(read_reservation, create_generated_note())
             expected_message_phrases: list[str] = [read_reservation.confirmation_code, "was changed by another request", "nothing was changed"]
             expected_contextual_data_by_name: dict[str, str] = {"Reservation.ConfirmationCode": read_reservation.confirmation_code}
@@ -107,10 +118,11 @@ class TestDataManagerReservationsReschedule:
             exception_action=ExceptionAction.USER_ACTION_REQUIRED,
             reason="The reservation was not found",
             severity=Severity.ERROR,
+            log_event=LogEventReservation.RESERVATION_LOOKUP,
         )
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
-            read_reservation: Reservation = await read_seeded_booking(domain_facade, SEEDED_PRIYA_PHONE)
+            read_reservation: Reservation = await read_unstarted_seeded_booking(domain_facade, SEEDED_PRIYA_PHONE)
             stale_reservation_reschedule: ReservationReschedule = create_notes_reschedule(read_reservation, create_generated_note())
             expected_message_phrases: list[str] = [read_reservation.confirmation_code, "No current reservation matches confirmation code"]
             expected_contextual_data_by_name: dict[str, str] = {"Reservation.ConfirmationCode": read_reservation.confirmation_code}

@@ -25,6 +25,8 @@ from voice_agent_restaurant import (
     ConfigurationSettingException,
     DomainFacade,
     ExceptionAction,
+    LogEventConfiguration,
+    LogEventRestaurantStore,
     OpeningHours,
     OpenWeekday,
     Reservation,
@@ -60,6 +62,7 @@ def create_configuration_refusal_metadata() -> ExpectedExceptionMetadata:
         exception_action=ExceptionAction.INFRA_ACTION_REQUIRED,
         reason="Configuration settings are not set up correctly",
         severity=Severity.ERROR,
+        log_event=LogEventConfiguration.RESTAURANT_STORE_SETTINGS_RETRIEVAL,
     )
 
 
@@ -151,6 +154,7 @@ class TestRestaurantInformation:
             exception_action=ExceptionAction.DEVELOPER_ACTION_REQUIRED,
             reason="The restaurant store breaks a contract the domain relies on",
             severity=Severity.ERROR,
+            log_event=LogEventRestaurantStore.RESTAURANT_STORE_OPERATION,
         )
         expected_contextual_data_by_name: dict[str, str] = {"RestaurantStore.Operation": store_operation}
         # The driver's error type and text are its own; that they are recorded is what the diagnosis needs.

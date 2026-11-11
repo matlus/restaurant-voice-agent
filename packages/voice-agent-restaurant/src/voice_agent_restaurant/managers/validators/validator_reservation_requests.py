@@ -1,7 +1,10 @@
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import Final
 
-from voice_agent_restaurant.managers.exceptions.reservation_exceptions import ReservationRequestValidationException
+from voice_agent_restaurant.managers.exceptions.reservation_exceptions import (
+    ReservationPolicyRefusedException,
+    ReservationRequestValidationException,
+)
 from voice_agent_restaurant.managers.models.reservation_models import (
     CONFIRMATION_CODE_LENGTH,
     AvailabilityRequest,
@@ -25,14 +28,16 @@ class ValidatorReservationRequests:
 
     Values arrive as a voice model transcribed them. Each is trimmed and put into its stored form first (phone
     numbers to digits, confirmation codes to upper case) and then judged; a valid request comes back as typed
-    values. Each request is judged in two stages: first on its own, before anything is read from the store, then
+    values. Each request is judged in two stages. First it is read on its own, before anything is read from the store;
+    a request that cannot be read raises ReservationRequestValidationException. Then a readable seating is judged
     against the restaurant's booking policy and booking window, by validate_requested_seating for a new seating or
-    validate_changed_seating for a change. Whether the
-    restaurant is open and whether a table is free are decided later, by the manager.
+    validate_changed_seating for a change; a seating the policy does not allow raises ReservationPolicyRefusedException.
+    Whether the restaurant is open and whether a table is free are decided later, by the manager.
     """
 
     MAXIMUM_GUEST_NAME_LENGTH: Final[int] = 100
     MAXIMUM_NOTES_LENGTH: Final[int] = 300
+    PROBLEM_COUNT_CONTEXT_NAME: Final[str] = "Reservation.ProblemCount"
 
     @classmethod
     def validate_availability_request(cls, availability_request: AvailabilityRequest) -> RequestedSeating:
@@ -124,14 +129,12 @@ class ValidatorReservationRequests:
         cls, requested_seating: RequestedSeating, reservation_policy: ReservationPolicy, booking_window: BookingWindow
     ) -> None:
         """Judges a seating that is already well formed against the restaurant's booking policy and booking window."""
-        validation_problems: list[str] = []
-        validation_problems.extend(cls._collect_slot_boundary_problems(requested_seating.starts_at, reservation_policy.slot_interval_minutes))
-        validation_problems.extend(cls._collect_party_size_problems(requested_seating.party_size, reservation_policy))
-        validation_problems.extend(
-            cls._collect_booking_window_problems(requested_seating.reservation_date, requested_seating.starts_at, booking_window)
-        )
-        if validation_problems:
-            raise cls._create_validation_exception(validation_problems)
+        policy_problems: list[str] = []
+        policy_problems.extend(cls._collect_slot_boundary_problems(requested_seating.starts_at, reservation_policy.slot_interval_minutes))
+        policy_problems.extend(cls._collect_party_size_problems(requested_seating.party_size, reservation_policy))
+        policy_problems.extend(cls._collect_booking_window_problems(requested_seating.reservation_date, requested_seating.starts_at, booking_window))
+        if policy_problems:
+            raise cls._create_policy_refusal_exception(policy_problems)
 
     @classmethod
     def validate_changed_seating(
@@ -143,16 +146,14 @@ class ValidatorReservationRequests:
     ) -> None:
         """Judges only what a change moves. A new date or time must be bookable now and a new party size must be allowed;
         a booking left at its time and size keeps what it was booked under."""
-        validation_problems: list[str] = []
+        policy_problems: list[str] = []
         if (changed_seating.reservation_date, changed_seating.starts_at) != (current_seating.reservation_date, current_seating.starts_at):
-            validation_problems.extend(cls._collect_slot_boundary_problems(changed_seating.starts_at, reservation_policy.slot_interval_minutes))
-            validation_problems.extend(
-                cls._collect_booking_window_problems(changed_seating.reservation_date, changed_seating.starts_at, booking_window)
-            )
+            policy_problems.extend(cls._collect_slot_boundary_problems(changed_seating.starts_at, reservation_policy.slot_interval_minutes))
+            policy_problems.extend(cls._collect_booking_window_problems(changed_seating.reservation_date, changed_seating.starts_at, booking_window))
         if changed_seating.party_size != current_seating.party_size:
-            validation_problems.extend(cls._collect_party_size_problems(changed_seating.party_size, reservation_policy))
-        if validation_problems:
-            raise cls._create_validation_exception(validation_problems)
+            policy_problems.extend(cls._collect_party_size_problems(changed_seating.party_size, reservation_policy))
+        if policy_problems:
+            raise cls._create_policy_refusal_exception(policy_problems)
 
     @classmethod
     def _collect_required_seating_problems(
@@ -202,9 +203,17 @@ class ValidatorReservationRequests:
     def _collect_slot_boundary_problems(starts_at: time, slot_interval_minutes: int) -> list[str]:
         # The seed reader refuses an interval that does not divide an hour and an opening time off the grid, so the
         # minute of the hour alone decides whether a time is on the grid SeatingRules steps from each opening time.
-        if starts_at.minute % slot_interval_minutes != 0:
-            return [f"'reservation_time' value '{starts_at:%H:%M}' must fall on a {slot_interval_minutes}-minute boundary"]
-        return []
+        minutes_past_slot: int = starts_at.minute % slot_interval_minutes
+        if minutes_past_slot == 0:
+            return []
+        earlier_slot: datetime = datetime.combine(date.min, starts_at.replace(second=0, microsecond=0)) - timedelta(minutes=minutes_past_slot)
+        later_slot: datetime = earlier_slot + timedelta(minutes=slot_interval_minutes)
+        return [
+            (
+                f"tables are booked every {slot_interval_minutes} minutes, so {starts_at:%H:%M} cannot be booked; "
+                f"the nearest times are {earlier_slot:%H:%M} and {later_slot:%H:%M}"
+            )
+        ]
 
     @staticmethod
     def _collect_required_party_size_problems(party_size: int | None) -> list[str]:
@@ -293,6 +302,10 @@ class ValidatorReservationRequests:
         provided_confirmation_code: str | None = ReservationValueParsing.as_provided(confirmation_code)
         return None if provided_confirmation_code is None else ReservationValueParsing.normalize_confirmation_code(provided_confirmation_code)
 
-    @staticmethod
-    def _create_validation_exception(validation_problems: list[str]) -> ReservationRequestValidationException:
-        return ReservationRequestValidationException(validation_problems, {"Reservation.ProblemCount": len(validation_problems)})
+    @classmethod
+    def _create_validation_exception(cls, validation_problems: list[str]) -> ReservationRequestValidationException:
+        return ReservationRequestValidationException(validation_problems, {cls.PROBLEM_COUNT_CONTEXT_NAME: len(validation_problems)})
+
+    @classmethod
+    def _create_policy_refusal_exception(cls, policy_problems: list[str]) -> ReservationPolicyRefusedException:
+        return ReservationPolicyRefusedException(policy_problems, {cls.PROBLEM_COUNT_CONTEXT_NAME: len(policy_problems)})
