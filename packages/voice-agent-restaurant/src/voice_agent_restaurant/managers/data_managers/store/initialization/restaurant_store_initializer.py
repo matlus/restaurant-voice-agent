@@ -12,6 +12,7 @@ from voice_agent_restaurant.managers.data_managers.store.initialization.seed_dat
     SeedDataReader,
     SeedReservation,
 )
+from voice_agent_restaurant.managers.exceptions.restaurant_store_exceptions import RestaurantStoreContractViolationException
 from voice_agent_restaurant.managers.models.menu_models import DishRecord
 from voice_agent_restaurant.managers.models.reservation_models import ReservationStatus
 from voice_agent_restaurant.managers.models.restaurant_models import (
@@ -34,6 +35,8 @@ class RestaurantStoreInitializer:
     on a new file cannot both seed it.
     """
 
+    # SQLite reports this version for a file no store has been created in yet.
+    NEW_FILE_STORE_VERSION: Final[int] = 0
     MINUTES_PER_HOUR: Final[int] = 60
     DAYS_PER_WEEK: Final[int] = 7
 
@@ -59,18 +62,31 @@ class RestaurantStoreInitializer:
 
     @classmethod
     def _create_store(cls, connection: sqlite3.Connection, now_utc: datetime) -> None:
+        store_version: int = cls._read_store_version(connection)
         # A racing first caller may have created the store between the unlocked check and this transaction.
-        if cls._is_current(connection):
+        if store_version >= STORE_VERSION:
             return
+        if store_version != cls.NEW_FILE_STORE_VERSION:
+            raise RestaurantStoreContractViolationException(
+                message=(
+                    f"The restaurant store was created by an older version of the app (store version {store_version}; this version needs "
+                    f"{STORE_VERSION}), and it cannot be upgraded in place. Delete the store file; it is created and seeded again on the next run."
+                ),
+                contextual_data_by_name={"RestaurantStore.Version": store_version, "RestaurantStore.RequiredVersion": STORE_VERSION},
+            )
         cls._create_schema(connection)
         cls._load_seed(connection, SeedDataReader.read_restaurant_seed(), now_utc)
         # SQLite PRAGMA statements take no bound parameters, so the version is interpolated; STORE_VERSION is an int constant, never input.
         connection.execute(f"PRAGMA user_version = {STORE_VERSION}")
 
-    @staticmethod
-    def _is_current(connection: sqlite3.Connection) -> bool:
+    @classmethod
+    def _is_current(cls, connection: sqlite3.Connection) -> bool:
+        return cls._read_store_version(connection) >= STORE_VERSION
+
+    @classmethod
+    def _read_store_version(cls, connection: sqlite3.Connection) -> int:
         version_row: sqlite3.Row | None = connection.execute("PRAGMA user_version").fetchone()
-        return version_row is not None and int(version_row[0]) >= STORE_VERSION
+        return cls.NEW_FILE_STORE_VERSION if version_row is None else int(version_row[0])
 
     @staticmethod
     def _create_schema(connection: sqlite3.Connection) -> None:
@@ -96,9 +112,9 @@ class RestaurantStoreInitializer:
             """
             INSERT INTO restaurant (
                 restaurant_id, name, tagline, description, street_address, city, state_or_region, postal_code, phone_number,
-                time_zone, house_notes_json, seating_duration_minutes, slot_interval_minutes, minimum_party_size,
+                time_zone, allergen_notice, house_notes_json, seating_duration_minutes, slot_interval_minutes, minimum_party_size,
                 maximum_party_size, booking_window_days, late_arrival_hold_minutes, large_party_guidance
-            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 restaurant_profile.name,
@@ -110,6 +126,7 @@ class RestaurantStoreInitializer:
                 restaurant_profile.postal_code,
                 restaurant_profile.phone_number,
                 restaurant_profile.time_zone,
+                restaurant_profile.allergen_notice,
                 json.dumps(restaurant_profile.house_notes),
                 restaurant_profile.reservation_policy.seating_duration_minutes,
                 restaurant_profile.reservation_policy.slot_interval_minutes,

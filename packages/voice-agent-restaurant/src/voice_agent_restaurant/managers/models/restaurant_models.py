@@ -62,6 +62,7 @@ class RestaurantProfile:
     postal_code: str
     phone_number: str
     time_zone: str
+    allergen_notice: str
     house_notes: list[str]
     reservation_policy: ReservationPolicy
 

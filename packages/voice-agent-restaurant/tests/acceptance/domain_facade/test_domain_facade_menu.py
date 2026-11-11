@@ -25,6 +25,7 @@ from voice_agent_restaurant import (
     LogEventMenu,
     MenuCategory,
     MenuSearchRequest,
+    MenuSearchResult,
     MenuSearchValidationException,
     Severity,
 )
@@ -95,7 +96,7 @@ class TestMenuSearch:
         expected_dish_ids: list[str] = [seeded_dish.dish_id for seeded_dish in read_seeded_dishes()]
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
-            actual_dishes: list[Dish] = await domain_facade.search_menu(create_menu_search_request())
+            actual_dishes: list[Dish] = (await domain_facade.search_menu(create_menu_search_request())).dishes
 
         assert [actual_dish.dish_id for actual_dish in actual_dishes] == expected_dish_ids
 
@@ -109,9 +110,9 @@ class TestMenuSearch:
         ]
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
-            actual_dishes: list[Dish] = await domain_facade.search_menu(
-                create_menu_search_request(diet_labels=["vegan"], excluded_allergens=["sesame"])
-            )
+            actual_dishes: list[Dish] = (
+                await domain_facade.search_menu(create_menu_search_request(diet_labels=["vegan"], excluded_allergens=["sesame"]))
+            ).dishes
 
         assert [actual_dish.dish_id for actual_dish in actual_dishes] == expected_dish_ids
 
@@ -123,7 +124,7 @@ class TestMenuSearch:
         ]
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
-            actual_dishes: list[Dish] = await domain_facade.search_menu(create_menu_search_request(diet_labels=["keto", "carnivore"]))
+            actual_dishes: list[Dish] = (await domain_facade.search_menu(create_menu_search_request(diet_labels=["keto", "carnivore"]))).dishes
 
         assert [actual_dish.dish_id for actual_dish in actual_dishes] == expected_dish_ids
 
@@ -139,11 +140,29 @@ class TestMenuSearch:
         ]
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
-            actual_spoken_form_dishes: list[Dish] = await domain_facade.search_menu(
-                create_menu_search_request(diet_labels=[" Gluten-Free "], excluded_allergens=["Tree Nuts"], category="Desserts")
-            )
+            actual_spoken_form_dishes: list[Dish] = (
+                await domain_facade.search_menu(
+                    create_menu_search_request(diet_labels=[" Gluten-Free "], excluded_allergens=["Tree Nuts"], category="Desserts")
+                )
+            ).dishes
 
         assert [dish.dish_id for dish in actual_spoken_form_dishes] == expected_dish_ids
+
+    @pytest.mark.parametrize(
+        ("menu_search_request", "expected_filters_on_allergens"),
+        [
+            pytest.param(create_menu_search_request(excluded_allergens=["sesame"]), True, id="an-allergen-is-excluded"),
+            pytest.param(create_menu_search_request(diet_labels=[" Gluten-Free "]), True, id="a-free-from-diet-is-asked-for"),
+            pytest.param(create_menu_search_request(diet_labels=["keto"], category="mains"), False, id="only-a-lifestyle-diet-is-asked-for"),
+        ],
+    )
+    async def test_SearchMenu_WhenTheSearchIsOrIsNotAboutAllergies_ThenTheResultSaysWhetherTheAllergenNoticeApplies(
+        self, restaurant_database_path: Path, menu_search_request: MenuSearchRequest, expected_filters_on_allergens: bool
+    ) -> None:
+        async with create_domain_facade(restaurant_database_path) as domain_facade:
+            actual_menu_search_result: MenuSearchResult = await domain_facade.search_menu(menu_search_request)
+
+        assert actual_menu_search_result.filters_on_allergens is expected_filters_on_allergens
 
     async def test_SearchMenu_WhenCategoryAndCalorieCeilingAreGiven_ThenOnlyDishesInThatCategoryAtOrUnderTheCeilingAreReturned(
         self, restaurant_database_path: Path
@@ -156,9 +175,9 @@ class TestMenuSearch:
         ]
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
-            actual_dishes: list[Dish] = await domain_facade.search_menu(
-                create_menu_search_request(category="mains", maximum_calories=maximum_calories)
-            )
+            actual_dishes: list[Dish] = (
+                await domain_facade.search_menu(create_menu_search_request(category="mains", maximum_calories=maximum_calories))
+            ).dishes
 
         assert [actual_dish.dish_id for actual_dish in actual_dishes] == expected_dish_ids
 
@@ -174,7 +193,7 @@ class TestMenuSearch:
         ]
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
-            actual_dishes: list[Dish] = await domain_facade.search_menu(create_menu_search_request(search_text=search_text))
+            actual_dishes: list[Dish] = (await domain_facade.search_menu(create_menu_search_request(search_text=search_text))).dishes
 
         assert [actual_dish.dish_id for actual_dish in actual_dishes] == expected_dish_ids
 
@@ -223,7 +242,7 @@ class TestDietAndAllergenConsistency:
         expected_disagreeing_dish_labels: list[str] = []
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
-            dishes: list[Dish] = await domain_facade.search_menu(create_menu_search_request())
+            dishes: list[Dish] = (await domain_facade.search_menu(create_menu_search_request())).dishes
 
         actual_disagreeing_dish_labels: list[str] = []
         for dish in dishes:
@@ -247,7 +266,7 @@ class TestDietAndAllergenConsistency:
         paleo_excluded_allergens: set[Allergen] = {Allergen.MILK, Allergen.WHEAT, Allergen.PEANUTS, Allergen.SOY}
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
-            dishes: list[Dish] = await domain_facade.search_menu(create_menu_search_request())
+            dishes: list[Dish] = (await domain_facade.search_menu(create_menu_search_request())).dishes
 
         actual_inconsistent_dishes: list[str] = []
         for dish in dishes:
@@ -277,7 +296,7 @@ class TestDishLookup:
         pinned_dish_id: str = "dry-aged-ribeye"
 
         async with create_domain_facade(restaurant_database_path) as domain_facade:
-            pinned_dish: Dish = retrieve_pinned_dish(await domain_facade.search_menu(create_menu_search_request()), pinned_dish_id)
+            pinned_dish: Dish = retrieve_pinned_dish((await domain_facade.search_menu(create_menu_search_request())).dishes, pinned_dish_id)
             actual_dish: Dish = await domain_facade.retrieve_dish(DishLookupRequest(dish_name=pinned_dish.name.swapcase()))
 
         AsserterDish.assert_dish_and_its_labels_are_as_expected(

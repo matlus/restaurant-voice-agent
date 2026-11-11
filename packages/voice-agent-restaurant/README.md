@@ -4,10 +4,10 @@ The restaurant domain for the voice agent. Everything goes through `DomainFacade
 
 | Method | What it does |
 | --- | --- |
-| `get_restaurant_profile` | Name, address, phone, time zone, house notes and the reservation policy. |
+| `get_restaurant_profile` | Name, address, phone, time zone, the shared-kitchen allergen notice, other house notes and the reservation policy. |
 | `get_restaurant_local_now` | The current date and time in the restaurant's time zone. |
 | `get_opening_hours` | The weekly hours and the holiday closures inside the booking window. |
-| `search_menu` | Dishes that suit every requested diet, contain none of the excluded allergens, and match an optional category, calorie ceiling and text. |
+| `search_menu` | Dishes that suit every requested diet, contain none of the excluded allergens, and match an optional category, calorie ceiling and text. Says whether the search was about allergy safety (it excluded allergens or asked for a free-from diet), which is when the allergen notice applies. |
 | `retrieve_dish` | One dish by its name or a distinctive part of it ("the salmon", "your scallops"). |
 | `check_availability` | Whether a table fits the party at a time, with up to three nearby open times when it does not. |
 | `create_reservation` | Books the smallest free table that fits and returns a six-character confirmation code. |

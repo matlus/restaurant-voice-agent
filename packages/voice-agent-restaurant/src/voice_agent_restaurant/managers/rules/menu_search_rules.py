@@ -1,6 +1,7 @@
 from collections.abc import Collection, Iterable
 
 from voice_agent_restaurant.managers.models.menu_models import Allergen, DietLabel, Dish, MenuCategory, MenuSearchCriteria
+from voice_agent_restaurant.managers.rules.dietary_label_rules import DietaryLabelRules
 
 
 class MenuSearchRules:
@@ -17,6 +18,13 @@ class MenuSearchRules:
                 [dish.name, dish.description, *dish.ingredients],
                 None if menu_search_criteria.search_text is None else menu_search_criteria.search_text.casefold(),
             )
+        )
+
+    @staticmethod
+    def filters_on_allergens(menu_search_criteria: MenuSearchCriteria) -> bool:
+        """Whether the search is about allergy safety: it excludes allergens or asks for a free-from diet."""
+        return bool(menu_search_criteria.excluded_allergens) or any(
+            diet_label in DietaryLabelRules.FREE_FROM_LABELS for diet_label in menu_search_criteria.diet_labels
         )
 
     @staticmethod

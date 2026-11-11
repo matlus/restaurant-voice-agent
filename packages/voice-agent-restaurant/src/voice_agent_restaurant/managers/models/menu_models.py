@@ -101,6 +101,15 @@ class DishLookupRequest:
 
 
 @dataclass(frozen=True)
+class MenuSearchResult:
+    """The dishes a menu search found. filters_on_allergens is true when the search excluded allergens or asked for a
+    free-from diet, so the answer is about allergy safety and the restaurant's allergen notice applies to it."""
+
+    dishes: list[Dish]
+    filters_on_allergens: bool
+
+
+@dataclass(frozen=True)
 class MenuSearchCriteria:
     """A validated menu search, with every label in its stored form."""
 

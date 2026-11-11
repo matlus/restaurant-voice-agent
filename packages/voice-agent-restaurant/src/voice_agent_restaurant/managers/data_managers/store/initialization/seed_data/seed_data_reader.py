@@ -151,6 +151,7 @@ class SeedDataReader:
             postal_code=restaurant_seed_file.get_text(root_object, "postal_code", "$"),
             phone_number=restaurant_seed_file.get_text(root_object, "phone_number", "$"),
             time_zone=restaurant_seed_file.get_time_zone_name(root_object, "time_zone", "$"),
+            allergen_notice=restaurant_seed_file.get_text(root_object, "allergen_notice", "$"),
             house_notes=restaurant_seed_file.get_texts(root_object, "house_notes", "$"),
             reservation_policy=reservation_policy,
         )

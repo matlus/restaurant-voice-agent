@@ -5,7 +5,13 @@ from zoneinfo import ZoneInfo
 from voice_agent_restaurant.managers.clocks.clock_base import ClockBase
 from voice_agent_restaurant.managers.data_managers.data_manager_restaurant import DataManagerRestaurant
 from voice_agent_restaurant.managers.exceptions.menu_exceptions import DishNotFoundException
-from voice_agent_restaurant.managers.models.menu_models import Dish, DishLookupRequest, MenuSearchCriteria, MenuSearchRequest
+from voice_agent_restaurant.managers.models.menu_models import (
+    Dish,
+    DishLookupRequest,
+    MenuSearchCriteria,
+    MenuSearchRequest,
+    MenuSearchResult,
+)
 from voice_agent_restaurant.managers.models.restaurant_models import Closure, OpeningHours, RestaurantProfile, WeekdayHours
 from voice_agent_restaurant.managers.rules.dietary_label_rules import DietaryLabelRules
 from voice_agent_restaurant.managers.rules.dish_name_matching import DishNameMatching
@@ -42,10 +48,13 @@ class ManagerRestaurant:
             last_seating_minutes_before_close=restaurant_profile.reservation_policy.seating_duration_minutes,
         )
 
-    async def search_menu(self, menu_search_request: MenuSearchRequest) -> list[Dish]:
+    async def search_menu(self, menu_search_request: MenuSearchRequest) -> MenuSearchResult:
         menu_search_criteria: MenuSearchCriteria = ValidatorMenuRequests.validate_menu_search_request(menu_search_request)
         dishes: list[Dish] = await self._get_dishes()
-        return [dish for dish in dishes if MenuSearchRules.is_match(dish, menu_search_criteria)]
+        return MenuSearchResult(
+            dishes=[dish for dish in dishes if MenuSearchRules.is_match(dish, menu_search_criteria)],
+            filters_on_allergens=MenuSearchRules.filters_on_allergens(menu_search_criteria),
+        )
 
     async def retrieve_dish(self, dish_lookup_request: DishLookupRequest) -> Dish:
         dish_name: str = ValidatorMenuRequests.validate_dish_lookup_request(dish_lookup_request)

@@ -45,6 +45,7 @@ class SeededReservationPolicy:
 class SeededRestaurant:
     name: str
     time_zone: str
+    allergen_notice: str
     house_notes: list[str]
     weekly_hours: list[SeededWeekdayHours]
     closures: list[SeededClosure]
@@ -76,6 +77,7 @@ def read_seeded_restaurant() -> SeededRestaurant:
     return SeededRestaurant(
         name=restaurant_seed_object["name"],
         time_zone=restaurant_seed_object["time_zone"],
+        allergen_notice=restaurant_seed_object["allergen_notice"],
         house_notes=list(restaurant_seed_object["house_notes"]),
         weekly_hours=[
             _to_seeded_weekday_hours(hours_object["weekday"], hours_object["opens_at"], hours_object["closes_at"])

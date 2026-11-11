@@ -9,7 +9,7 @@ from contextlib import aclosing
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 import pytest
 from conversation_acceptance_support.asserters.asserter_conversation import AsserterConversation
@@ -154,11 +154,18 @@ class TestAgentTools:
     ) -> None:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
-            keto_dishes: list[Dish] = await restaurant_domain_facade.search_menu(
-                MenuSearchRequest(diet_labels=["keto"], excluded_allergens=[], category=None, maximum_calories=None, search_text=None)
-            )
+            keto_dishes: list[Dish] = (
+                await restaurant_domain_facade.search_menu(
+                    MenuSearchRequest(diet_labels=["keto"], excluded_allergens=[], category=None, maximum_calories=None, search_text=None)
+                )
+            ).dishes
         assert keto_dishes, "The menu must hold keto dishes for this scenario; the seeded data no longer supports it"
-        expected_tool_answer: tuple[list[str], list[str]] = ([TOOL_CALL_ID], [keto_dish.dish_id for keto_dish in keto_dishes])
+        # Keto is a lifestyle diet, not an allergy question, so the answer carries no allergen notice.
+        expected_tool_answer: tuple[list[str], list[str], list[bool]] = (
+            [TOOL_CALL_ID],
+            [keto_dish.dish_id for keto_dish in keto_dishes],
+            [False],
+        )
         expected_agent_response_request_count: int = 2
 
         async with (
@@ -174,9 +181,11 @@ class TestAgentTools:
             )
 
         actual_tool_outputs: list[CapturedToolOutput] = collect_tool_outputs(realtime_voice_service_scripted)
-        actual_tool_answer: tuple[list[str], list[str]] = (
+        actual_tool_answers: list[dict[str, Any]] = [json.loads(actual_tool_output.output) for actual_tool_output in actual_tool_outputs]
+        actual_tool_answer: tuple[list[str], list[str], list[bool]] = (
             [actual_tool_output.call_id for actual_tool_output in actual_tool_outputs],
-            [answered_dish["dish_id"] for actual_tool_output in actual_tool_outputs for answered_dish in json.loads(actual_tool_output.output)],
+            [answered_dish["dish_id"] for actual_tool_answer in actual_tool_answers for answered_dish in actual_tool_answer["dishes"]],
+            ["allergen_notice" in actual_tool_answer for actual_tool_answer in actual_tool_answers],
         )
         AsserterConversation.assert_conversation_events_are_as_expected(
             expected_conversation_events=EXPECTED_CONVERSATION_EVENTS, actual_conversation_events=actual_conversation_events
@@ -185,6 +194,65 @@ class TestAgentTools:
             expected_tool_answer,
             expected_agent_response_request_count,
         )
+
+    @pytest.mark.parametrize(
+        ("tool_name", "arguments_json"),
+        [
+            pytest.param("search_menu", '{"excluded_allergens": ["tree_nuts"]}', id="menu-search-excluding-an-allergen"),
+            pytest.param("search_menu", '{"diet_labels": ["nut_free"]}', id="menu-search-for-a-free-from-diet"),
+        ],
+    )
+    async def test_Converse_WhenTheAgentSearchesTheMenuAboutAnAllergy_ThenTheAnswerCarriesTheRestaurantsAllergenNotice(
+        self, restaurant_database_path: Path, tool_name: str, arguments_json: str
+    ) -> None:
+        guest_microphone: GuestMicrophone = GuestMicrophone()
+        async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
+            expected_allergen_notices: list[str] = [(await restaurant_domain_facade.get_restaurant_profile()).allergen_notice]
+
+        async with (
+            RealtimeVoiceServiceScripted(
+                events_after_each_guest_audio=create_tool_call_events(TOOL_CALL_ID, tool_name, arguments_json)
+            ) as realtime_voice_service_scripted,
+            create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_audio())) as conversation,
+        ):
+            await guest_microphone.take_part(conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1))
+
+        actual_allergen_notices: list[str] = [
+            json.loads(actual_tool_output.output)["allergen_notice"] for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted)
+        ]
+        assert actual_allergen_notices == expected_allergen_notices
+
+    async def test_Converse_WhenTheAgentDescribesADish_ThenTheAnswerCarriesTheDishAndTheRestaurantsAllergenNotice(
+        self, restaurant_database_path: Path
+    ) -> None:
+        guest_microphone: GuestMicrophone = GuestMicrophone()
+        async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
+            described_dish: Dish = (
+                await restaurant_domain_facade.search_menu(
+                    MenuSearchRequest(diet_labels=[], excluded_allergens=[], category=None, maximum_calories=None, search_text=None)
+                )
+            ).dishes[0]
+            expected_dish_answers: list[tuple[str, str]] = [
+                (described_dish.dish_id, (await restaurant_domain_facade.get_restaurant_profile()).allergen_notice)
+            ]
+
+        async with (
+            RealtimeVoiceServiceScripted(
+                events_after_each_guest_audio=create_tool_call_events(TOOL_CALL_ID, "describe_dish", json.dumps({"dish_name": described_dish.name}))
+            ) as realtime_voice_service_scripted,
+            create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_audio())) as conversation,
+        ):
+            await guest_microphone.take_part(conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1))
+
+        actual_dish_answers: list[tuple[str, str]] = [
+            (dish_answer["dish"]["dish_id"], dish_answer["allergen_notice"])
+            for dish_answer in (json.loads(actual_tool_output.output) for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted))
+        ]
+        assert actual_dish_answers == expected_dish_answers
 
     async def test_Converse_WhenTheAgentGoesOnAfterALookup_ThenOnlyItsFirstReplyWasToldToGreet(self, restaurant_database_path: Path) -> None:
         # The greeting instruction once lived in the standing instructions the model reads before every reply, and the

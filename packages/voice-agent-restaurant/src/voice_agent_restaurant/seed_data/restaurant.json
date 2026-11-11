@@ -32,8 +32,8 @@
     "late_arrival_hold_minutes": 15,
     "large_party_guidance": "Parties larger than 8 are welcome in our private dining room; please call the restaurant to arrange it."
   },
+  "allergen_notice": "All allergy information comes from our recipes, but everything is prepared in a shared kitchen, so we cannot guarantee any dish is free of trace allergens. Please tell your server about any allergy.",
   "house_notes": [
-    "All allergy information comes from our recipes, but everything is prepared in a shared kitchen, so we cannot guarantee any dish is free of trace allergens. Please tell your server about any allergy.",
     "Free parking is available in the lot behind the restaurant.",
     "The dining room and restrooms are wheelchair accessible.",
     "High chairs and a children's menu are available."
