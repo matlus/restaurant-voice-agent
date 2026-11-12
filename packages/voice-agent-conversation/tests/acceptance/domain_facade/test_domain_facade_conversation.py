@@ -394,6 +394,7 @@ class TestConversation:
         async with (
             RealtimeVoiceServiceScripted() as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
             aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             with pytest.raises(VoiceNotOfferedException) as raised:
@@ -437,6 +438,7 @@ class TestConversation:
         async with (
             RealtimeVoiceServiceScripted() as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
             aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             with pytest.raises(ConversationRequestValidationException) as raised:
@@ -452,7 +454,7 @@ class TestConversation:
 
     async def test_Converse_WhenTheHostStopsReadingEarly_ThenTheProviderSessionIsClosed(self, restaurant_database_path: Path) -> None:
         guest_microphone: GuestMicrophone = GuestMicrophone()
-        conversation_request: ConversationRequest = ConversationRequest(voice_key="openai-ash")
+        conversation_request: ConversationRequest = ConversationRequest(voice_key=read_catalog_voice_option("openai-ash").voice_key)
         expected_provider_session_count: int = 1
 
         async with (
@@ -827,6 +829,7 @@ class TestVoiceOptions:
         async with (
             RealtimeVoiceServiceScripted() as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
         ):
             actual_voice_options: list[VoiceOption] = await domain_facade.get_voice_options()
 
