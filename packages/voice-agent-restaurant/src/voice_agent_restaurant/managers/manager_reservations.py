@@ -26,6 +26,10 @@ from voice_agent_restaurant.managers.models.reservation_models import (
     GuestBookingIdentity,
     GuestBookingSearch,
     NewReservation,
+    NotesChange,
+    NotesCleared,
+    NotesKept,
+    NotesReplaced,
     RequestedSeating,
     Reservation,
     ReservationCancellation,
@@ -413,8 +417,18 @@ class ManagerReservations:
             reservation_date=changed_requested_seating.reservation_date,
             starts_at=changed_requested_seating.starts_at,
             ends_at=ends_at,
-            notes=current_reservation.notes if validated_reservation_change.notes is None else validated_reservation_change.notes,
+            notes=ManagerReservations._apply_notes_change(current_reservation.notes, validated_reservation_change.notes_change),
         )
+
+    @staticmethod
+    def _apply_notes_change(current_notes: str | None, notes_change: NotesChange) -> str | None:
+        match notes_change:
+            case NotesKept():
+                return current_notes
+            case NotesReplaced(notes=replacement_notes):
+                return replacement_notes
+            case NotesCleared():
+                return None
 
     @staticmethod
     def _select_guest_reservations(booked_reservations: Iterable[Reservation], given_guest_name: str, restaurant_now: datetime) -> list[Reservation]:

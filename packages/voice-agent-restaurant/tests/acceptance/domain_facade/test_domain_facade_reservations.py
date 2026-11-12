@@ -117,6 +117,8 @@ def create_change_request(
     reservation_time: str | None = None,
     party_size: int | None = None,
     notes: str | None = None,
+    *,
+    clear_notes: bool = False,
 ) -> ReservationChangeRequest:
     return ReservationChangeRequest(
         booking_reference=ConfirmationCodeReference(confirmation_code=confirmation_code, phone_number=phone_number),
@@ -124,6 +126,7 @@ def create_change_request(
         reservation_time=reservation_time,
         party_size=party_size,
         notes=notes,
+        clear_notes=clear_notes,
     )
 
 
@@ -1082,6 +1085,42 @@ class TestChangeReservation:
             )
 
         assert actual_changed_reservation == expected_reservation
+
+    async def test_ChangeReservation_WhenTheGuestAsksToClearTheNotes_ThenTheBookingHasNoNotesAndKeepsEverythingElse(
+        self, restaurant_database_path: Path
+    ) -> None:
+        async with create_domain_facade(restaurant_database_path) as domain_facade:
+            current_reservation: Reservation = await retrieve_unstarted_seeded_booking(
+                domain_facade, SEEDED_PRIYA_PHONE, "Clearing a booking's notes"
+            )
+            annotated_reservation: Reservation = await domain_facade.change_reservation(
+                create_change_request(current_reservation.confirmation_code, SEEDED_PRIYA_PHONE, notes=create_generated_note())
+            )
+            expected_reservation: Reservation = replace(annotated_reservation, notes=None)
+            actual_changed_reservation: Reservation = await domain_facade.change_reservation(
+                create_change_request(current_reservation.confirmation_code, SEEDED_PRIYA_PHONE, clear_notes=True)
+            )
+
+        assert actual_changed_reservation == expected_reservation
+
+    async def test_ChangeReservation_WhenNewNotesAndClearingAreBothAsked_ThenTheRequestIsRefused(self, restaurant_database_path: Path) -> None:
+        expected_problem_phrases: list[str] = ["cannot both be given"]
+        expected_exception_metadata: ExpectedExceptionMetadata = create_validation_refusal_metadata()
+        expected_contextual_data_by_name: dict[str, int] = {RESERVATION_PROBLEM_COUNT_CONTEXT_NAME: len(expected_problem_phrases)}
+
+        async with create_domain_facade(restaurant_database_path) as domain_facade:
+            current_reservation: Reservation = await retrieve_seeded_booking(domain_facade, SEEDED_PRIYA_PHONE)
+            with pytest.raises(ReservationRequestValidationException) as raised:
+                await domain_facade.change_reservation(
+                    create_change_request(current_reservation.confirmation_code, SEEDED_PRIYA_PHONE, notes=create_generated_note(), clear_notes=True)
+                )
+
+        AsserterException.assert_validation_problems_are_as_expected(
+            expected_problem_phrases=expected_problem_phrases,
+            expected_exception_metadata=expected_exception_metadata,
+            expected_contextual_data_by_name=expected_contextual_data_by_name,
+            actual_validation_exception=raised.value,
+        )
 
     async def test_ChangeReservation_WhenTheNewTimeHasNoFittingTable_ThenTheBookingIsUnchangedAndOpenTimesAreOffered(
         self, restaurant_database_path: Path

@@ -3,6 +3,7 @@ from typing import ClassVar, final, override
 from pydantic import BaseModel, ConfigDict, Field
 
 from voice_agent_conversation.managers.agent_tools.agent_tool_base import AgentToolBase
+from voice_agent_conversation.managers.agent_tools.restaurant_tools.spoken_answers.schedule_answers import AvailabilityAnswer, ScheduleAnswerMapping
 from voice_agent_restaurant import AvailabilityRequest, AvailabilityResult, DomainFacade as RestaurantDomainFacade
 
 
@@ -20,7 +21,7 @@ class CheckAvailabilityInput(BaseModel):
 
 
 @final
-class AgentToolCheckAvailability(AgentToolBase[CheckAvailabilityInput, AvailabilityResult]):
+class AgentToolCheckAvailability(AgentToolBase[CheckAvailabilityInput, AvailabilityAnswer]):
     def __init__(self, restaurant_domain_facade: RestaurantDomainFacade) -> None:
         self._restaurant_domain_facade: RestaurantDomainFacade = restaurant_domain_facade
 
@@ -44,8 +45,8 @@ class AgentToolCheckAvailability(AgentToolBase[CheckAvailabilityInput, Availabil
         return CheckAvailabilityInput
 
     @override
-    async def run(self, tool_input: CheckAvailabilityInput) -> AvailabilityResult:
-        return await self._restaurant_domain_facade.check_availability(
+    async def run(self, tool_input: CheckAvailabilityInput) -> AvailabilityAnswer:
+        availability_result: AvailabilityResult = await self._restaurant_domain_facade.check_availability(
             AvailabilityRequest(
                 reservation_date=tool_input.reservation_date,
                 reservation_time=tool_input.reservation_time,
@@ -53,3 +54,4 @@ class AgentToolCheckAvailability(AgentToolBase[CheckAvailabilityInput, Availabil
                 confirmation_code=tool_input.confirmation_code,
             )
         )
+        return ScheduleAnswerMapping.to_availability_answer(availability_result)

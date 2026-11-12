@@ -15,6 +15,10 @@ from voice_agent_restaurant.managers.models.reservation_models import (
     GuestBookingIdentity,
     GuestBookingSearch,
     GuestDetailsReference,
+    NotesChange,
+    NotesCleared,
+    NotesKept,
+    NotesReplaced,
     RequestedSeating,
     ReservationCancellationRequest,
     ReservationChangeRequest,
@@ -54,6 +58,7 @@ class ValidatorReservationRequests:
     PHONE_NUMBER_FIELD_NAME: Final[str] = "phone_number"
     CONFIRMATION_CODE_FIELD_NAME: Final[str] = "confirmation_code"
     NOTES_FIELD_NAME: Final[str] = "notes"
+    CLEAR_NOTES_FIELD_NAME: Final[str] = "clear_notes"
     REQUIRED_FIELD_PROBLEM_TEMPLATE: Final[str] = "'{field_name}' is required but was not provided"
     MAXIMUM_LENGTH_PROBLEM_TEMPLATE: Final[str] = "'{field_name}' must contain at most {maximum_length} characters"
 
@@ -127,7 +132,13 @@ class ValidatorReservationRequests:
         notes: str | None = ReservationValueParsing.as_provided(reservation_change_request.notes)
         validation_problems: list[str] = cls._collect_booking_reference_problems(reservation_change_request.booking_reference)
         validation_problems.extend(
-            cls._collect_requested_change_problems(reservation_date_text, reservation_time_text, reservation_change_request.party_size, notes)
+            cls._collect_requested_change_problems(
+                reservation_date_text,
+                reservation_time_text,
+                reservation_change_request.party_size,
+                notes,
+                clear_notes=reservation_change_request.clear_notes,
+            )
         )
         validation_problems.extend(cls._collect_optional_date_problems(reservation_date_text, cls.RESERVATION_DATE_FIELD_NAME))
         validation_problems.extend(cls._collect_optional_time_problems(reservation_time_text, cls.RESERVATION_TIME_FIELD_NAME))
@@ -142,7 +153,7 @@ class ValidatorReservationRequests:
                 starts_at=None if reservation_time_text is None else ReservationValueParsing.parse_time(reservation_time_text),
                 party_size=reservation_change_request.party_size,
             ),
-            notes=notes,
+            notes_change=cls._to_notes_change(notes, clear_notes=reservation_change_request.clear_notes),
         )
 
     @classmethod
@@ -340,16 +351,24 @@ class ValidatorReservationRequests:
 
     @classmethod
     def _collect_requested_change_problems(
-        cls, reservation_date_text: str | None, reservation_time_text: str | None, party_size: int | None, notes: str | None
+        cls, reservation_date_text: str | None, reservation_time_text: str | None, party_size: int | None, notes: str | None, *, clear_notes: bool
     ) -> list[str]:
-        if reservation_date_text is None and reservation_time_text is None and party_size is None and notes is None:
+        if notes is not None and clear_notes:
+            return [f"'{cls.NOTES_FIELD_NAME}' and '{cls.CLEAR_NOTES_FIELD_NAME}' cannot both be given; give new notes or clear them"]
+        if reservation_date_text is None and reservation_time_text is None and party_size is None and notes is None and not clear_notes:
             return [
                 (
                     f"at least one of '{cls.RESERVATION_DATE_FIELD_NAME}', '{cls.RESERVATION_TIME_FIELD_NAME}', "
-                    f"'{cls.PARTY_SIZE_FIELD_NAME}' or '{cls.NOTES_FIELD_NAME}' must be provided to change"
+                    f"'{cls.PARTY_SIZE_FIELD_NAME}', '{cls.NOTES_FIELD_NAME}' or '{cls.CLEAR_NOTES_FIELD_NAME}' must be provided to change"
                 )
             ]
         return []
+
+    @staticmethod
+    def _to_notes_change(notes: str | None, *, clear_notes: bool) -> NotesChange:
+        if clear_notes:
+            return NotesCleared()
+        return NotesKept() if notes is None else NotesReplaced(notes=notes)
 
     @classmethod
     def _collect_guest_name_problems(cls, guest_name: str | None) -> list[str]:

@@ -99,13 +99,15 @@ type BookingReference = ConfirmationCodeReference | GuestDetailsReference
 
 @dataclass(frozen=True)
 class ReservationChangeRequest:
-    """A change to the booking the reference names. Any other field left as None keeps its current value."""
+    """A change to the booking the reference names. Any other field left as None keeps its current value; clear_notes
+    removes the booking's notes, which new notes cannot do because empty notes count as none given."""
 
     booking_reference: BookingReference
     reservation_date: str | None
     reservation_time: str | None
     party_size: int | None
     notes: str | None
+    clear_notes: bool = False
 
 
 @dataclass(frozen=True)
@@ -184,12 +186,28 @@ class SeatingChange:
 
 
 @dataclass(frozen=True)
-class ValidatedReservationChange:
-    """A validated change. Notes left as None keep the booking's current notes."""
+class NotesKept:
+    """The change leaves the booking's notes as they are."""
 
+
+@dataclass(frozen=True)
+class NotesReplaced:
+    notes: str
+
+
+@dataclass(frozen=True)
+class NotesCleared:
+    """The change removes the booking's notes."""
+
+
+type NotesChange = NotesKept | NotesReplaced | NotesCleared
+
+
+@dataclass(frozen=True)
+class ValidatedReservationChange:
     booking_identity: BookingIdentity
     seating_change: SeatingChange
-    notes: str | None
+    notes_change: NotesChange
 
 
 @dataclass(frozen=True)
