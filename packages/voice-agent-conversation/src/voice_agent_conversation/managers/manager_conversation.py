@@ -188,7 +188,7 @@ class ManagerConversation:
                         )
                     case AgentToolCallRequested():
                         agent_tool_call_answer: AgentToolCallAnswer = await ManagerConversation._answer_tool_call(
-                            realtime_voice_session, agent_toolbox, voice_session_event, agent_reply_progress, call_end_signals.guest_audio_ended
+                            realtime_voice_session, agent_toolbox, voice_session_event, agent_reply_progress, call_end_signals
                         )
                         agent_reply_progress = ManagerConversation._record_tool_call_answer(agent_reply_progress, agent_tool_call_answer)
                         yield AgentToolCallAnswered(
@@ -225,7 +225,9 @@ class ManagerConversation:
 
     @staticmethod
     def _create_call_end_signals() -> CallEndSignals:
-        return CallEndSignals(guest_audio_ended=asyncio.Event(), reached_call_limit=asyncio.get_running_loop().create_future())
+        return CallEndSignals(
+            guest_audio_ended=asyncio.Event(), reached_call_limit=asyncio.get_running_loop().create_future(), farewell_grace_ran_out=asyncio.Event()
+        )
 
     @staticmethod
     def _start_guest_side_forwarding(
@@ -255,13 +257,13 @@ class ManagerConversation:
         agent_toolbox: AgentToolbox,
         agent_tool_call_requested: AgentToolCallRequested,
         agent_reply_progress: AgentReplyProgress,
-        guest_audio_ended: asyncio.Event,
+        call_end_signals: CallEndSignals,
     ) -> AgentToolCallAnswer:
         # The answer is returned even when the guest hung up while the tool ran, so the call still reports the tool call.
         agent_tool_call_answer: AgentToolCallAnswer = await agent_toolbox.run_tool_call(
             agent_tool_call_requested, agent_reply_progress.consecutive_call_repair_count
         )
-        if ManagerConversation._session_still_reaches_guest(guest_audio_ended):
+        if ManagerConversation._session_still_reaches_guest(call_end_signals):
             await realtime_voice_session.send_tool_result(agent_tool_call_requested.call_id, agent_tool_call_answer.tool_output_json)
         return agent_tool_call_answer
 
@@ -282,7 +284,7 @@ class ManagerConversation:
     ) -> AgentReplyProgress:
         # A guest who is talking gets the reply the provider starts by itself when they finish.
         if not guest_speech_activity.guest_is_speaking:
-            await ManagerConversation._request_next_reply(realtime_voice_session, call_end_signals.guest_audio_ended)
+            await ManagerConversation._request_next_reply(realtime_voice_session, call_end_signals)
         return replace(agent_reply_progress, has_answered_tool_calls=False)
 
     @staticmethod
@@ -292,19 +294,18 @@ class ManagerConversation:
         """Called when some other reply ends after the call limit: a farewell that reply held up is asked for again now."""
         if not agent_reply_progress.farewell_was_refused:
             return agent_reply_progress
-        await ManagerConversation._request_farewell(
-            realtime_voice_session, call_end_signals.reached_call_limit.result(), call_end_signals.guest_audio_ended
-        )
+        await ManagerConversation._request_farewell(realtime_voice_session, call_end_signals.reached_call_limit.result(), call_end_signals)
         return replace(agent_reply_progress, farewell_was_refused=False)
 
     @staticmethod
-    def _session_still_reaches_guest(guest_audio_ended: asyncio.Event) -> bool:
-        # A guest who hung up is sent nothing more: no tool answer, next reply or farewell. The session is already closing.
-        return not guest_audio_ended.is_set()
+    def _session_still_reaches_guest(call_end_signals: CallEndSignals) -> bool:
+        # Once the guest hung up, or the session was closed when the farewell ran over, nothing more is sent: no tool
+        # answer, next reply or farewell. The session is already closing.
+        return not call_end_signals.guest_audio_ended.is_set() and not call_end_signals.farewell_grace_ran_out.is_set()
 
     @staticmethod
-    async def _request_next_reply(realtime_voice_session: RealtimeVoiceSessionBase, guest_audio_ended: asyncio.Event) -> None:
-        if ManagerConversation._session_still_reaches_guest(guest_audio_ended):
+    async def _request_next_reply(realtime_voice_session: RealtimeVoiceSessionBase, call_end_signals: CallEndSignals) -> None:
+        if ManagerConversation._session_still_reaches_guest(call_end_signals):
             await realtime_voice_session.request_next_reply()
 
     @staticmethod
@@ -317,16 +318,18 @@ class ManagerConversation:
         """Waits for a call limit, asks for the farewell and reports the limit. A farewell that never finishes would hold
         the paid session open, so the session is closed after a grace period and the call still ends."""
         call_limit: CallLimit = await ManagerConversation._wait_for_call_limit(call_limit_settings, read_guest_speech_activity)
-        if not ManagerConversation._session_still_reaches_guest(call_end_signals.guest_audio_ended):
+        if not ManagerConversation._session_still_reaches_guest(call_end_signals):
             return
-        await ManagerConversation._request_farewell(realtime_voice_session, call_limit, call_end_signals.guest_audio_ended)
+        await ManagerConversation._request_farewell(realtime_voice_session, call_limit, call_end_signals)
         call_end_signals.reached_call_limit.set_result(call_limit)
         await asyncio.sleep(CallLimits.FAREWELL_GRACE_SECONDS)
+        # Told first, so the relay sends nothing to the session being closed under it.
+        call_end_signals.farewell_grace_ran_out.set()
         await realtime_voice_session.close()
 
     @staticmethod
-    async def _request_farewell(realtime_voice_session: RealtimeVoiceSessionBase, call_limit: CallLimit, guest_audio_ended: asyncio.Event) -> None:
-        if ManagerConversation._session_still_reaches_guest(guest_audio_ended):
+    async def _request_farewell(realtime_voice_session: RealtimeVoiceSessionBase, call_limit: CallLimit, call_end_signals: CallEndSignals) -> None:
+        if ManagerConversation._session_still_reaches_guest(call_end_signals):
             await realtime_voice_session.request_farewell(AgentInstructions.compose_farewell(call_limit))
 
     @staticmethod

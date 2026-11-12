@@ -89,3 +89,30 @@ class TestValidatorHostSettings:
             ValidatorHostSettings.validate_port(port)
 
         AsserterHostSettingException.assert_refused_host_setting_is_as_expected(expected_host_setting_refusal, raised.value)
+
+    def test_ValidateAllowedOrigins_WhenAnOriginSpellsOutItsSchemesDefaultPort_ThenItComesBackAsABrowserSendsIt(self) -> None:
+        booking_site_host: str = f"{create_generated_word().lower()}.example.com"
+        expected_allowed_origins: frozenset[str] = frozenset({f"https://{booking_site_host}"})
+
+        actual_allowed_origins: frozenset[str] = ValidatorHostSettings.validate_allowed_origins([f"https://{booking_site_host}:443"])
+
+        assert actual_allowed_origins == expected_allowed_origins
+
+    def test_ValidateAllowedOrigins_WhenAnOriginCarriesAUserName_ThenItIsRefusedBecauseNoBrowserSendsOne(self) -> None:
+        origin_with_user_name: str = f"https://{create_generated_word().lower()}@{create_generated_word().lower()}.example.com"
+        expected_host_setting_refusal: ExpectedHostSettingRefusal = ExpectedHostSettingRefusal(
+            setting_name=ALLOWED_ORIGINS_SETTING_NAME, setting_value=origin_with_user_name, message_phrases=("must name a scheme and a host",)
+        )
+
+        with pytest.raises(HostSettingException) as raised:
+            ValidatorHostSettings.validate_allowed_origins([origin_with_user_name])
+
+        AsserterHostSettingException.assert_refused_host_setting_is_as_expected(expected_host_setting_refusal, raised.value)
+
+    def test_ValidateAllowedOrigins_WhenAnOriginNamesAnIpv6Address_ThenItComesBackWithTheAddressStillInBrackets(self) -> None:
+        local_ipv6_origin: str = "http://[::1]:5173"
+        expected_allowed_origins: frozenset[str] = frozenset({local_ipv6_origin})
+
+        actual_allowed_origins: frozenset[str] = ValidatorHostSettings.validate_allowed_origins([local_ipv6_origin])
+
+        assert actual_allowed_origins == expected_allowed_origins

@@ -9,6 +9,7 @@ from voice_agent_conversation import ConfigurationSettingException as Conversati
 from voice_agent_restaurant import ConfigurationSettingException as RestaurantConfigurationSettingException
 from voice_agent_web.configuration_providers.host_settings import HostSettings
 from voice_agent_web.configuration_providers.host_settings_provider import HostSettingsProvider
+from voice_agent_web.configuration_providers.host_settings_source import HostSettingsSource
 from voice_agent_web.exceptions.host_setting_exception import HostSettingException
 from voice_agent_web.json_log_formatter import JsonLogFormatter
 from voice_agent_web.main import create_app
@@ -21,7 +22,7 @@ def main() -> None:
     log_handler.setFormatter(JsonLogFormatter())
     logging.basicConfig(level=logging.INFO, handlers=[log_handler])
     try:
-        host_settings: HostSettings = HostSettingsProvider(os.environ).get_host_settings()
+        host_settings: HostSettings = HostSettingsProvider(HostSettingsSource(os.environ)).get_host_settings()
         app: FastAPI = create_app(allowed_origins=host_settings.allowed_origins, maximum_concurrent_calls=host_settings.maximum_concurrent_calls)
     except (HostSettingException, ConversationConfigurationSettingException, RestaurantConfigurationSettingException) as setting_exception:
         # A setting the operator must fix: its message says which and how, so a traceback would only bury it.

@@ -23,7 +23,10 @@ class AsserterHostSettingException:
             expected_host_setting_refusal, actual_host_setting_exception
         )
         failure_report: str = "\n".join(mismatch_messages)
-        assert not mismatch_messages, f"The refused host setting is not as expected; {len(mismatch_messages)} mismatches:\n{failure_report}"
+        assert not mismatch_messages, (
+            f"The refusal of host setting {expected_host_setting_refusal.setting_name!r} is not as expected; "
+            f"{len(mismatch_messages)} mismatches:\n{failure_report}"
+        )
 
     @staticmethod
     def find_refused_host_setting_mismatches(

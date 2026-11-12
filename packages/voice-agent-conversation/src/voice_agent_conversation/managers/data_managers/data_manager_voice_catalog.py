@@ -1,6 +1,6 @@
 import json
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from importlib import resources
 from typing import Final, cast
 
@@ -68,7 +68,7 @@ class DataManagerVoiceCatalog:
         return voice_options
 
     @classmethod
-    def _verify_catalog_invariants(cls, voice_options: list[VoiceOption]) -> None:
+    def _verify_catalog_invariants(cls, voice_options: Collection[VoiceOption]) -> None:
         if not voice_options:
             raise cls._create_invalid_catalog_exception("must list at least one voice")
         voice_key_counts: Counter[str] = Counter(voice_option.voice_key for voice_option in voice_options)

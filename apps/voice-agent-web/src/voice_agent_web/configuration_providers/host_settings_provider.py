@@ -1,13 +1,13 @@
-from collections.abc import Mapping
 from typing import Final
 
 from voice_agent_web.configuration_providers.host_settings import HostSettings
+from voice_agent_web.configuration_providers.host_settings_source import HostSettingsSource
 from voice_agent_web.exceptions.host_setting_exception import HostSettingException
 from voice_agent_web.validators.validator_host_settings import ValidatorHostSettings
 
 
 class HostSettingsProvider:
-    """Reads and checks the web host's own settings from the environment when it is built, so a setting that cannot be
+    """Reads and checks the web host's own settings from its settings source when it is built, so a setting that cannot be
     used stops startup with a message naming it instead of a bare ValueError."""
 
     HOST_VARIABLE_NAME: Final[str] = "VOICE_AGENT_WEB_HOST"
@@ -20,10 +20,10 @@ class HostSettingsProvider:
     DEFAULT_MAXIMUM_CONCURRENT_CALLS: Final[int] = 10
     ORIGIN_SEPARATOR: Final[str] = ","
 
-    def __init__(self, environment_variables: Mapping[str, str]) -> None:
-        self._environment_variables: Mapping[str, str] = environment_variables
+    def __init__(self, host_settings_source: HostSettingsSource) -> None:
+        self._host_settings_source: HostSettingsSource = host_settings_source
         self._host_settings: HostSettings = HostSettings(
-            host=self._read_text(self.HOST_VARIABLE_NAME) or self.DEFAULT_HOST,
+            host=self._host_settings_source.read_setting_text(self.HOST_VARIABLE_NAME) or self.DEFAULT_HOST,
             port=ValidatorHostSettings.validate_port(self._read_whole_number(self.PORT_VARIABLE_NAME, self.DEFAULT_PORT)),
             allowed_origins=ValidatorHostSettings.validate_allowed_origins(self._read_allowed_origins()),
             maximum_concurrent_calls=ValidatorHostSettings.validate_maximum_concurrent_calls(
@@ -34,13 +34,8 @@ class HostSettingsProvider:
     def get_host_settings(self) -> HostSettings:
         return self._host_settings
 
-    def _read_text(self, variable_name: str) -> str | None:
-        """The setting's text, or None when it is unset or blank."""
-        setting_text: str = self._environment_variables.get(variable_name, "").strip()
-        return setting_text or None
-
     def _read_whole_number(self, variable_name: str, default_value: int) -> int:
-        setting_text: str | None = self._read_text(variable_name)
+        setting_text: str | None = self._host_settings_source.read_setting_text(variable_name)
         if setting_text is None:
             return default_value
         # isdecimal, unlike int(), refuses a sign, spaces inside and digits from other scripts.
@@ -53,7 +48,7 @@ class HostSettingsProvider:
         return int(setting_text)
 
     def _read_allowed_origins(self) -> list[str]:
-        allowed_origins_text: str | None = self._read_text(self.ALLOWED_ORIGINS_VARIABLE_NAME)
+        allowed_origins_text: str | None = self._host_settings_source.read_setting_text(self.ALLOWED_ORIGINS_VARIABLE_NAME)
         if allowed_origins_text is None:
             return []
         return [allowed_origin.strip() for allowed_origin in allowed_origins_text.split(self.ORIGIN_SEPARATOR) if allowed_origin.strip()]

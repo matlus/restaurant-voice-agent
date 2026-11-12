@@ -112,7 +112,6 @@ class VoiceAgentConversationBaseException(Exception, ABC):
         self._additional_contextual_data_by_name.update(contextual_data_by_name)
 
     def to_log_entry(self) -> str:
-        """Every contextual value and the cause on its own line, then the traceback, for a log entry."""
         lines: list[str] = []
         contextual_data_name: str
         contextual_data_value: str | int | float | bool
