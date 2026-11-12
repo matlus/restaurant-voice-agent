@@ -1,6 +1,7 @@
-# Class tests for ValidatorHostSettings. They prove allowed origins come back normalized, that an allowed origin naming
-# no scheme and a call limit below one are refused with a HostSettingException naming the setting and the value, and
-# that a port outside 1 to 65535 is refused, and that create_app refuses such a setting while it assembles the host, before the first request.
+# Class tests for ValidatorHostSettings. They prove allowed origins come back normalized, with hosts spelled as a browser
+# sends them; that an allowed origin naming no scheme and a call limit below one are refused with a HostSettingException
+# naming the setting and the value; that a port outside 1 to 65535 is refused; and that create_app refuses such a setting
+# while it assembles the host, before the first request.
 
 from typing import Final
 
@@ -114,6 +115,20 @@ class TestValidatorHostSettings:
         expected_allowed_origins: frozenset[str] = frozenset({local_ipv6_origin})
 
         actual_allowed_origins: frozenset[str] = ValidatorHostSettings.validate_allowed_origins([local_ipv6_origin])
+
+        assert actual_allowed_origins == expected_allowed_origins
+
+    def test_ValidateAllowedOrigins_WhenAnIpv6AddressIsWrittenOutInFull_ThenItComesBackCompressedAsABrowserSendsIt(self) -> None:
+        expected_allowed_origins: frozenset[str] = frozenset({"http://[::1]:5173"})
+
+        actual_allowed_origins: frozenset[str] = ValidatorHostSettings.validate_allowed_origins(["http://[0:0:0:0:0:0:0:1]:5173"])
+
+        assert actual_allowed_origins == expected_allowed_origins
+
+    def test_ValidateAllowedOrigins_WhenAHostIsAnInternationalName_ThenItComesBackInPunycodeAsABrowserSendsIt(self) -> None:
+        expected_allowed_origins: frozenset[str] = frozenset({"https://xn--bcher-kva.example"})
+
+        actual_allowed_origins: frozenset[str] = ValidatorHostSettings.validate_allowed_origins(["https://Bücher.example"])
 
         assert actual_allowed_origins == expected_allowed_origins
 

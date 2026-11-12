@@ -39,10 +39,10 @@ from voice_agent_conversation.managers.models.conversation_models import (
     VoiceSessionEvent,
     VoiceSessionSettings,
 )
+from voice_agent_conversation.managers.processors.processor_call_limit_enforcement import ProcessorCallLimitEnforcement
 from voice_agent_conversation.managers.processors.processor_guest_side_forwarding import ProcessorGuestSideForwarding
 from voice_agent_conversation.managers.rules.agent_instructions import AgentInstructions
 from voice_agent_conversation.managers.rules.agent_speech_playback import AgentSpeechPlayback
-from voice_agent_conversation.managers.rules.call_limits import CallLimits
 from voice_agent_conversation.managers.service_locators.service_locator_base import ServiceLocatorBase
 from voice_agent_conversation.managers.validators.validator_conversation_requests import ValidatorConversationRequests
 from voice_agent_restaurant import DomainFacade as RestaurantDomainFacade, RestaurantProfile, VoiceAgentRestaurantBaseException
@@ -244,9 +244,14 @@ class ManagerConversation:
         call_end_signals: CallEndSignals,
         read_guest_speech_activity: Callable[[], GuestSpeechActivity],
     ) -> asyncio.Task[None]:
-        return asyncio.create_task(
-            ManagerConversation._enforce_call_limits(realtime_voice_session, call_limit_settings, call_end_signals, read_guest_speech_activity)
+        processor_call_limit_enforcement: ProcessorCallLimitEnforcement = ProcessorCallLimitEnforcement(
+            realtime_voice_session,
+            call_limit_settings,
+            call_end_signals,
+            read_guest_speech_activity,
+            lambda call_limit: ManagerConversation._request_farewell(realtime_voice_session, call_limit, call_end_signals),
         )
+        return asyncio.create_task(processor_call_limit_enforcement.enforce_call_limits())
 
     @staticmethod
     async def _answer_tool_call(
@@ -306,46 +311,9 @@ class ManagerConversation:
             await realtime_voice_session.request_next_reply()
 
     @staticmethod
-    async def _enforce_call_limits(
-        realtime_voice_session: RealtimeVoiceSessionBase,
-        call_limit_settings: CallLimitSettings,
-        call_end_signals: CallEndSignals,
-        read_guest_speech_activity: Callable[[], GuestSpeechActivity],
-    ) -> None:
-        """Waits for a call limit, asks for the farewell and reports the limit. A farewell that never finishes would hold
-        the paid session open, so the session is closed after a grace period and the call still ends."""
-        call_limit: CallLimit = await ManagerConversation._wait_for_call_limit(call_limit_settings, read_guest_speech_activity)
-        if not ManagerConversation._session_still_reaches_guest(call_end_signals):
-            return
-        await ManagerConversation._request_farewell(realtime_voice_session, call_limit, call_end_signals)
-        call_end_signals.reached_call_limit.set_result(call_limit)
-        await asyncio.sleep(CallLimits.FAREWELL_GRACE_SECONDS)
-        # Told first, so the relay sends nothing to the session being closed under it.
-        call_end_signals.farewell_grace_ran_out.set()
-        await realtime_voice_session.close()
-
-    @staticmethod
     async def _request_farewell(realtime_voice_session: RealtimeVoiceSessionBase, call_limit: CallLimit, call_end_signals: CallEndSignals) -> None:
         if ManagerConversation._session_still_reaches_guest(call_end_signals):
             await realtime_voice_session.request_farewell(AgentInstructions.compose_farewell(call_limit))
-
-    @staticmethod
-    async def _wait_for_call_limit(
-        call_limit_settings: CallLimitSettings, read_guest_speech_activity: Callable[[], GuestSpeechActivity]
-    ) -> CallLimit:
-        event_loop: asyncio.AbstractEventLoop = asyncio.get_running_loop()
-        call_started_at: float = event_loop.time()
-        # The wait is recomputed after every sleep: the guest may have spoken meanwhile, which moves the silence limit.
-        call_limit: CallLimit | None
-        while True:
-            call_limit = CallLimits.find_reached_call_limit(call_limit_settings, call_started_at, read_guest_speech_activity(), event_loop.time())
-            if call_limit is not None:
-                return call_limit
-            await asyncio.sleep(
-                CallLimits.count_seconds_until_a_limit_could_be_reached(
-                    call_limit_settings, call_started_at, read_guest_speech_activity(), event_loop.time()
-                )
-            )
 
     @staticmethod
     async def _settle_call_limit_enforcement(call_limit_enforcement: asyncio.Task[None]) -> None:
