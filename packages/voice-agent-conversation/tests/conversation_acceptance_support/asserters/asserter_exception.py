@@ -117,7 +117,6 @@ class AsserterException:
         actual_voice_agent_conversation_exception: VoiceAgentConversationBaseException,
         actual_captured_realtime_sessions: Sequence[CapturedRealtimeSession],
     ) -> None:
-        """The exception's content, and every provider session it interrupted closed by the domain rather than left open."""
         mismatch_messages: list[str] = AsserterException._find_exception_mismatches(
             expected_exception_content, actual_voice_agent_conversation_exception
         )
