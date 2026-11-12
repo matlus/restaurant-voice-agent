@@ -20,6 +20,7 @@ SERVICE_HOST: Final[str] = "127.0.0.1"
 SERVICE_START_TIMEOUT_SECONDS: Final[float] = 10.0
 SERVICE_STOP_TIMEOUT_SECONDS: Final[float] = 10.0
 CONNECTION_CLOSE_TIMEOUT_SECONDS: Final[float] = 1.0
+SESSION_END_TIMEOUT_SECONDS: Final[float] = 10.0
 PROVIDER_REFUSAL_CLOSE_CODE: Final[int] = 3000
 ACTIVE_RESPONSE_ERROR_CODE: Final[str] = "conversation_already_has_active_response"
 # The reply already under way when a reply request is refused, and an earlier reply whose end arrives late.
@@ -298,7 +299,8 @@ class RealtimeVoiceServiceScripted:
     refuse chosen reply requests, counted from one, as OpenAI does when a reply is already under way: it reports the
     refusal, naming the request it refused, and then the end of the reply that was under way. For other chosen reply
     requests it first reports the end of an earlier reply, as arrives when that end was still unread. Each reply it speaks
-    carries back the metadata its request attached.
+    carries back the metadata its request attached. Chosen reply requests can instead be answered with scripted events.
+    A test can wait until a session has ended, so it knows every event the service sent before is with the client.
 
     It runs on its own thread and event loop, so asynchronous acceptance tests and the synchronous web
     test client can both use it. Read what it captured after it has stopped: stopping waits for every
@@ -314,6 +316,7 @@ class RealtimeVoiceServiceScripted:
         connection_refusal_close_reason: str | None = None,
         refused_reply_request_numbers: Collection[int] = (),
         late_reply_completion_request_numbers: Collection[int] = (),
+        events_by_reply_request_number: Mapping[int, Sequence[ScriptedServerEventMessage]] | None = None,
     ) -> None:
         self._events_after_each_guest_audio: tuple[ScriptedServerEventMessage, ...] = tuple(events_after_each_guest_audio)
         self._session_update_error_event_message: ErrorEventMessage | None = session_update_error_event_message
@@ -321,6 +324,10 @@ class RealtimeVoiceServiceScripted:
         self._connection_refusal_close_reason: str | None = connection_refusal_close_reason
         self._refused_reply_request_numbers: frozenset[int] = frozenset(refused_reply_request_numbers)
         self._late_reply_completion_request_numbers: frozenset[int] = frozenset(late_reply_completion_request_numbers)
+        self._events_by_reply_request_number: Mapping[int, tuple[ScriptedServerEventMessage, ...]] = {
+            reply_request_number: tuple(scripted_server_event_messages)
+            for reply_request_number, scripted_server_event_messages in (events_by_reply_request_number or {}).items()
+        }
         self.captured_realtime_sessions: list[CapturedRealtimeSession] = []
         self.captured_handshake_count: int = 0
         self._port: int | None = None
@@ -328,6 +335,7 @@ class RealtimeVoiceServiceScripted:
         self._service_thread: threading.Thread | None = None
         self._service_loop: asyncio.AbstractEventLoop | None = None
         self._stop_requested: asyncio.Event | None = None
+        self._session_ended: threading.Event = threading.Event()
 
     @property
     def websocket_base_url(self) -> str:
@@ -363,6 +371,11 @@ class RealtimeVoiceServiceScripted:
             # What it captured is read only after it stops, so a thread still running would hand a test half the story.
             if self._service_thread.is_alive():
                 raise RuntimeError("The scripted Realtime service did not stop in time.")
+
+    async def wait_until_session_ends(self) -> None:
+        """Returns once a session has ended, closed by the client or broken; what the service sent in it was sent before."""
+        if not await asyncio.to_thread(self._session_ended.wait, SESSION_END_TIMEOUT_SECONDS):
+            raise RuntimeError("No session with the scripted Realtime service ended in time.")
 
     async def _serve(self) -> None:
         self._service_loop = asyncio.get_running_loop()
@@ -402,7 +415,10 @@ class RealtimeVoiceServiceScripted:
                     await self._answer_client_event(server_connection, captured_realtime_session, json.loads(client_message))
         except ConnectionClosed:
             pass
-        captured_realtime_session.was_closed_by_client = server_connection.protocol.close_rcvd_then_sent is True
+        finally:
+            # Recorded however the session ended, so a test waiting for the end is not left waiting on a failure.
+            captured_realtime_session.was_closed_by_client = server_connection.protocol.close_rcvd_then_sent is True
+            self._session_ended.set()
 
     async def _answer_client_event(
         self, server_connection: ServerConnection, captured_realtime_session: CapturedRealtimeSession, client_event: Mapping[str, object]
@@ -419,15 +435,18 @@ class RealtimeVoiceServiceScripted:
                 if captured_realtime_session.agent_response_request_count in self._refused_reply_request_numbers:
                     await self._refuse_reply_request(server_connection, cast(str | None, client_event.get("event_id")))
                     return
+                if captured_realtime_session.agent_response_request_count in self._events_by_reply_request_number:
+                    await self._send_events(
+                        server_connection, self._events_by_reply_request_number[captured_realtime_session.agent_response_request_count]
+                    )
+                    return
                 if captured_realtime_session.agent_response_request_count in self._late_reply_completion_request_numbers:
                     await self._send_event(server_connection, create_response_done_event(LATE_REPLY_RESPONSE_ID, None))
                 await self._speak_greeting(server_connection, cast(dict[str, str] | None, response_settings.get("metadata")))
             case "input_audio_buffer.append":
                 input_audio_buffer_append_event_message: InputAudioBufferAppendEventMessage = cast(InputAudioBufferAppendEventMessage, client_event)
                 captured_realtime_session.guest_audio.append(base64.b64decode(input_audio_buffer_append_event_message["audio"]))
-                scripted_server_event_message: ScriptedServerEventMessage
-                for scripted_server_event_message in self._events_after_each_guest_audio:
-                    await self._send_event(server_connection, scripted_server_event_message)
+                await self._send_events(server_connection, self._events_after_each_guest_audio)
             case "conversation.item.create":
                 conversation_item_create_event_message: ConversationItemCreateEventMessage = cast(ConversationItemCreateEventMessage, client_event)
                 function_call_output_item_message: FunctionCallOutputItemMessage = conversation_item_create_event_message["item"]
@@ -498,6 +517,12 @@ class RealtimeVoiceServiceScripted:
             },
         )
         await cls._send_event(server_connection, create_response_done_event(SCRIPTED_GREETING_RESPONSE_ID, reply_metadata))
+
+    @classmethod
+    async def _send_events(cls, server_connection: ServerConnection, scripted_server_event_messages: Sequence[ScriptedServerEventMessage]) -> None:
+        scripted_server_event_message: ScriptedServerEventMessage
+        for scripted_server_event_message in scripted_server_event_messages:
+            await cls._send_event(server_connection, scripted_server_event_message)
 
     @staticmethod
     async def _send_event(server_connection: ServerConnection, server_event_message: ServerEventMessage) -> None:

@@ -2,7 +2,7 @@ import math
 from collections.abc import Mapping
 from typing import Final
 
-from voice_agent_conversation.managers.configuration_providers.settings_models.call_limit_settings import CallLimitSettings
+from voice_agent_conversation.managers.configuration_providers.settings_models.call_limit_settings import CallLengthLimits, CallLimitSettings
 from voice_agent_conversation.managers.configuration_providers.settings_source import SettingsSource
 from voice_agent_conversation.managers.exceptions.configuration_exceptions import ConfigurationSettingException, LogEventConfiguration
 
@@ -13,10 +13,13 @@ class SettingsProviderCallLimits:
 
     MAXIMUM_CALL_SECONDS_VARIABLE_NAME: Final[str] = "VOICE_AGENT_MAXIMUM_CALL_SECONDS"
     MAXIMUM_SILENCE_SECONDS_VARIABLE_NAME: Final[str] = "VOICE_AGENT_MAXIMUM_SILENCE_SECONDS"
+    FAREWELL_GRACE_SECONDS_VARIABLE_NAME: Final[str] = "VOICE_AGENT_FAREWELL_GRACE_SECONDS"
     # A reservation call rarely lasts five minutes; fifteen leaves room for a slow one.
     DEFAULT_MAXIMUM_CALL_SECONDS: Final[float] = 900.0
     # Long enough for a caller to look something up, short enough that a forgotten tab stops costing money.
     DEFAULT_MAXIMUM_SILENCE_SECONDS: Final[float] = 120.0
+    # A goodbye takes a few seconds to speak.
+    DEFAULT_FAREWELL_GRACE_SECONDS: Final[float] = 15.0
     SECONDS_FORM_DESCRIPTION: Final[str] = "a finite number of seconds"
     ENVIRONMENT_VARIABLE_NAME_CONTEXT_KEY: Final[str] = "Configuration.EnvironmentVariableName"
     SETTING_VALUE_CONTEXT_KEY: Final[str] = "Configuration.SettingValue"
@@ -30,8 +33,11 @@ class SettingsProviderCallLimits:
 
     def _initialize_settings(self) -> CallLimitSettings:
         return CallLimitSettings(
-            maximum_call_seconds=self._read_positive_seconds(self.MAXIMUM_CALL_SECONDS_VARIABLE_NAME, self.DEFAULT_MAXIMUM_CALL_SECONDS),
-            maximum_silence_seconds=self._read_positive_seconds(self.MAXIMUM_SILENCE_SECONDS_VARIABLE_NAME, self.DEFAULT_MAXIMUM_SILENCE_SECONDS),
+            call_length_limits=CallLengthLimits(
+                maximum_call_seconds=self._read_positive_seconds(self.MAXIMUM_CALL_SECONDS_VARIABLE_NAME, self.DEFAULT_MAXIMUM_CALL_SECONDS),
+                maximum_silence_seconds=self._read_positive_seconds(self.MAXIMUM_SILENCE_SECONDS_VARIABLE_NAME, self.DEFAULT_MAXIMUM_SILENCE_SECONDS),
+            ),
+            farewell_grace_seconds=self._read_positive_seconds(self.FAREWELL_GRACE_SECONDS_VARIABLE_NAME, self.DEFAULT_FAREWELL_GRACE_SECONDS),
         )
 
     def _read_positive_seconds(self, variable_name: str, default_seconds: float) -> float:

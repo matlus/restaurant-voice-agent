@@ -15,14 +15,17 @@ import pytest
 from conversation_acceptance_support.asserters.asserter_conversation import ANY_CONVERSATION_ID, AsserterConversation
 from conversation_acceptance_support.asserters.asserter_exception import AsserterException, ExpectedExceptionContent, ExpectedExceptionMetadata
 from conversation_acceptance_support.bundled_voice_catalog import read_catalog_voice_option
-from conversation_acceptance_support.guest_microphone import GREETING_EVENT_COUNT, GuestMicrophone
+from conversation_acceptance_support.guest_microphone import GREETING_EVENT_COUNT, GuestMicrophone, GuestPause
 from conversation_acceptance_support.realtime_voice_service_scripted import (
     ACTIVE_RESPONSE_ERROR_CODE,
     SCRIPTED_GREETING_AUDIO,
     RealtimeVoiceServiceScripted,
+    create_agent_speech_event,
     create_speech_started_event,
+    create_tool_call_events,
 )
 from conversation_acceptance_support.service_locator_testing import (
+    FAREWELL_GRACE_SECONDS_VARIABLE_NAME,
     MAXIMUM_CALL_SECONDS_VARIABLE_NAME,
     MAXIMUM_SILENCE_SECONDS_VARIABLE_NAME,
     ServiceLocatorTesting,
@@ -32,6 +35,8 @@ from conversation_acceptance_support.service_locator_testing import (
 
 from voice_agent_conversation import (
     AgentSpeechChunk,
+    AgentToolCallAnswered,
+    AgentToolCallOutcome,
     AgentTurnFinished,
     CallLimit,
     CallLimitReached,
@@ -66,6 +71,7 @@ FAREWELL_EVENTS: Final[list[ConversationEvent]] = [AgentSpeechChunk(pcm_audio=SC
 SHORT_LIMIT_SECONDS: Final[str] = "0.3"
 # Longer than the short limit, so a call that outlasts the short silence limit ends at this length instead.
 LONGER_LIMIT_SECONDS: Final[str] = "1.0"
+SEARCH_MENU_TOOL_NAME: Final[str] = "search_menu"
 FAREWELL_INSTRUCTION_PHRASE: Final[str] = "tell the caller the call is ending"
 CONVERSATION_TIME_LIMIT_SECONDS: Final[float] = 5.0
 # The guest is silent; the call ends by itself long before the guest would hang up.
@@ -231,6 +237,53 @@ class TestCallLimits:
         AsserterConversation.assert_conversation_events_are_as_expected(
             expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
         )
+
+    async def test_Converse_WhenTheFarewellRunsOverItsGraceWhileTheAgentCallsATool_ThenTheCallEndsNamingTheLimitAndTheToolIsNotAnswered(
+        self, restaurant_database_path: Path
+    ) -> None:
+        # The farewell reply starts speaking and then calls a tool instead of ending. The guest stops listening after the
+        # first words until the grace has run out and the session has closed, so the tool call is read after that.
+        guest_microphone: GuestMicrophone = GuestMicrophone()
+        farewell_request_number: int = 2
+        expected_conversation_events: list[ConversationEvent] = [
+            *GREETING_EVENTS,
+            AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
+            AgentToolCallAnswered(tool_name=SEARCH_MENU_TOOL_NAME, agent_tool_call_outcome=AgentToolCallOutcome.ANSWERED),
+            AgentTurnFinished(),
+            CallLimitReached(call_limit=CallLimit.MAXIMUM_DURATION),
+        ]
+        expected_tool_output_count: int = 0
+
+        async with (
+            RealtimeVoiceServiceScripted(
+                events_by_reply_request_number={
+                    farewell_request_number: [
+                        create_agent_speech_event("item_farewell", SCRIPTED_GREETING_AUDIO),
+                        *create_tool_call_events(f"call_{secrets.token_hex(8)}", SEARCH_MENU_TOOL_NAME, "{}"),
+                    ]
+                }
+            ) as realtime_voice_service_scripted,
+            create_domain_facade(
+                realtime_voice_service_scripted,
+                restaurant_database_path,
+                {MAXIMUM_CALL_SECONDS_VARIABLE_NAME: SHORT_LIMIT_SECONDS, FAREWELL_GRACE_SECONDS_VARIABLE_NAME: SHORT_LIMIT_SECONDS},
+            ) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
+        ):
+            actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
+                GuestMicrophone.listen_with_pause(
+                    conversation,
+                    GuestPause(after_event_count=GREETING_EVENT_COUNT + 1, wait_for=realtime_voice_service_scripted.wait_until_session_ends),
+                ),
+                [],
+                hang_up_after_event_count=GUEST_KEEPS_LISTENING_EVENT_COUNT,
+            )
+
+        AsserterConversation.assert_conversation_events_are_as_expected(
+            expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
+        )
+        assert len(realtime_voice_service_scripted.captured_realtime_sessions[0].tool_outputs) == expected_tool_output_count
 
     async def test_Converse_WhenTheGuestKeepsTalkingPastTheSilenceLimit_ThenTheSilenceLimitIsNotReachedAndTheCallEndsAtItsMaximumLength(
         self, restaurant_database_path: Path

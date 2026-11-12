@@ -18,7 +18,7 @@ from conversation_acceptance_support.asserters.asserter_conversation import ANY_
 from conversation_acceptance_support.asserters.asserter_exception import AsserterException, ExpectedExceptionContent, ExpectedExceptionMetadata
 from conversation_acceptance_support.bundled_voice_catalog import read_catalog_voice_option
 from conversation_acceptance_support.generated_guests import GeneratedGuest, create_generated_guest, create_generated_note
-from conversation_acceptance_support.guest_microphone import GuestMicrophone
+from conversation_acceptance_support.guest_microphone import GuestMicrophone, GuestPause
 from conversation_acceptance_support.realtime_voice_service_scripted import (
     SCRIPTED_GREETING_AUDIO,
     CapturedRealtimeSession,
@@ -65,6 +65,9 @@ from voice_agent_restaurant import (
 
 # The booking answer field the stored code travels in; the tests check it against the store, not a copy.
 CONFIRMATION_CODE_FIELD_NAME: Final[str] = "confirmation_code"
+DISH_DETAILS_FIELD_NAME: Final[str] = "dish_details"
+# Opens the greeting instruction the agent is given for its first reply only.
+GREETING_MARKER: Final[str] = "Greet the caller"
 CEDAR_VOICE_OPTION: Final[VoiceOption] = read_catalog_voice_option("openai-cedar")
 CONVERSATION_REQUEST: Final[ConversationRequest] = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
 PROVIDER_CONVERSATION_AUDIO_FORMAT: Final[ConversationAudioFormat] = ConversationAudioFormat(
@@ -458,6 +461,49 @@ class TestAgentTools:
         )
         assert count_agent_response_requests(realtime_voice_service_scripted) == expected_agent_response_request_count
 
+    async def test_Converse_WhenTheGuestHangsUpBeforeAToolCallIsAnswered_ThenTheCallReportsTheToolCallButSendsTheProviderNothingMore(
+        self, restaurant_database_path: Path
+    ) -> None:
+        # The guest hangs up as they start talking, and the domain reads on only once the session has closed, so the
+        # tool call the provider sent meanwhile is read after the hang-up.
+        guest_microphone: GuestMicrophone = GuestMicrophone()
+        expected_conversation_events: list[ConversationEvent] = [
+            *GREETING_EVENTS,
+            GuestStartedSpeaking(),
+            AgentToolCallAnswered(tool_name=SEARCH_MENU_TOOL_NAME, agent_tool_call_outcome=AgentToolCallOutcome.ANSWERED),
+        ]
+        hang_up_event_count: int = len(GREETING_EVENTS) + 1
+        expected_provider_requests: tuple[list[CapturedToolOutput], int] = ([], 1)
+
+        async with (
+            RealtimeVoiceServiceScripted(
+                events_after_each_guest_audio=[
+                    create_speech_started_event(),
+                    *create_tool_call_events(TOOL_CALL_ID, SEARCH_MENU_TOOL_NAME, KETO_SEARCH_ARGUMENTS_JSON),
+                ]
+            ) as realtime_voice_service_scripted,
+            create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
+        ):
+            actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
+                GuestMicrophone.listen_with_pause(
+                    conversation,
+                    GuestPause(after_event_count=hang_up_event_count, wait_for=realtime_voice_service_scripted.wait_until_session_ends),
+                ),
+                [GUEST_QUESTION_AUDIO],
+                hang_up_after_event_count=hang_up_event_count,
+            )
+
+        AsserterConversation.assert_conversation_events_are_as_expected(
+            expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
+        )
+        actual_provider_requests: tuple[list[CapturedToolOutput], int] = (
+            collect_tool_outputs(realtime_voice_service_scripted),
+            count_agent_response_requests(realtime_voice_service_scripted),
+        )
+        assert actual_provider_requests == expected_provider_requests
+
     async def test_Converse_WhenTheGuestStoppedTalkingBeforeTheAgentsToolCallingReplyEnds_ThenTheNextReplyIsAskedFor(
         self, restaurant_database_path: Path
     ) -> None:
@@ -619,12 +665,11 @@ class TestAgentTools:
         ):
             await guest_microphone.take_part(conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1))
 
-        dish_details_field_name: str = "dish_details"
         actual_dish_answers: list[tuple[str, str, bool, str]] = [
             (
-                dish_answer[dish_details_field_name]["name"],
-                dish_answer[dish_details_field_name]["price"],
-                "dish_id" in dish_answer[dish_details_field_name],
+                dish_answer[DISH_DETAILS_FIELD_NAME]["name"],
+                dish_answer[DISH_DETAILS_FIELD_NAME]["price"],
+                "dish_id" in dish_answer[DISH_DETAILS_FIELD_NAME],
                 dish_answer["allergen_notice"],
             )
             for dish_answer in (json.loads(actual_tool_output.output) for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted))
@@ -795,7 +840,6 @@ class TestAgentTools:
         # The greeting instruction once lived in the standing instructions the model reads before every reply, and the
         # model greeted again when asked to go on after a lookup. Now only the first reply request carries it.
         guest_microphone: GuestMicrophone = GuestMicrophone()
-        greeting_marker: str = "Greet the caller"
         expected_greeting_placement: tuple[list[bool], bool] = ([True, False], False)
 
         async with (
@@ -811,10 +855,10 @@ class TestAgentTools:
         captured_realtime_session: CapturedRealtimeSession = realtime_voice_service_scripted.captured_realtime_sessions[0]
         actual_greeting_placement: tuple[list[bool], bool] = (
             [
-                reply_instructions is not None and greeting_marker in reply_instructions
+                reply_instructions is not None and GREETING_MARKER in reply_instructions
                 for reply_instructions in captured_realtime_session.agent_response_instructions
             ],
-            any(greeting_marker in session_settings.agent_instructions for session_settings in captured_realtime_session.session_settings),
+            any(GREETING_MARKER in session_settings.agent_instructions for session_settings in captured_realtime_session.session_settings),
         )
         assert actual_greeting_placement == expected_greeting_placement
 
@@ -909,6 +953,8 @@ class TestAgentTools:
         sent_party_size: str = create_generated_note()
         arguments_json: str = json.dumps({"party_size": sent_party_size})
         expected_problem_fields: list[str] = ["'reservation_date'", "'reservation_time'", "'party_size'"]
+        # The validation library links its own documentation in each error; the agent must not be sent there.
+        documentation_link_host: str = "pydantic.dev"
         expected_outcome: tuple[list[bool], bool, bool] = ([True, True, True], False, False)
 
         async with (
@@ -925,7 +971,7 @@ class TestAgentTools:
         actual_outcome: tuple[list[bool], bool, bool] = (
             [expected_problem_field in actual_problem for expected_problem_field in expected_problem_fields],
             sent_party_size in actual_problem,
-            "pydantic.dev" in actual_problem,
+            documentation_link_host in actual_problem,
         )
         assert actual_outcome == expected_outcome, actual_problem
 

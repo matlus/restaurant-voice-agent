@@ -44,18 +44,18 @@ class ProcessorCallLimitEnforcement:
         call_limit: CallLimit | None
         while True:
             call_limit = CallLimits.find_reached_call_limit(
-                self._call_limit_settings, call_started_at, self._read_guest_speech_activity(), event_loop.time()
+                self._call_limit_settings.call_length_limits, call_started_at, self._read_guest_speech_activity(), event_loop.time()
             )
             if call_limit is not None:
                 return call_limit
             await asyncio.sleep(
                 CallLimits.count_seconds_until_a_limit_could_be_reached(
-                    self._call_limit_settings, call_started_at, self._read_guest_speech_activity(), event_loop.time()
+                    self._call_limit_settings.call_length_limits, call_started_at, self._read_guest_speech_activity(), event_loop.time()
                 )
             )
 
     async def _close_session_after_farewell_grace(self) -> None:
-        await asyncio.sleep(CallLimits.FAREWELL_GRACE_SECONDS)
+        await asyncio.sleep(self._call_limit_settings.farewell_grace_seconds)
         # Told first, so the relay sends nothing to the session being closed under it.
         self._call_end_signals.farewell_grace_ran_out.set()
         await self._realtime_voice_session.close()

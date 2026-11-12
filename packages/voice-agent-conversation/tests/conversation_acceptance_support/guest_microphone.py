@@ -1,11 +1,21 @@
 import asyncio
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from dataclasses import dataclass
 from typing import Final
 
 from voice_agent_conversation import AgentSpeechCutOff, ConversationEvent, GuestSideEvent, GuestSpeechChunk, GuestStartedSpeaking
 
 # ConversationStarted, the greeting's speech and the end of the agent's greeting turn.
 GREETING_EVENT_COUNT: Final[int] = 3
+
+
+@dataclass(frozen=True)
+class GuestPause:
+    """The guest stops listening after hearing a number of events until wait_for returns. Until it listens again the
+    domain holds the next event, so whatever happens meanwhile happens before the domain reads on."""
+
+    after_event_count: int
+    wait_for: Callable[[], Awaitable[None]]
 
 
 class GuestMicrophoneBreakdownException(Exception):
@@ -67,6 +77,19 @@ class GuestMicrophone:
             if guest_microphone_breakdown_exception is None and len(actual_conversation_events) == hang_up_after_event_count:
                 self.hang_up()
         return actual_conversation_events
+
+    @staticmethod
+    async def listen_with_pause(conversation: AsyncIterator[ConversationEvent], guest_pause: GuestPause) -> AsyncIterator[ConversationEvent]:
+        """The conversation as a guest hears it who stops listening after a number of events until wait_for returns. The
+        pause starts when the next event is asked for, so the guest acts on the last event heard before it."""
+        heard_event_count: int = 0
+        conversation_event: ConversationEvent
+        async for conversation_event in conversation:
+            yield conversation_event
+            heard_event_count += 1
+            # Waited for before the next event is read, so the domain holds it until the pause ends.
+            if heard_event_count == guest_pause.after_event_count:
+                await guest_pause.wait_for()
 
     def _speak_chunks(self, guest_audio_chunks: Iterable[bytes]) -> None:
         guest_audio_chunk: bytes
