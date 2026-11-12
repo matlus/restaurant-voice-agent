@@ -52,20 +52,35 @@ class ConversationHandler:
     async def hold_conversation(self, websocket: WebSocket) -> None:
         conversation_request: ConversationRequest = ParserConversationRequest.parse(websocket.query_params)
         await websocket.accept()
+        await self._hold_summarized_call(websocket, conversation_request)
+        await self._close_browser_connection(websocket)
+
+    async def _hold_summarized_call(self, websocket: WebSocket, conversation_request: ConversationRequest) -> None:
+        """Relays the call and logs its summary when it ends, however it ends."""
         call_started_at: float = time.monotonic()
         # Rebound as events arrive, so the summary in the finally block sees how far the call got even when it fails.
         call_record: CallRecord = ComposerCallSummary.start_call_record(conversation_request.voice_key)
         call_failed: bool = True
         try:
-            async with aclosing(self._converse_through_domain(conversation_request, self._receive_guest_side_events(websocket))) as conversation:
-                conversation_event: ConversationEvent
-                async for conversation_event in conversation:
-                    call_record = ComposerCallSummary.record_event(call_record, conversation_event)
-                    await self._relay_event_to_browser(websocket, conversation_event)
+            async with aclosing(self._relay_conversation_events(websocket, conversation_request, call_record)) as call_record_updates:
+                call_record_update: CallRecord
+                async for call_record_update in call_record_updates:
+                    call_record = call_record_update
             call_failed = False
         finally:
             self._log_call_summary(call_record, time.monotonic() - call_started_at, call_failed=call_failed)
-        await self._close_browser_connection(websocket)
+
+    async def _relay_conversation_events(
+        self, websocket: WebSocket, conversation_request: ConversationRequest, call_record: CallRecord
+    ) -> AsyncGenerator[CallRecord]:
+        """Relays each conversation event to the browser, yielding the call record updated by it first, so a relay that
+        fails still leaves the event recorded."""
+        async with aclosing(self._converse_through_domain(conversation_request, self._receive_guest_side_events(websocket))) as conversation:
+            conversation_event: ConversationEvent
+            async for conversation_event in conversation:
+                call_record = ComposerCallSummary.record_event(call_record, conversation_event)
+                yield call_record
+                await self._relay_event_to_browser(websocket, conversation_event)
 
     async def _check_readiness_through_domain(self) -> None:
         await self._domain_facade.check_readiness()

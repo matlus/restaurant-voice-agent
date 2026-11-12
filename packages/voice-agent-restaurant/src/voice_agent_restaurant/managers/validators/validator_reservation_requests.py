@@ -55,6 +55,7 @@ class ValidatorReservationRequests:
     CONFIRMATION_CODE_FIELD_NAME: Final[str] = "confirmation_code"
     NOTES_FIELD_NAME: Final[str] = "notes"
     REQUIRED_FIELD_PROBLEM_TEMPLATE: Final[str] = "'{field_name}' is required but was not provided"
+    MAXIMUM_LENGTH_PROBLEM_TEMPLATE: Final[str] = "'{field_name}' must contain at most {maximum_length} characters"
 
     @classmethod
     def validate_availability_request(cls, availability_request: AvailabilityRequest) -> ValidatedAvailabilityRequest:
@@ -355,7 +356,7 @@ class ValidatorReservationRequests:
         if guest_name is None:
             return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name=cls.GUEST_NAME_FIELD_NAME)]
         if len(guest_name) > cls.MAXIMUM_GUEST_NAME_LENGTH:
-            return [f"'{cls.GUEST_NAME_FIELD_NAME}' must contain at most {cls.MAXIMUM_GUEST_NAME_LENGTH} characters"]
+            return [cls.MAXIMUM_LENGTH_PROBLEM_TEMPLATE.format(field_name=cls.GUEST_NAME_FIELD_NAME, maximum_length=cls.MAXIMUM_GUEST_NAME_LENGTH)]
         return []
 
     @classmethod
@@ -384,7 +385,7 @@ class ValidatorReservationRequests:
     @classmethod
     def _collect_notes_problems(cls, notes: str | None) -> list[str]:
         if notes is not None and len(notes) > cls.MAXIMUM_NOTES_LENGTH:
-            return [f"'{cls.NOTES_FIELD_NAME}' must contain at most {cls.MAXIMUM_NOTES_LENGTH} characters"]
+            return [cls.MAXIMUM_LENGTH_PROBLEM_TEMPLATE.format(field_name=cls.NOTES_FIELD_NAME, maximum_length=cls.MAXIMUM_NOTES_LENGTH)]
         return []
 
     @staticmethod

@@ -1,5 +1,6 @@
 import logging
 from enum import Enum, auto
+from typing import Final
 
 from starlette.responses import Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -24,6 +25,8 @@ class MiddlewareExceptionTranslation:
     caller is told, envelope included, is ExceptionToWireTranslator's job; this shell only sends it, and only while
     the caller can still receive it.
     """
+
+    REQUEST_CONTEXT_KEY: Final[str] = "Request"
 
     def __init__(self, app: ASGIApp) -> None:
         self._app: ASGIApp = app
@@ -80,7 +83,7 @@ class MiddlewareExceptionTranslation:
         request_description: str = f"{scope['type']} {scope['path']}"
         if isinstance(escaped_exception, VoiceAgentConversationBusinessBaseException | VoiceAgentRestaurantBusinessBaseException):
             # A business refusal is the caller's to act on, not a fault: a warning with its context and no traceback.
-            escaped_exception.add_contextual_data({"Request": request_description})
+            escaped_exception.add_contextual_data({self.REQUEST_CONTEXT_KEY: request_description})
             self._logger.warning(
                 "Request refused: %s: %s",
                 request_description,
@@ -88,7 +91,7 @@ class MiddlewareExceptionTranslation:
                 extra={"event_fields": escaped_exception.contextual_data_by_name},
             )
         elif isinstance(escaped_exception, VoiceAgentConversationBaseException | VoiceAgentRestaurantBaseException):
-            escaped_exception.add_contextual_data({"Request": request_description})
+            escaped_exception.add_contextual_data({self.REQUEST_CONTEXT_KEY: request_description})
             self._logger.error("Request failed: %s\n%s", request_description, escaped_exception.to_string())
         else:
             self._logger.error("Request failed unexpectedly: %s", request_description, exc_info=escaped_exception)

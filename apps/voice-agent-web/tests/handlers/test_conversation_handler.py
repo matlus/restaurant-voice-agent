@@ -6,6 +6,9 @@
 
 import json
 import logging
+import secrets
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Final
 
 import pytest
@@ -47,7 +50,7 @@ CONVERSATION_AUDIO_FORMAT: Final[ConversationAudioFormat] = ConversationAudioFor
     guest_audio_sample_rate_hz=16_000, agent_audio_sample_rate_hz=24_000
 )
 AGENT_SPEECH: Final[bytes] = b"agent speech pcm"
-SCRIPTED_CONVERSATION_ID: Final[str] = "0123456789abcdef0123456789abcdef"
+SCRIPTED_CONVERSATION_ID: Final[str] = secrets.token_hex(16)
 NORMAL_CLOSURE_CODE: Final[int] = 1000
 GOING_AWAY_CLOSE_CODE: Final[int] = 1001
 ABNORMAL_CLOSURE_CODE: Final[int] = 1006
@@ -102,15 +105,33 @@ class TestConversationHandlerListVoices:
         )
 
 
-def read_call_summaries(caplog: pytest.LogCaptureFixture) -> list[dict[str, object]]:
-    """The structured call summaries the handler logged, without the call's length, which a test cannot know."""
-    call_summaries: list[dict[str, object]] = []
+@dataclass(frozen=True)
+class LoggedCallSummary:
+    """One logged call summary as a test reads it back, without the call's length, which a test cannot know."""
+
+    event: str
+    conversation_id: str | None
+    voice_key: str | None
+    ending: str
+    agent_tool_calls: Mapping[str, Mapping[str, int]]
+
+
+def read_call_summaries(caplog: pytest.LogCaptureFixture) -> list[LoggedCallSummary]:
+    logged_call_summaries: list[LoggedCallSummary] = []
     log_record: logging.LogRecord
     for log_record in caplog.records:
         event_fields: object = getattr(log_record, "event_fields", None)
         if log_record.name == HANDLER_LOGGER_NAME and isinstance(event_fields, dict) and event_fields.get("event") == CALL_ENDED_EVENT:
-            call_summaries.append({name: value for name, value in event_fields.items() if name != "call_seconds"})
-    return call_summaries
+            logged_call_summaries.append(
+                LoggedCallSummary(
+                    event=event_fields["event"],
+                    conversation_id=event_fields["conversation_id"],
+                    voice_key=event_fields["voice_key"],
+                    ending=event_fields["ending"],
+                    agent_tool_calls=event_fields["agent_tool_calls"],
+                )
+            )
+    return logged_call_summaries
 
 
 class TestConversationHandlerHoldConversation:
@@ -274,14 +295,14 @@ class TestConversationHandlerHoldConversation:
             scripted_conversation_events=scripted_conversation_events, guest_audio_reading=GuestAudioReading.READ_BEFORE_THE_EVENTS
         )
         expected_delivered_message_types: list[str] = ["websocket.accept"]
-        expected_call_summaries: list[dict[str, object]] = [
-            {
-                "event": CALL_ENDED_EVENT,
-                "conversation_id": SCRIPTED_CONVERSATION_ID,
-                "voice_key": "openai-cedar",
-                "ending": "hung_up",
-                "agent_tool_calls": {},
-            }
+        expected_call_summaries: list[LoggedCallSummary] = [
+            LoggedCallSummary(
+                event=CALL_ENDED_EVENT,
+                conversation_id=SCRIPTED_CONVERSATION_ID,
+                voice_key="openai-cedar",
+                ending="hung_up",
+                agent_tool_calls={},
+            )
         ]
 
         with caplog.at_level(logging.INFO, logger=HANDLER_LOGGER_NAME):
@@ -361,14 +382,14 @@ class TestConversationHandlerHoldConversation:
             scripted_conversation_events=scripted_conversation_events
         )
         expected_delivered_message_types: list[str] = ["websocket.accept", "websocket.send", "websocket.send", "websocket.close"]
-        expected_call_summaries: list[dict[str, object]] = [
-            {
-                "event": CALL_ENDED_EVENT,
-                "conversation_id": SCRIPTED_CONVERSATION_ID,
-                "voice_key": "openai-cedar",
-                "ending": "call_limit:maximum_duration",
-                "agent_tool_calls": {availability_tool_name: {"corrected": 1, "answered": 1}, booking_tool_name: {"answered": 1}},
-            }
+        expected_call_summaries: list[LoggedCallSummary] = [
+            LoggedCallSummary(
+                event=CALL_ENDED_EVENT,
+                conversation_id=SCRIPTED_CONVERSATION_ID,
+                voice_key="openai-cedar",
+                ending="call_limit:maximum_duration",
+                agent_tool_calls={availability_tool_name: {"corrected": 1, "answered": 1}, booking_tool_name: {"answered": 1}},
+            )
         ]
 
         with caplog.at_level(logging.INFO, logger=HANDLER_LOGGER_NAME):
@@ -389,14 +410,14 @@ class TestConversationHandlerHoldConversation:
                 "The provider dropped the session.", LogEventRealtimeVoice.EVENT_RECEIPT
             ),
         )
-        expected_call_summaries: list[dict[str, object]] = [
-            {
-                "event": CALL_ENDED_EVENT,
-                "conversation_id": SCRIPTED_CONVERSATION_ID,
-                "voice_key": "openai-cedar",
-                "ending": "failed",
-                "agent_tool_calls": {},
-            }
+        expected_call_summaries: list[LoggedCallSummary] = [
+            LoggedCallSummary(
+                event=CALL_ENDED_EVENT,
+                conversation_id=SCRIPTED_CONVERSATION_ID,
+                voice_key="openai-cedar",
+                ending="failed",
+                agent_tool_calls={},
+            )
         ]
 
         with caplog.at_level(logging.INFO, logger=HANDLER_LOGGER_NAME), pytest.raises(RealtimeVoiceProviderUnavailableException):

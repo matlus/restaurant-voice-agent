@@ -28,14 +28,16 @@ class TestJsonLogFormatter:
         recorded_at: datetime = datetime(2026, 11, 12, 9, 30, 15, 250000, tzinfo=UTC)
         log_record: logging.LogRecord = create_log_record(logged_message)
         log_record.created = recorded_at.timestamp()
-        log_record.event_fields = {"event": event_name, "conversation_id": conversation_id}
+        event_field_name: str = "event"
+        conversation_id_field_name: str = "conversation_id"
+        log_record.event_fields = {event_field_name: event_name, conversation_id_field_name: conversation_id}
         expected_fields: dict[str, object] = {
             "time": "2026-11-12T09:30:15.250+00:00",
             "level": "INFO",
             "logger": LOGGER_NAME,
             "message": logged_message,
-            "event": event_name,
-            "conversation_id": conversation_id,
+            event_field_name: event_name,
+            conversation_id_field_name: conversation_id,
         }
 
         actual_line: str = json_log_formatter.format(log_record)
@@ -47,7 +49,7 @@ class TestJsonLogFormatter:
         json_log_formatter: JsonLogFormatter = JsonLogFormatter()
         failure_detail: str = create_generated_word()
         os_error: OSError = OSError(failure_detail)
-        log_record: logging.LogRecord = create_log_record("Request failed unexpectedly", (OSError, os_error, None))
+        log_record: logging.LogRecord = create_log_record(create_generated_word(), (OSError, os_error, None))
         expected_exception_text: str = f"OSError: {failure_detail}"
 
         actual_line: str = json_log_formatter.format(log_record)

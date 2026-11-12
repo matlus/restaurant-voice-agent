@@ -235,7 +235,7 @@ class TestConversation:
         conversation_request: ConversationRequest = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
         unplayed_milliseconds: int = 600
         agent_reply_item_id: str = f"item_{secrets.token_hex(8)}"
-        expected_agent_speech_truncations: list[CapturedAgentSpeechTruncation] = [
+        expected_captured_agent_speech_truncations: list[CapturedAgentSpeechTruncation] = [
             CapturedAgentSpeechTruncation(
                 item_id=agent_reply_item_id, content_index=0, audio_end_ms=AGENT_REPLY_SPEECH_MILLISECONDS - unplayed_milliseconds
             )
@@ -256,10 +256,10 @@ class TestConversation:
                 unplayed_milliseconds_when_talked_over=unplayed_milliseconds,
             )
 
-        actual_agent_speech_truncations: list[CapturedAgentSpeechTruncation] = realtime_voice_service_scripted.captured_realtime_sessions[
+        actual_captured_agent_speech_truncations: list[CapturedAgentSpeechTruncation] = realtime_voice_service_scripted.captured_realtime_sessions[
             0
         ].agent_speech_truncations
-        assert actual_agent_speech_truncations == expected_agent_speech_truncations
+        assert actual_captured_agent_speech_truncations == expected_captured_agent_speech_truncations
 
     async def test_Converse_WhenTheHostDroppedMoreSpeechThanTheReplyHolds_ThenTheProviderForgetsTheWholeReply(
         self, restaurant_database_path: Path
@@ -269,7 +269,7 @@ class TestConversation:
         # The host's queue also held the end of the greeting, so it dropped more than the reply alone.
         unplayed_milliseconds: int = AGENT_REPLY_SPEECH_MILLISECONDS + 250
         agent_reply_item_id: str = f"item_{secrets.token_hex(8)}"
-        expected_agent_speech_truncations: list[CapturedAgentSpeechTruncation] = [
+        expected_captured_agent_speech_truncations: list[CapturedAgentSpeechTruncation] = [
             CapturedAgentSpeechTruncation(item_id=agent_reply_item_id, content_index=0, audio_end_ms=0)
         ]
 
@@ -288,10 +288,10 @@ class TestConversation:
                 unplayed_milliseconds_when_talked_over=unplayed_milliseconds,
             )
 
-        actual_agent_speech_truncations: list[CapturedAgentSpeechTruncation] = realtime_voice_service_scripted.captured_realtime_sessions[
+        actual_captured_agent_speech_truncations: list[CapturedAgentSpeechTruncation] = realtime_voice_service_scripted.captured_realtime_sessions[
             0
         ].agent_speech_truncations
-        assert actual_agent_speech_truncations == expected_agent_speech_truncations
+        assert actual_captured_agent_speech_truncations == expected_captured_agent_speech_truncations
 
     async def test_Converse_WhenTheVoiceKeyHasStraySpacesAndCapitals_ThenTheCallStartsInThatVoice(self, restaurant_database_path: Path) -> None:
         guest_microphone: GuestMicrophone = GuestMicrophone()
