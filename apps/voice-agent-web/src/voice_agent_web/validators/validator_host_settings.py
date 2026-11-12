@@ -2,7 +2,7 @@ from collections.abc import Collection
 from typing import Final
 
 from voice_agent_web.exceptions.host_setting_exception import HostSettingException
-from voice_agent_web.middleware.origin_normalization import OriginNormalization
+from voice_agent_web.origins.origin_normalization import OriginNormalization
 
 
 class ValidatorHostSettings:
