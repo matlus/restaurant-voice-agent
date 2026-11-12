@@ -34,7 +34,6 @@ class AsserterConversation:
         actual_conversation_events: Sequence[ConversationEvent],
         actual_captured_realtime_sessions: Sequence[CapturedRealtimeSession],
     ) -> None:
-        """The events the host heard, and the one provider session that carried the guest's audio and the greeting request."""
         mismatch_messages: list[str] = AsserterConversation._find_conversation_event_mismatches(
             expected_conversation_events, actual_conversation_events
         )
@@ -61,15 +60,15 @@ class AsserterConversation:
         actual_captured_realtime_sessions: Sequence[CapturedRealtimeSession],
     ) -> None:
         mismatch_messages: list[str] = []
-        actual_session_settings: list[CapturedSessionSettings] = [
+        actual_sent_captured_session_settings: list[CapturedSessionSettings] = [
             captured_session_settings
             for actual_captured_realtime_session in actual_captured_realtime_sessions
             for captured_session_settings in actual_captured_realtime_session.session_settings
         ]
-        if len(actual_session_settings) != 1:
-            mismatch_messages.append(f"Session settings sent: expected 1; actual {len(actual_session_settings)}.")
+        if len(actual_sent_captured_session_settings) != 1:
+            mismatch_messages.append(f"Session settings sent: expected 1; actual {len(actual_sent_captured_session_settings)}.")
         else:
-            actual_captured_session_settings: CapturedSessionSettings = actual_session_settings[0]
+            actual_captured_session_settings: CapturedSessionSettings = actual_sent_captured_session_settings[0]
             if actual_captured_session_settings.provider_voice_id != expected_provider_voice_id:
                 mismatch_messages.append(
                     f"Provider voice: expected {expected_provider_voice_id!r}; actual {actual_captured_session_settings.provider_voice_id!r}."

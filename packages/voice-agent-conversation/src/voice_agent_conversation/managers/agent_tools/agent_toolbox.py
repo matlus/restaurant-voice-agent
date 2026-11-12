@@ -95,8 +95,7 @@ class AgentToolbox:
         return tuple(agent_tool.get_tool_definition() for agent_tool in self._agent_tools_by_name.values())
 
     async def run_tool_call(self, agent_tool_call_requested: AgentToolCallRequested, consecutive_call_repair_count: int) -> AgentToolCallAnswer:
-        """Runs the requested tool, given how many of the agent's calls in a row were wrong before this one, and returns the
-        tool's result, a refusal or a correction."""
+        """Raises AgentToolCallRepairsExhaustedException, which ends the call, once too many wrong calls have come in a row."""
         agent_tool: AgentToolProtocol | None = self._agent_tools_by_name.get(agent_tool_call_requested.tool_name)
         if agent_tool is None:
             return self._reject_call(

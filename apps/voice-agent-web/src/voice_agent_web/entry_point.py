@@ -20,7 +20,6 @@ DEFAULT_PORT: Final[int] = 8000
 def main() -> None:
     # Keys live only in the gitignored .env; settings providers read the environment it fills.
     load_dotenv()
-    # One JSON object per line, so the container's log store can query the call summaries and failures by field.
     log_handler: logging.Handler = logging.StreamHandler()
     log_handler.setFormatter(JsonLogFormatter())
     logging.basicConfig(level=logging.INFO, handlers=[log_handler])
@@ -32,6 +31,8 @@ def main() -> None:
         port=int(os.environ.get(PORT_VARIABLE_NAME, str(DEFAULT_PORT))),
         # "on" makes a failure while the app starts up stop the process; "auto" would log it and keep serving.
         lifespan="on",
+        # The root handler above formats uvicorn's own lines too; uvicorn's default config would give them plain-text handlers.
+        log_config=None,
     )
 
 

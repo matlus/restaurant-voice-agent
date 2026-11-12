@@ -10,6 +10,9 @@ DEFAULT_MINIMUM_NAME_WORD_LENGTH: Final[int] = 4
 DEFAULT_MAXIMUM_NAME_WORD_LENGTH: Final[int] = 12
 DEFAULT_MINIMUM_NOTE_LENGTH: Final[int] = 12
 DEFAULT_MAXIMUM_NOTE_LENGTH: Final[int] = 40
+DEFAULT_GUEST_AUDIO_CHUNK_COUNT: Final[int] = 2
+# An even count, so every chunk holds whole 16-bit samples.
+DEFAULT_GUEST_AUDIO_CHUNK_BYTE_COUNT: Final[int] = 32
 
 
 @dataclass(frozen=True)
@@ -41,6 +44,13 @@ def create_generated_note(minimum_note_length: int = DEFAULT_MINIMUM_NOTE_LENGTH
     note_length: int = _choose_length(minimum_note_length, maximum_note_length)
     first_word_length: int = note_length // 2
     return f"{_create_generated_word(first_word_length).capitalize()} {_create_generated_word(note_length - first_word_length - 1)}"
+
+
+def create_generated_guest_audio_chunks(
+    chunk_count: int = DEFAULT_GUEST_AUDIO_CHUNK_COUNT, chunk_byte_count: int = DEFAULT_GUEST_AUDIO_CHUNK_BYTE_COUNT
+) -> list[bytes]:
+    """Guest speech whose exact bytes are incidental to the scenario."""
+    return [secrets.token_bytes(chunk_byte_count) for _ in range(chunk_count)]
 
 
 def _choose_length(minimum_length: int, maximum_length: int) -> int:

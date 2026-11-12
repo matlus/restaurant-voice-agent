@@ -188,6 +188,16 @@ class AgentSpeechReceived:
 
 
 @dataclass(frozen=True)
+class AgentReplyProgress:
+    """What the relay has learned of the agent's replies: how many of its tool calls in a row were wrong, whether the reply
+    under way called tools that were answered, and whether a farewell was refused because a reply was under way."""
+
+    consecutive_call_repair_count: int
+    has_answered_tool_calls: bool
+    farewell_was_refused: bool
+
+
+@dataclass(frozen=True)
 class SentAgentSpeech:
     """How much of the agent's latest speech part has been passed on to the host."""
 
@@ -195,7 +205,6 @@ class SentAgentSpeech:
     sent_byte_count: int
 
 
-# What the guest's side of a call is sent: the page plays or acts on every one of these.
 @dataclass(frozen=True)
 class AgentToolCallAnswered:
     """The agent called one of its tools and was answered. The host records it; the guest is not told."""
@@ -204,6 +213,7 @@ class AgentToolCallAnswered:
     agent_tool_call_outcome: AgentToolCallOutcome
 
 
+# What the guest's side of a call is sent: the page plays or acts on every one of these.
 type GuestFacingConversationEvent = ConversationStarted | AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished | CallLimitReached
 
 type ConversationEvent = GuestFacingConversationEvent | SpeechProviderErrorTolerated | AgentToolCallAnswered

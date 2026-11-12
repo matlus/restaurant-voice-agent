@@ -16,7 +16,7 @@ class GuestAudioReading(Enum):
 
 @final
 class ConversationHandlerForTest(ConversationHandler):
-    """Overrides the handler's two domain Hooks, so handler tests run only what the handler owns: reading the request
+    """Overrides the handler's domain Hooks, so handler tests run only what the handler owns: reading the request
     or socket, converting it for the domain, and composing what goes back. No domain sits beneath it.
 
     It captures what reached each Hook and answers as scripted. A scripted conversation yields its events and, as
@@ -40,6 +40,11 @@ class ConversationHandlerForTest(ConversationHandler):
         self._scripted_conversation_failure: Exception | None = scripted_conversation_failure
         self.captured_conversation_request: ConversationRequest | None = None
         self.captured_guest_side_events: list[GuestSideEvent] = []
+        self.captured_readiness_check_count: int = 0
+
+    @override
+    async def _check_readiness_through_domain(self) -> None:
+        self.captured_readiness_check_count += 1
 
     @override
     async def _get_voice_options_through_domain(self) -> list[VoiceOption]:

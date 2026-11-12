@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterable, Callable
+from dataclasses import replace
 from datetime import datetime
 from types import TracebackType
 from typing import Final, Self
@@ -15,6 +16,7 @@ from voice_agent_conversation.managers.exceptions.voice_agent_conversation_excep
 from voice_agent_conversation.managers.gateways.realtime_voice_gateway_base import RealtimeVoiceGatewayBase, RealtimeVoiceSessionBase
 from voice_agent_conversation.managers.gateways.realtime_voice_gateway_openai import RealtimeVoiceGatewayOpenAI
 from voice_agent_conversation.managers.models.conversation_models import (
+    AgentReplyProgress,
     AgentSessionEvent,
     AgentSpeechChunk,
     AgentSpeechCutOff,
@@ -164,46 +166,39 @@ class ManagerConversation:
             realtime_voice_session, call_limit_settings, call_end_signals, lambda: guest_speech_activity
         )
         # Wrong tool calls are counted per conversation; the toolbox ends the call when too many come in a row.
-        consecutive_call_repair_count: int = 0
-        has_answered_tool_calls: bool = False
-        farewell_was_refused: bool = False
+        agent_reply_progress: AgentReplyProgress = AgentReplyProgress(
+            consecutive_call_repair_count=0, has_answered_tool_calls=False, farewell_was_refused=False
+        )
         try:
             voice_session_event: VoiceSessionEvent
             async for voice_session_event in realtime_voice_session.receive_events():
                 match voice_session_event:
                     case SpeechProviderErrorTolerated(refused_farewell=True):
-                        farewell_was_refused = True
+                        agent_reply_progress = replace(agent_reply_progress, farewell_was_refused=True)
                         yield voice_session_event
                     case AgentTurnFinished(ended_farewell=True):
                         yield voice_session_event
                         break
                     case AgentTurnFinished() if call_end_signals.reached_call_limit.done():
-                        # Some other reply ended after the limit; a farewell it held up is asked for again now.
                         yield voice_session_event
-                        if farewell_was_refused:
-                            farewell_was_refused = False
-                            await ManagerConversation._request_farewell(
-                                realtime_voice_session, call_end_signals.reached_call_limit.result(), call_end_signals.guest_audio_ended
-                            )
-                    case AgentToolCallRequested(tool_name=tool_name):
-                        agent_tool_call_answer: AgentToolCallAnswer = await ManagerConversation._answer_tool_call(
-                            realtime_voice_session,
-                            agent_toolbox,
-                            voice_session_event,
-                            consecutive_call_repair_count,
-                            call_end_signals.guest_audio_ended,
+                        agent_reply_progress = await ManagerConversation._request_held_up_farewell(
+                            realtime_voice_session, call_end_signals, agent_reply_progress
                         )
-                        consecutive_call_repair_count = agent_tool_call_answer.consecutive_call_repair_count
-                        has_answered_tool_calls = True
-                        yield AgentToolCallAnswered(tool_name=tool_name, agent_tool_call_outcome=agent_tool_call_answer.agent_tool_call_outcome)
+                    case AgentToolCallRequested():
+                        agent_tool_call_answer: AgentToolCallAnswer = await ManagerConversation._answer_tool_call(
+                            realtime_voice_session, agent_toolbox, voice_session_event, agent_reply_progress, call_end_signals.guest_audio_ended
+                        )
+                        agent_reply_progress = ManagerConversation._record_tool_call_answer(agent_reply_progress, agent_tool_call_answer)
+                        yield AgentToolCallAnswered(
+                            tool_name=voice_session_event.tool_name, agent_tool_call_outcome=agent_tool_call_answer.agent_tool_call_outcome
+                        )
                     case AgentSpeechReceived(pcm_audio=pcm_audio):
                         sent_agent_speech = AgentSpeechPlayback.count_sent_agent_speech(sent_agent_speech, voice_session_event)
                         yield AgentSpeechChunk(pcm_audio=pcm_audio)
-                    case AgentTurnFinished() if has_answered_tool_calls:
-                        has_answered_tool_calls = False
-                        # A guest who is talking gets the reply the provider starts by itself when they finish.
-                        if not guest_speech_activity.guest_is_speaking:
-                            await ManagerConversation._request_next_reply(realtime_voice_session, call_end_signals.guest_audio_ended)
+                    case AgentTurnFinished() if agent_reply_progress.has_answered_tool_calls:
+                        agent_reply_progress = await ManagerConversation._continue_after_tool_calls(
+                            realtime_voice_session, call_end_signals, guest_speech_activity, agent_reply_progress
+                        )
                     case GuestStartedSpeaking():
                         guest_speech_activity = ManagerConversation._observe_guest_speech_activity(guest_is_speaking=True)
                         yield voice_session_event
@@ -257,15 +252,49 @@ class ManagerConversation:
         realtime_voice_session: RealtimeVoiceSessionBase,
         agent_toolbox: AgentToolbox,
         agent_tool_call_requested: AgentToolCallRequested,
-        consecutive_call_repair_count: int,
+        agent_reply_progress: AgentReplyProgress,
         guest_audio_ended: asyncio.Event,
     ) -> AgentToolCallAnswer:
         """Runs the tool the agent asked for and sends the answer back. A guest who hung up while the tool ran is not
         answered: the session is already closing."""
-        agent_tool_call_answer: AgentToolCallAnswer = await agent_toolbox.run_tool_call(agent_tool_call_requested, consecutive_call_repair_count)
+        agent_tool_call_answer: AgentToolCallAnswer = await agent_toolbox.run_tool_call(
+            agent_tool_call_requested, agent_reply_progress.consecutive_call_repair_count
+        )
         if not guest_audio_ended.is_set():
             await realtime_voice_session.send_tool_result(agent_tool_call_requested.call_id, agent_tool_call_answer.tool_output_json)
         return agent_tool_call_answer
+
+    @staticmethod
+    def _record_tool_call_answer(agent_reply_progress: AgentReplyProgress, agent_tool_call_answer: AgentToolCallAnswer) -> AgentReplyProgress:
+        return replace(
+            agent_reply_progress,
+            consecutive_call_repair_count=agent_tool_call_answer.consecutive_call_repair_count,
+            has_answered_tool_calls=True,
+        )
+
+    @staticmethod
+    async def _continue_after_tool_calls(
+        realtime_voice_session: RealtimeVoiceSessionBase,
+        call_end_signals: CallEndSignals,
+        guest_speech_activity: GuestSpeechActivity,
+        agent_reply_progress: AgentReplyProgress,
+    ) -> AgentReplyProgress:
+        # A guest who is talking gets the reply the provider starts by itself when they finish.
+        if not guest_speech_activity.guest_is_speaking:
+            await ManagerConversation._request_next_reply(realtime_voice_session, call_end_signals.guest_audio_ended)
+        return replace(agent_reply_progress, has_answered_tool_calls=False)
+
+    @staticmethod
+    async def _request_held_up_farewell(
+        realtime_voice_session: RealtimeVoiceSessionBase, call_end_signals: CallEndSignals, agent_reply_progress: AgentReplyProgress
+    ) -> AgentReplyProgress:
+        """Called when some other reply ends after the call limit: a farewell that reply held up is asked for again now."""
+        if not agent_reply_progress.farewell_was_refused:
+            return agent_reply_progress
+        await ManagerConversation._request_farewell(
+            realtime_voice_session, call_end_signals.reached_call_limit.result(), call_end_signals.guest_audio_ended
+        )
+        return replace(agent_reply_progress, farewell_was_refused=False)
 
     @staticmethod
     async def _request_next_reply(realtime_voice_session: RealtimeVoiceSessionBase, guest_audio_ended: asyncio.Event) -> None:

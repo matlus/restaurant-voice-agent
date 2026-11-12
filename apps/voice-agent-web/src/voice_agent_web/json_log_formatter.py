@@ -2,9 +2,10 @@ import json
 import logging
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Final, cast, override
+from typing import Final, cast, final, override
 
 
+@final
 class JsonLogFormatter(logging.Formatter):
     """One JSON object per log line, so the container's log store can query by field. Fields passed with
     extra={"event_fields": {...}} are added at the top level."""

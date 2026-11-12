@@ -3,7 +3,7 @@ from dataclasses import replace
 from typing import Final
 
 from voice_agent_conversation import AgentToolCallAnswered, CallLimitReached, ConversationEvent, ConversationStarted
-from voice_agent_web.resource_models.call_records import CallRecord
+from voice_agent_web.resource_models.call_records import CallRecord, CallSummaryResource
 
 
 class ComposerCallSummary:
@@ -31,7 +31,7 @@ class ComposerCallSummary:
                 return call_record
 
     @classmethod
-    def compose_call_summary(cls, call_record: CallRecord, call_seconds: float, *, call_failed: bool) -> dict[str, object]:
+    def compose_call_summary(cls, call_record: CallRecord, call_seconds: float, *, call_failed: bool) -> CallSummaryResource:
         return {
             "event": "call_ended",
             "conversation_id": call_record.conversation_id,

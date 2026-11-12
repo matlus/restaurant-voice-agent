@@ -161,6 +161,49 @@ class TestCallLimits:
         )
         assert read_farewell_request(realtime_voice_service_scripted) == expected_farewell_request
 
+    async def test_Converse_WhenAnotherReplyEndsLateAfterARefusedFarewellWasAskedForAgain_ThenTheFarewellIsNotAskedForAThirdTime(
+        self, restaurant_database_path: Path
+    ) -> None:
+        guest_microphone: GuestMicrophone = GuestMicrophone()
+        refused_farewell_request_number: int = 2
+        repeated_farewell_request_number: int = 3
+        expected_conversation_events: list[ConversationEvent] = [
+            *GREETING_EVENTS,
+            SpeechProviderErrorTolerated(
+                error_type="invalid_request_error",
+                error_code=ACTIVE_RESPONSE_ERROR_CODE,
+                error_message="Conversation already has an active response in progress.",
+                refused_farewell=True,
+            ),
+            AgentTurnFinished(),
+            AgentTurnFinished(),
+            *FAREWELL_EVENTS,
+            CallLimitReached(call_limit=CallLimit.MAXIMUM_DURATION),
+        ]
+        expected_farewell_request: FarewellRequest = FarewellRequest(
+            reply_request_count=repeated_farewell_request_number, last_reply_carried_farewell_instructions=True
+        )
+
+        async with (
+            RealtimeVoiceServiceScripted(
+                refused_reply_request_numbers=[refused_farewell_request_number],
+                late_reply_completion_request_numbers=[repeated_farewell_request_number],
+            ) as realtime_voice_service_scripted,
+            create_domain_facade(
+                realtime_voice_service_scripted, restaurant_database_path, {MAXIMUM_CALL_SECONDS_VARIABLE_NAME: SHORT_LIMIT_SECONDS}
+            ) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
+        ):
+            actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
+                conversation, [], hang_up_after_event_count=GUEST_KEEPS_LISTENING_EVENT_COUNT
+            )
+
+        AsserterConversation.assert_conversation_events_are_as_expected(
+            expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
+        )
+        assert read_farewell_request(realtime_voice_service_scripted) == expected_farewell_request
+
     async def test_Converse_WhenAnEarlierReplysEndArrivesAfterTheFarewellIsAskedFor_ThenTheCallEndsOnlyOnceTheFarewellIsSpoken(
         self, restaurant_database_path: Path
     ) -> None:

@@ -5,6 +5,7 @@
 
 import asyncio
 import json
+from collections.abc import Sequence
 from contextlib import aclosing
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
@@ -85,11 +86,13 @@ GREETING_EVENTS: Final[list[ConversationEvent]] = [
 REPLY_EVENTS: Final[list[ConversationEvent]] = [AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO), AgentTurnFinished()]
 TOMORROWS_BOOKING_TIME: Final[str] = "19:00"
 TOMORROWS_BOOKING_PARTY_SIZE: Final[int] = 2
+SEARCH_MENU_TOOL_NAME: Final[str] = "search_menu"
+CHECK_AVAILABILITY_TOOL_NAME: Final[str] = "check_availability"
 RESTAURANT_TOOL_NAMES: Final[tuple[str, ...]] = (
-    "search_menu",
+    SEARCH_MENU_TOOL_NAME,
     "describe_dish",
     "get_opening_hours",
-    "check_availability",
+    CHECK_AVAILABILITY_TOOL_NAME,
     "book_table",
     "find_bookings",
     "change_booking",
@@ -127,8 +130,22 @@ class BookingConfirmationDetails:
     notes: str | None
 
 
+@dataclass(frozen=True)
+class FindBookingsArguments:
+    phone_number: str
+    guest_name: str
+    reservation_date: str
+
+
+@dataclass(frozen=True)
+class CancelBookingByDetailsArguments:
+    phone_number: str
+    guest_name: str
+    booked_date: str
+    booked_time: str
+
+
 def create_answer_events(tool_name: str, agent_tool_call_outcome: AgentToolCallOutcome) -> list[ConversationEvent]:
-    """The tool call the host records, then the reply the agent gives once it is answered."""
     return [AgentToolCallAnswered(tool_name=tool_name, agent_tool_call_outcome=agent_tool_call_outcome), *REPLY_EVENTS]
 
 
@@ -141,7 +158,7 @@ class SeparatedConversationEvents:
     agent_tool_calls_answered: list[AgentToolCallAnswered]
 
 
-def separate_agent_tool_calls(conversation_events: list[ConversationEvent]) -> SeparatedConversationEvents:
+def separate_agent_tool_calls(conversation_events: Sequence[ConversationEvent]) -> SeparatedConversationEvents:
     return SeparatedConversationEvents(
         other_conversation_events=[
             conversation_event for conversation_event in conversation_events if not isinstance(conversation_event, AgentToolCallAnswered)
@@ -263,7 +280,7 @@ class TestAgentTools:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         expected_conversation_events: list[ConversationEvent] = [
             *GREETING_EVENTS,
-            *create_answer_events("search_menu", AgentToolCallOutcome.ANSWERED),
+            *create_answer_events(SEARCH_MENU_TOOL_NAME, AgentToolCallOutcome.ANSWERED),
         ]
         async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
             keto_dishes: list[Dish] = (
@@ -282,7 +299,7 @@ class TestAgentTools:
 
         async with (
             RealtimeVoiceServiceScripted(
-                events_after_each_guest_audio=create_tool_call_events(TOOL_CALL_ID, "search_menu", KETO_SEARCH_ARGUMENTS_JSON)
+                events_after_each_guest_audio=create_tool_call_events(TOOL_CALL_ID, SEARCH_MENU_TOOL_NAME, KETO_SEARCH_ARGUMENTS_JSON)
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
@@ -314,15 +331,15 @@ class TestAgentTools:
         # second start is passed on only after the first tool calling reply has been handled, so a next reply asked for
         # then would already show. The provider answers a talking guest by itself once they finish.
         guest_microphone: GuestMicrophone = GuestMicrophone()
-        search_menu_answered: AgentToolCallAnswered = AgentToolCallAnswered(
-            tool_name="search_menu", agent_tool_call_outcome=AgentToolCallOutcome.ANSWERED
+        search_menu_agent_tool_call_answered: AgentToolCallAnswered = AgentToolCallAnswered(
+            tool_name=SEARCH_MENU_TOOL_NAME, agent_tool_call_outcome=AgentToolCallOutcome.ANSWERED
         )
         expected_conversation_events: list[ConversationEvent] = [
             *GREETING_EVENTS,
             GuestStartedSpeaking(),
-            search_menu_answered,
+            search_menu_agent_tool_call_answered,
             GuestStartedSpeaking(),
-            search_menu_answered,
+            search_menu_agent_tool_call_answered,
         ]
         expected_agent_response_request_count: int = 1
 
@@ -330,7 +347,7 @@ class TestAgentTools:
             RealtimeVoiceServiceScripted(
                 events_after_each_guest_audio=[
                     create_speech_started_event(),
-                    *create_tool_call_events(TOOL_CALL_ID, "search_menu", KETO_SEARCH_ARGUMENTS_JSON),
+                    *create_tool_call_events(TOOL_CALL_ID, SEARCH_MENU_TOOL_NAME, KETO_SEARCH_ARGUMENTS_JSON),
                 ]
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
@@ -353,7 +370,7 @@ class TestAgentTools:
         expected_conversation_events: list[ConversationEvent] = [
             *GREETING_EVENTS,
             GuestStartedSpeaking(),
-            *create_answer_events("search_menu", AgentToolCallOutcome.ANSWERED),
+            *create_answer_events(SEARCH_MENU_TOOL_NAME, AgentToolCallOutcome.ANSWERED),
         ]
         expected_agent_response_request_count: int = 2
 
@@ -362,7 +379,7 @@ class TestAgentTools:
                 events_after_each_guest_audio=[
                     create_speech_started_event(),
                     create_speech_stopped_event(),
-                    *create_tool_call_events(TOOL_CALL_ID, "search_menu", KETO_SEARCH_ARGUMENTS_JSON),
+                    *create_tool_call_events(TOOL_CALL_ID, SEARCH_MENU_TOOL_NAME, KETO_SEARCH_ARGUMENTS_JSON),
                 ]
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
@@ -381,8 +398,8 @@ class TestAgentTools:
     @pytest.mark.parametrize(
         ("tool_name", "arguments_json"),
         [
-            pytest.param("search_menu", '{"excluded_allergens": ["tree_nuts"]}', id="menu-search-excluding-an-allergen"),
-            pytest.param("search_menu", '{"diet_labels": ["nut_free"]}', id="menu-search-for-a-free-from-diet"),
+            pytest.param(SEARCH_MENU_TOOL_NAME, '{"excluded_allergens": ["tree_nuts"]}', id="menu-search-excluding-an-allergen"),
+            pytest.param(SEARCH_MENU_TOOL_NAME, '{"diet_labels": ["nut_free"]}', id="menu-search-for-a-free-from-diet"),
         ],
     )
     async def test_Converse_WhenTheAgentSearchesTheMenuAboutAnAllergy_ThenTheAnswerCarriesTheRestaurantsAllergenNotice(
@@ -449,13 +466,12 @@ class TestAgentTools:
         async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
             booked_reservation: Reservation = await restaurant_domain_facade.create_reservation(reservation_request)
         expected_booking_answers: list[list[BookingSummaryAnswer]] = [[create_expected_booking_summary(booked_reservation)]]
-        find_bookings_arguments_json: str = json.dumps(
-            {
-                "phone_number": generated_guest.phone_digits,
-                "guest_name": generated_guest.family_name.lower(),
-                "reservation_date": booked_reservation.reservation_date.isoformat(),
-            }
+        find_bookings_arguments: FindBookingsArguments = FindBookingsArguments(
+            phone_number=generated_guest.phone_digits,
+            guest_name=generated_guest.family_name.lower(),
+            reservation_date=booked_reservation.reservation_date.isoformat(),
         )
+        find_bookings_arguments_json: str = json.dumps(asdict(find_bookings_arguments))
 
         async with (
             RealtimeVoiceServiceScripted(
@@ -537,14 +553,13 @@ class TestAgentTools:
         async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
             booked_reservation: Reservation = await restaurant_domain_facade.create_reservation(reservation_request)
         expected_outcome: tuple[list[list[BookingSummaryAnswer]], list[Reservation]] = ([[create_expected_booking_summary(booked_reservation)]], [])
-        cancel_booking_arguments_json: str = json.dumps(
-            {
-                "phone_number": generated_guest.phone_digits,
-                "guest_name": generated_guest.family_name,
-                "booked_date": booked_reservation.reservation_date.isoformat(),
-                "booked_time": create_expected_booking_summary(booked_reservation).reservation_time,
-            }
+        cancel_booking_by_details_arguments: CancelBookingByDetailsArguments = CancelBookingByDetailsArguments(
+            phone_number=generated_guest.phone_digits,
+            guest_name=generated_guest.family_name,
+            booked_date=booked_reservation.reservation_date.isoformat(),
+            booked_time=create_expected_booking_summary(booked_reservation).reservation_time,
         )
+        cancel_booking_arguments_json: str = json.dumps(asdict(cancel_booking_by_details_arguments))
 
         async with (
             RealtimeVoiceServiceScripted(
@@ -576,7 +591,7 @@ class TestAgentTools:
 
         async with (
             RealtimeVoiceServiceScripted(
-                events_after_each_guest_audio=create_tool_call_events(TOOL_CALL_ID, "search_menu", KETO_SEARCH_ARGUMENTS_JSON)
+                events_after_each_guest_audio=create_tool_call_events(TOOL_CALL_ID, SEARCH_MENU_TOOL_NAME, KETO_SEARCH_ARGUMENTS_JSON)
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
@@ -600,7 +615,7 @@ class TestAgentTools:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         expected_conversation_events: list[ConversationEvent] = [
             *GREETING_EVENTS,
-            *create_answer_events("check_availability", AgentToolCallOutcome.REFUSED),
+            *create_answer_events(CHECK_AVAILABILITY_TOOL_NAME, AgentToolCallOutcome.REFUSED),
         ]
         async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
             restaurant_local_now: datetime = await restaurant_domain_facade.get_restaurant_local_now()
@@ -614,7 +629,9 @@ class TestAgentTools:
 
         async with (
             RealtimeVoiceServiceScripted(
-                events_after_each_guest_audio=create_tool_call_events(TOOL_CALL_ID, "check_availability", json.dumps(asdict(availability_request)))
+                events_after_each_guest_audio=create_tool_call_events(
+                    TOOL_CALL_ID, CHECK_AVAILABILITY_TOOL_NAME, json.dumps(asdict(availability_request))
+                )
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
@@ -633,10 +650,10 @@ class TestAgentTools:
     @pytest.mark.parametrize(
         ("tool_name", "arguments_json", "expected_problem_phrase"),
         [
-            pytest.param("check_availability", '{"party_size": "lots"}', "check_availability", id="arguments-that-do-not-fit"),
+            pytest.param(CHECK_AVAILABILITY_TOOL_NAME, '{"party_size": "lots"}', CHECK_AVAILABILITY_TOOL_NAME, id="arguments-that-do-not-fit"),
             pytest.param(UNKNOWN_TOOL_NAME, "{}", f"no tool named '{UNKNOWN_TOOL_NAME}'", id="unknown-tool"),
             pytest.param(
-                "check_availability",
+                CHECK_AVAILABILITY_TOOL_NAME,
                 '{"reservation_date": "2026-11-06", "reservation_time": "half past six", "party_size": 2}',
                 "is not a time",
                 id="time-the-restaurant-cannot-read",
@@ -724,7 +741,7 @@ class TestAgentTools:
         expected_conversation_events: list[ConversationEvent] = GREETING_EVENTS + REPLY_EVENTS * answered_call_count
         expected_agent_tool_calls_answered: list[AgentToolCallAnswered] = [
             AgentToolCallAnswered(tool_name=UNKNOWN_TOOL_NAME, agent_tool_call_outcome=AgentToolCallOutcome.CORRECTED),
-            AgentToolCallAnswered(tool_name="search_menu", agent_tool_call_outcome=AgentToolCallOutcome.ANSWERED),
+            AgentToolCallAnswered(tool_name=SEARCH_MENU_TOOL_NAME, agent_tool_call_outcome=AgentToolCallOutcome.ANSWERED),
         ] * guest_question_count
         expected_answered_call_ids: list[str] = [TOOL_CALL_ID, SECOND_TOOL_CALL_ID] * guest_question_count
 
@@ -732,7 +749,7 @@ class TestAgentTools:
             RealtimeVoiceServiceScripted(
                 events_after_each_guest_audio=[
                     *create_tool_call_events(TOOL_CALL_ID, UNKNOWN_TOOL_NAME, "{}"),
-                    *create_tool_call_events(SECOND_TOOL_CALL_ID, "search_menu", KETO_SEARCH_ARGUMENTS_JSON),
+                    *create_tool_call_events(SECOND_TOOL_CALL_ID, SEARCH_MENU_TOOL_NAME, KETO_SEARCH_ARGUMENTS_JSON),
                 ]
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
@@ -771,7 +788,7 @@ class TestAgentTools:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         expected_conversation_events: list[ConversationEvent] = [
             *GREETING_EVENTS,
-            *create_answer_events("check_availability", AgentToolCallOutcome.REFUSED),
+            *create_answer_events(CHECK_AVAILABILITY_TOOL_NAME, AgentToolCallOutcome.REFUSED),
         ]
         availability_request: AvailabilityRequest = await create_tomorrows_availability_request(
             restaurant_database_path, reservation_time, party_size
@@ -784,7 +801,9 @@ class TestAgentTools:
 
         async with (
             RealtimeVoiceServiceScripted(
-                events_after_each_guest_audio=create_tool_call_events(TOOL_CALL_ID, "check_availability", json.dumps(asdict(availability_request)))
+                events_after_each_guest_audio=create_tool_call_events(
+                    TOOL_CALL_ID, CHECK_AVAILABILITY_TOOL_NAME, json.dumps(asdict(availability_request))
+                )
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
@@ -811,13 +830,15 @@ class TestAgentTools:
         policy_refusal: str = await read_policy_refusal(restaurant_database_path, availability_request)
         expected_conversation_events: list[ConversationEvent] = GREETING_EVENTS + REPLY_EVENTS * refusal_count
         expected_agent_tool_calls_answered: list[AgentToolCallAnswered] = [
-            AgentToolCallAnswered(tool_name="check_availability", agent_tool_call_outcome=AgentToolCallOutcome.REFUSED)
+            AgentToolCallAnswered(tool_name=CHECK_AVAILABILITY_TOOL_NAME, agent_tool_call_outcome=AgentToolCallOutcome.REFUSED)
         ] * refusal_count
         expected_tool_answers: list[AgentToolRefusalAnswer] = [AgentToolRefusalAnswer(refused=True, reason=policy_refusal)] * refusal_count
 
         async with (
             RealtimeVoiceServiceScripted(
-                events_after_each_guest_audio=create_tool_call_events(TOOL_CALL_ID, "check_availability", json.dumps(asdict(availability_request)))
+                events_after_each_guest_audio=create_tool_call_events(
+                    TOOL_CALL_ID, CHECK_AVAILABILITY_TOOL_NAME, json.dumps(asdict(availability_request))
+                )
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
