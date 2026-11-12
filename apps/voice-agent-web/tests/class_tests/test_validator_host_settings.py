@@ -116,3 +116,16 @@ class TestValidatorHostSettings:
         actual_allowed_origins: frozenset[str] = ValidatorHostSettings.validate_allowed_origins([local_ipv6_origin])
 
         assert actual_allowed_origins == expected_allowed_origins
+
+    @pytest.mark.parametrize(
+        "malformed_origin", [pytest.param("http://[", id="unclosed IPv6 bracket"), pytest.param("http://[abc]", id="not an IPv6 address")]
+    )
+    def test_ValidateAllowedOrigins_WhenAnOriginsAddressIsMalformed_ThenItIsRefusedNamingTheOrigin(self, malformed_origin: str) -> None:
+        expected_host_setting_refusal: ExpectedHostSettingRefusal = ExpectedHostSettingRefusal(
+            setting_name=ALLOWED_ORIGINS_SETTING_NAME, setting_value=malformed_origin, message_phrases=("must name a scheme and a host",)
+        )
+
+        with pytest.raises(HostSettingException) as raised:
+            ValidatorHostSettings.validate_allowed_origins([malformed_origin])
+
+        AsserterHostSettingException.assert_refused_host_setting_is_as_expected(expected_host_setting_refusal, raised.value)

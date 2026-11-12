@@ -11,12 +11,13 @@ class OriginNormalization:
     def normalize_origin(cls, origin: str) -> str | None:
         """The origin in one canonical spelling, as a browser sends it, or None when it names no site, as the "null" a
         sandboxed page sends. An origin carrying a user name names no site a browser would send either."""
-        split_origin: SplitResult = urlsplit(origin.strip().lower())
-        if not split_origin.scheme or not split_origin.hostname or "@" in split_origin.netloc:
-            return None
+        # A malformed address, such as an unclosed IPv6 bracket or a port that is not a number, names no site either.
         try:
+            split_origin: SplitResult = urlsplit(origin.strip().lower())
             origin_port: int | None = split_origin.port
         except ValueError:
+            return None
+        if not split_origin.scheme or not split_origin.hostname or "@" in split_origin.netloc:
             return None
         # hostname drops the brackets around an IPv6 address, which the origin keeps.
         origin_host: str = f"[{split_origin.hostname}]" if ":" in split_origin.hostname else split_origin.hostname

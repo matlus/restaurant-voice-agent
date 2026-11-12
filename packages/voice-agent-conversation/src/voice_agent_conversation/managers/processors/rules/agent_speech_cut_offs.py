@@ -15,8 +15,6 @@ class AgentSpeechCutOffs:
     def drops_unheard_speech(
         sent_agent_speech: SentAgentSpeech, agent_speech_cut_off: AgentSpeechCutOff, cut_off_agent_speech_part: AgentSpeechPart | None
     ) -> bool:
-        """Whether a cut-off report removes speech the guest did not hear: something went unplayed, and that part has not
-        already been cut off."""
         return agent_speech_cut_off.unplayed_milliseconds > 0 and sent_agent_speech.agent_speech_part != cut_off_agent_speech_part
 
     @classmethod

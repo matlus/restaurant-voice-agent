@@ -56,7 +56,7 @@ class ProcessorGuestSideForwarding:
             await self._realtime_voice_session.close()
 
     async def _forward_guest_speech(self, pcm_audio: bytes, guest_audio_allowance: GuestAudioAllowance) -> GuestAudioAllowance:
-        """Sends a piece of guest speech the pacing admits and returns the allowance left; a piece it does not admit is dropped."""
+        # A dropped piece is not queued for later: speech that arrives too fast is lost, so a runaway sender costs nothing.
         guest_audio_sample_rate_hz: int = self._realtime_voice_session.conversation_audio_format.guest_audio_sample_rate_hz
         refilled_guest_audio_allowance: GuestAudioAllowance = GuestAudioPacing.refill_allowance(
             guest_audio_allowance, guest_audio_sample_rate_hz, asyncio.get_running_loop().time()
