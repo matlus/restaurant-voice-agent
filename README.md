@@ -212,6 +212,14 @@ Every open call holds a paid OpenAI Realtime session, so the app bounds what a c
   so a page on another site cannot open a call from a signed-in user's browser, whatever the sign-in cookie's
   `SameSite` setting is.
 
+### Logs
+
+The app logs one JSON object per line. Every call ends with a `call_ended` entry: its `conversation_id`, voice, length,
+how it ended (`hung_up`, `call_limit:…` or `failed`) and the agent's tool calls by name and outcome. Nothing the caller
+said is logged. A failure is logged once, with the conversation id in its context: a business refusal as a warning, a
+fault as an error. Messages that reach the log do not repeat phone numbers. `GET /healthz` answers once the store can
+be read.
+
 **The image has no authentication of its own.** The Dockerfile binds `0.0.0.0`, and on Azure the Container Apps
 sign-in stands in front of it. Run the image anywhere without a sign-in in front and anyone who can reach it can spend
 the OpenAI key and change bookings. Also set a monthly spend limit on the OpenAI project, as a backstop the app cannot

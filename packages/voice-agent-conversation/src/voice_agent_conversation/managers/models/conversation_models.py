@@ -14,6 +14,14 @@ class CallLimit(StrEnum):
     MAXIMUM_SILENCE = "maximum_silence"
 
 
+class AgentToolCallOutcome(StrEnum):
+    """How one of the agent's tool calls was answered."""
+
+    ANSWERED = "answered"  # The tool ran and its result went back to the agent.
+    CORRECTED = "corrected"  # The call was wrong; the agent was told how to call again.
+    REFUSED = "refused"  # The restaurant refused the request; the refusal went back for the agent to relay.
+
+
 class PresentedGender(StrEnum):
     """How a voice presents to listeners. Providers do not label their voices this way; the catalog does."""
 
@@ -49,8 +57,10 @@ class ConversationAudioFormat:
 
 @dataclass(frozen=True)
 class ConversationStarted:
-    """The first event of every conversation. Guest audio must be sent in this format from now on."""
+    """The first event of every conversation. Guest audio must be sent in this format from now on. conversation_id names
+    this conversation in logs and in the context of any exception it raises."""
 
+    conversation_id: str
     conversation_audio_format: ConversationAudioFormat
     voice_option: VoiceOption
 
@@ -178,6 +188,16 @@ class AgentSpeechReceived:
 
 
 @dataclass(frozen=True)
+class AgentReplyProgress:
+    """What the relay has learned of the agent's replies: how many of its tool calls in a row were wrong, whether the reply
+    under way called tools that were answered, and whether a farewell was refused because a reply was under way."""
+
+    consecutive_call_repair_count: int
+    has_answered_tool_calls: bool
+    farewell_was_refused: bool
+
+
+@dataclass(frozen=True)
 class SentAgentSpeech:
     """How much of the agent's latest speech part has been passed on to the host."""
 
@@ -185,12 +205,22 @@ class SentAgentSpeech:
     sent_byte_count: int
 
 
+@dataclass(frozen=True)
+class AgentToolCallAnswered:
+    """The agent called one of its tools and was answered. The host records it; the guest is not told."""
+
+    tool_name: str
+    agent_tool_call_outcome: AgentToolCallOutcome
+
+
 # What the guest's side of a call is sent: the page plays or acts on every one of these.
 type GuestFacingConversationEvent = ConversationStarted | AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished | CallLimitReached
 
-type ConversationEvent = GuestFacingConversationEvent | SpeechProviderErrorTolerated
+type ConversationEvent = GuestFacingConversationEvent | SpeechProviderErrorTolerated | AgentToolCallAnswered
 
-type AgentSessionEvent = AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished | SpeechProviderErrorTolerated | CallLimitReached
+type AgentSessionEvent = (
+    AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished | SpeechProviderErrorTolerated | CallLimitReached | AgentToolCallAnswered
+)
 
 type VoiceSessionEvent = (
     AgentSpeechReceived | GuestStartedSpeaking | GuestStoppedSpeaking | AgentTurnFinished | AgentToolCallRequested | SpeechProviderErrorTolerated

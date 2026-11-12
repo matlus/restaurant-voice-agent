@@ -5,6 +5,7 @@
 # never ends fails as a timeout instead of hanging the suite.
 
 import asyncio
+import secrets
 from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import datetime
@@ -13,9 +14,10 @@ from pathlib import Path
 from typing import Final
 
 import pytest
-from conversation_acceptance_support.asserters.asserter_conversation import AsserterConversation
+from conversation_acceptance_support.asserters.asserter_conversation import ANY_CONVERSATION_ID, AsserterConversation
 from conversation_acceptance_support.asserters.asserter_exception import AsserterException, ExpectedExceptionContent, ExpectedExceptionMetadata
 from conversation_acceptance_support.bundled_voice_catalog import read_catalog_voice_option, read_catalog_voice_options
+from conversation_acceptance_support.generated_guests import create_generated_guest_audio_chunks
 from conversation_acceptance_support.guest_microphone import GuestMicrophone, GuestMicrophoneBreakdownException
 from conversation_acceptance_support.realtime_voice_service_scripted import (
     SCRIPTED_GREETING_AUDIO,
@@ -65,11 +67,9 @@ CEDAR_VOICE_OPTION: Final[VoiceOption] = read_catalog_voice_option("openai-cedar
 PROVIDER_CONVERSATION_AUDIO_FORMAT: Final[ConversationAudioFormat] = ConversationAudioFormat(
     guest_audio_sample_rate_hz=24_000, agent_audio_sample_rate_hz=24_000
 )
-GUEST_AUDIO_CHUNKS: Final[list[bytes]] = [b"guest audio chunk one", b"guest audio chunk two"]
 # One second of the agent's reply: mono 16-bit PCM at the provider's rate.
 AGENT_REPLY_SPEECH_MILLISECONDS: Final[int] = 1_000
 AGENT_REPLY_SPEECH: Final[bytes] = bytes(PROVIDER_CONVERSATION_AUDIO_FORMAT.agent_audio_sample_rate_hz * 2)
-AGENT_REPLY_ITEM_ID: Final[str] = "item_reply"
 # ConversationStarted, the greeting's speech, the end of its turn, the reply's speech and the guest talking over it.
 TALKED_OVER_EVENT_COUNT: Final[int] = 5
 CONVERSATION_TIME_LIMIT_SECONDS: Final[float] = 5.0
@@ -84,6 +84,9 @@ OPERATION_CONTEXT_NAME: Final[str] = "RealtimeVoice.Operation"
 PROVIDER_ERROR_TYPE_CONTEXT_NAME: Final[str] = "RealtimeVoice.ProviderErrorType"
 PROVIDER_ERROR_CODE_CONTEXT_NAME: Final[str] = "RealtimeVoice.ProviderErrorCode"
 PROVIDER_ERROR_MESSAGE_CONTEXT_NAME: Final[str] = "RealtimeVoice.ProviderErrorMessage"
+CONVERSATION_ID_CONTEXT_NAME: Final[str] = "Conversation.Id"
+# The guest never hangs up; the call ends by itself first.
+CONVERSATION_EVENTS_NEVER_HUNG_UP_ON: Final[int] = 99
 CONNECT_OPERATION: Final[str] = f"connecting to model '{TESTING_REALTIME_MODEL}'"
 
 
@@ -110,11 +113,14 @@ class TestConversation:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         conversation_request: ConversationRequest = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
         expected_conversation_events: list[ConversationEvent] = [
-            ConversationStarted(conversation_audio_format=PROVIDER_CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+            ConversationStarted(
+                conversation_id=ANY_CONVERSATION_ID, conversation_audio_format=PROVIDER_CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION
+            ),
             AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
             AgentTurnFinished(),
         ]
         expected_agent_response_request_count: int = 1
+        guest_audio_chunks: list[bytes] = create_generated_guest_audio_chunks()
 
         async with (
             RealtimeVoiceServiceScripted() as realtime_voice_service_scripted,
@@ -122,11 +128,11 @@ class TestConversation:
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
             aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_guest_side_events())) as conversation,
         ):
-            actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(conversation, GUEST_AUDIO_CHUNKS)
+            actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(conversation, guest_audio_chunks)
 
         AsserterConversation.assert_call_is_as_expected(
             expected_conversation_events=expected_conversation_events,
-            expected_guest_audio=GUEST_AUDIO_CHUNKS,
+            expected_guest_audio=guest_audio_chunks,
             expected_agent_response_request_count=expected_agent_response_request_count,
             actual_conversation_events=actual_conversation_events,
             actual_captured_realtime_sessions=realtime_voice_service_scripted.captured_realtime_sessions,
@@ -161,7 +167,9 @@ class TestConversation:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         conversation_request: ConversationRequest = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
         expected_conversation_events: list[ConversationEvent] = [
-            ConversationStarted(conversation_audio_format=PROVIDER_CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+            ConversationStarted(
+                conversation_id=ANY_CONVERSATION_ID, conversation_audio_format=PROVIDER_CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION
+            ),
             AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
             AgentTurnFinished(),
             GuestStartedSpeaking(),
@@ -174,7 +182,7 @@ class TestConversation:
             aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
-                conversation, GUEST_AUDIO_CHUNKS[:1], hang_up_after_event_count=len(expected_conversation_events)
+                conversation, create_generated_guest_audio_chunks(1), hang_up_after_event_count=len(expected_conversation_events)
             )
 
         AsserterConversation.assert_conversation_events_are_as_expected(
@@ -191,7 +199,9 @@ class TestConversation:
             "invalid_request_error", "conversation_already_has_active_response", "Conversation already has an active response in progress."
         )
         expected_conversation_events: list[ConversationEvent] = [
-            ConversationStarted(conversation_audio_format=PROVIDER_CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+            ConversationStarted(
+                conversation_id=ANY_CONVERSATION_ID, conversation_audio_format=PROVIDER_CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION
+            ),
             AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
             AgentTurnFinished(),
             SpeechProviderErrorTolerated(
@@ -211,7 +221,7 @@ class TestConversation:
             aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
-                conversation, GUEST_AUDIO_CHUNKS[:1], hang_up_after_event_count=len(expected_conversation_events)
+                conversation, create_generated_guest_audio_chunks(1), hang_up_after_event_count=len(expected_conversation_events)
             )
 
         AsserterConversation.assert_conversation_events_are_as_expected(
@@ -224,15 +234,16 @@ class TestConversation:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         conversation_request: ConversationRequest = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
         unplayed_milliseconds: int = 600
-        expected_agent_speech_truncations: list[CapturedAgentSpeechTruncation] = [
+        agent_reply_item_id: str = f"item_{secrets.token_hex(8)}"
+        expected_captured_agent_speech_truncations: list[CapturedAgentSpeechTruncation] = [
             CapturedAgentSpeechTruncation(
-                item_id=AGENT_REPLY_ITEM_ID, content_index=0, audio_end_ms=AGENT_REPLY_SPEECH_MILLISECONDS - unplayed_milliseconds
+                item_id=agent_reply_item_id, content_index=0, audio_end_ms=AGENT_REPLY_SPEECH_MILLISECONDS - unplayed_milliseconds
             )
         ]
 
         async with (
             RealtimeVoiceServiceScripted(
-                events_after_each_guest_audio=[create_agent_speech_event(AGENT_REPLY_ITEM_ID, AGENT_REPLY_SPEECH), create_speech_started_event()]
+                events_after_each_guest_audio=[create_agent_speech_event(agent_reply_item_id, AGENT_REPLY_SPEECH), create_speech_started_event()]
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
@@ -240,15 +251,15 @@ class TestConversation:
         ):
             await guest_microphone.take_part(
                 conversation,
-                GUEST_AUDIO_CHUNKS[:1],
+                create_generated_guest_audio_chunks(1),
                 hang_up_after_event_count=TALKED_OVER_EVENT_COUNT,
                 unplayed_milliseconds_when_talked_over=unplayed_milliseconds,
             )
 
-        actual_agent_speech_truncations: list[CapturedAgentSpeechTruncation] = realtime_voice_service_scripted.captured_realtime_sessions[
+        actual_captured_agent_speech_truncations: list[CapturedAgentSpeechTruncation] = realtime_voice_service_scripted.captured_realtime_sessions[
             0
         ].agent_speech_truncations
-        assert actual_agent_speech_truncations == expected_agent_speech_truncations
+        assert actual_captured_agent_speech_truncations == expected_captured_agent_speech_truncations
 
     async def test_Converse_WhenTheHostDroppedMoreSpeechThanTheReplyHolds_ThenTheProviderForgetsTheWholeReply(
         self, restaurant_database_path: Path
@@ -257,13 +268,14 @@ class TestConversation:
         conversation_request: ConversationRequest = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
         # The host's queue also held the end of the greeting, so it dropped more than the reply alone.
         unplayed_milliseconds: int = AGENT_REPLY_SPEECH_MILLISECONDS + 250
-        expected_agent_speech_truncations: list[CapturedAgentSpeechTruncation] = [
-            CapturedAgentSpeechTruncation(item_id=AGENT_REPLY_ITEM_ID, content_index=0, audio_end_ms=0)
+        agent_reply_item_id: str = f"item_{secrets.token_hex(8)}"
+        expected_captured_agent_speech_truncations: list[CapturedAgentSpeechTruncation] = [
+            CapturedAgentSpeechTruncation(item_id=agent_reply_item_id, content_index=0, audio_end_ms=0)
         ]
 
         async with (
             RealtimeVoiceServiceScripted(
-                events_after_each_guest_audio=[create_agent_speech_event(AGENT_REPLY_ITEM_ID, AGENT_REPLY_SPEECH), create_speech_started_event()]
+                events_after_each_guest_audio=[create_agent_speech_event(agent_reply_item_id, AGENT_REPLY_SPEECH), create_speech_started_event()]
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
@@ -271,21 +283,23 @@ class TestConversation:
         ):
             await guest_microphone.take_part(
                 conversation,
-                GUEST_AUDIO_CHUNKS[:1],
+                create_generated_guest_audio_chunks(1),
                 hang_up_after_event_count=TALKED_OVER_EVENT_COUNT,
                 unplayed_milliseconds_when_talked_over=unplayed_milliseconds,
             )
 
-        actual_agent_speech_truncations: list[CapturedAgentSpeechTruncation] = realtime_voice_service_scripted.captured_realtime_sessions[
+        actual_captured_agent_speech_truncations: list[CapturedAgentSpeechTruncation] = realtime_voice_service_scripted.captured_realtime_sessions[
             0
         ].agent_speech_truncations
-        assert actual_agent_speech_truncations == expected_agent_speech_truncations
+        assert actual_captured_agent_speech_truncations == expected_captured_agent_speech_truncations
 
     async def test_Converse_WhenTheVoiceKeyHasStraySpacesAndCapitals_ThenTheCallStartsInThatVoice(self, restaurant_database_path: Path) -> None:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         conversation_request: ConversationRequest = ConversationRequest(voice_key="  OpenAI-Marin ")
         expected_conversation_started: ConversationStarted = ConversationStarted(
-            conversation_audio_format=PROVIDER_CONVERSATION_AUDIO_FORMAT, voice_option=read_catalog_voice_option("openai-marin")
+            conversation_id=ANY_CONVERSATION_ID,
+            conversation_audio_format=PROVIDER_CONVERSATION_AUDIO_FORMAT,
+            voice_option=read_catalog_voice_option("openai-marin"),
         )
 
         async with (
@@ -296,7 +310,9 @@ class TestConversation:
         ):
             actual_conversation_started: ConversationEvent = await anext(conversation)
 
-        assert actual_conversation_started == expected_conversation_started
+        AsserterConversation.assert_conversation_events_are_as_expected(
+            expected_conversation_events=[expected_conversation_started], actual_conversation_events=[actual_conversation_started]
+        )
 
     async def test_Converse_WhenTheVoiceIsNotInTheCatalog_ThenTheRefusalNamesTheOfferedVoicesAndTheProviderIsNeverCalled(
         self, restaurant_database_path: Path
@@ -305,6 +321,7 @@ class TestConversation:
         refused_voice_key: str = "openai-nova"
         conversation_request: ConversationRequest = ConversationRequest(voice_key=refused_voice_key)
         expected_offered_voice_keys: list[str] = [voice_option.voice_key for voice_option in read_catalog_voice_options()]
+        assert refused_voice_key not in expected_offered_voice_keys, f"The bundled catalog must not offer '{refused_voice_key}' for this scenario"
         expected_exception_content: ExpectedExceptionContent = ExpectedExceptionContent(
             message_phrases=[refused_voice_key, *expected_offered_voice_keys],
             expected_exception_metadata=ExpectedExceptionMetadata(
@@ -439,7 +456,7 @@ class TestConversation:
                 async with asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS):
                     await guest_microphone.take_part(
                         conversation,
-                        GUEST_AUDIO_CHUNKS[:1],
+                        create_generated_guest_audio_chunks(1),
                         guest_microphone_breakdown_exception=GuestMicrophoneBreakdownException(expected_failure_message),
                     )
 
@@ -604,7 +621,7 @@ class TestConversationProviderFailures:
             with pytest.raises(RealtimeVoiceSessionExpiredException) as raised:
                 async with asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS):
                     await guest_microphone.take_part(
-                        conversation, GUEST_AUDIO_CHUNKS[:1], hang_up_after_event_count=guest_keeps_listening_event_count
+                        conversation, create_generated_guest_audio_chunks(1), hang_up_after_event_count=guest_keeps_listening_event_count
                     )
 
         AsserterException.assert_call_failure_is_as_expected(
@@ -612,6 +629,33 @@ class TestConversationProviderFailures:
             expected_provider_session_count=expected_provider_session_count,
             actual_voice_agent_conversation_exception=raised.value,
             actual_captured_realtime_sessions=realtime_voice_service_scripted.captured_realtime_sessions,
+        )
+
+    async def test_Converse_WhenTheCallFails_ThenTheFailureNamesTheConversationItStartedAs(self, restaurant_database_path: Path) -> None:
+        guest_microphone: GuestMicrophone = GuestMicrophone()
+        conversation_request: ConversationRequest = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
+        session_expiry_error_event_message: ErrorEventMessage = create_error_event(
+            "invalid_request_error", "session_expired", "Your session hit the maximum duration of 60 minutes."
+        )
+
+        async with (
+            RealtimeVoiceServiceScripted(events_after_each_guest_audio=[session_expiry_error_event_message]) as realtime_voice_service_scripted,
+            create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_guest_side_events())) as conversation,
+        ):
+            actual_conversation_started: ConversationEvent = await anext(conversation)
+            guest_microphone.speak(create_generated_guest_audio_chunks(1)[0])
+            with pytest.raises(RealtimeVoiceSessionExpiredException) as raised:
+                await guest_microphone.take_part(conversation, [], hang_up_after_event_count=CONVERSATION_EVENTS_NEVER_HUNG_UP_ON)
+
+        # The id is made by the domain, so the one the call started with is what the failure must carry.
+        actual_started_conversation_id: str | None = (
+            actual_conversation_started.conversation_id if isinstance(actual_conversation_started, ConversationStarted) else None
+        )
+        assert (actual_started_conversation_id is not None, raised.value.contextual_data_by_name.get(CONVERSATION_ID_CONTEXT_NAME)) == (
+            True,
+            actual_started_conversation_id,
         )
 
     @pytest.mark.parametrize(
@@ -699,7 +743,7 @@ class TestConversationProviderFailures:
             with pytest.raises(provider_failure_scenario.expected_exception_type) as raised:
                 async with asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS):
                     await guest_microphone.take_part(
-                        conversation, GUEST_AUDIO_CHUNKS[:1], hang_up_after_event_count=guest_keeps_listening_event_count
+                        conversation, create_generated_guest_audio_chunks(1), hang_up_after_event_count=guest_keeps_listening_event_count
                     )
 
         AsserterException.assert_call_failure_is_as_expected(

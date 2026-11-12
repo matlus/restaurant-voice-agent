@@ -31,9 +31,10 @@ class ComposerConversationMessages:
         match guest_facing_conversation_event:
             case AgentSpeechChunk(pcm_audio=pcm_audio):
                 return pcm_audio
-            case ConversationStarted(conversation_audio_format=conversation_audio_format, voice_option=voice_option):
+            case ConversationStarted(conversation_id=conversation_id, conversation_audio_format=conversation_audio_format, voice_option=voice_option):
                 return {
                     "type": "conversation_started",
+                    "conversation_id": conversation_id,
                     "guest_audio_sample_rate_hz": conversation_audio_format.guest_audio_sample_rate_hz,
                     "agent_audio_sample_rate_hz": conversation_audio_format.agent_audio_sample_rate_hz,
                     "voice": ComposerConversationMessages.compose_voice(voice_option),

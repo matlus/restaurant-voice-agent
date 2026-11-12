@@ -1,9 +1,16 @@
+import re
 from collections.abc import Iterable, Sequence
+from dataclasses import replace
+from typing import Final
 
 from conversation_acceptance_support.asserters.assertion_report import assert_no_mismatches
 from conversation_acceptance_support.realtime_voice_service_scripted import CapturedRealtimeSession, CapturedSessionSettings
 
-from voice_agent_conversation import ConversationEvent
+from voice_agent_conversation import ConversationEvent, ConversationStarted
+
+# A test expects this in place of the conversation id it cannot know: any id the domain made in its own form matches.
+ANY_CONVERSATION_ID: Final[str] = "any conversation id"
+CONVERSATION_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{32}")
 
 
 class AsserterConversation:
@@ -27,7 +34,6 @@ class AsserterConversation:
         actual_conversation_events: Sequence[ConversationEvent],
         actual_captured_realtime_sessions: Sequence[CapturedRealtimeSession],
     ) -> None:
-        """The events the host heard, and the one provider session that carried the guest's audio and the greeting request."""
         mismatch_messages: list[str] = AsserterConversation._find_conversation_event_mismatches(
             expected_conversation_events, actual_conversation_events
         )
@@ -54,15 +60,15 @@ class AsserterConversation:
         actual_captured_realtime_sessions: Sequence[CapturedRealtimeSession],
     ) -> None:
         mismatch_messages: list[str] = []
-        actual_session_settings: list[CapturedSessionSettings] = [
+        actual_sent_captured_session_settings: list[CapturedSessionSettings] = [
             captured_session_settings
             for actual_captured_realtime_session in actual_captured_realtime_sessions
             for captured_session_settings in actual_captured_realtime_session.session_settings
         ]
-        if len(actual_session_settings) != 1:
-            mismatch_messages.append(f"Session settings sent: expected 1; actual {len(actual_session_settings)}.")
+        if len(actual_sent_captured_session_settings) != 1:
+            mismatch_messages.append(f"Session settings sent: expected 1; actual {len(actual_sent_captured_session_settings)}.")
         else:
-            actual_captured_session_settings: CapturedSessionSettings = actual_session_settings[0]
+            actual_captured_session_settings: CapturedSessionSettings = actual_sent_captured_session_settings[0]
             if actual_captured_session_settings.provider_voice_id != expected_provider_voice_id:
                 mismatch_messages.append(
                     f"Provider voice: expected {expected_provider_voice_id!r}; actual {actual_captured_session_settings.provider_voice_id!r}."
@@ -116,9 +122,21 @@ class AsserterConversation:
             actual_conversation_event: ConversationEvent | None = (
                 actual_conversation_events[event_position] if event_position < len(actual_conversation_events) else None
             )
-            if actual_conversation_event != expected_conversation_event:
+            if not AsserterConversation._is_expected_event(expected_conversation_event, actual_conversation_event):
                 mismatch_messages.append(
                     f"Event {event_position}: expected {expected_conversation_event or 'no event'!r}; "
                     f"actual {actual_conversation_event or 'no event'!r}."
                 )
         return mismatch_messages
+
+    @staticmethod
+    def _is_expected_event(expected_conversation_event: ConversationEvent | None, actual_conversation_event: ConversationEvent | None) -> bool:
+        if (
+            isinstance(expected_conversation_event, ConversationStarted)
+            and isinstance(actual_conversation_event, ConversationStarted)
+            and expected_conversation_event.conversation_id == ANY_CONVERSATION_ID
+        ):
+            return CONVERSATION_ID_PATTERN.fullmatch(actual_conversation_event.conversation_id) is not None and (
+                replace(actual_conversation_event, conversation_id=ANY_CONVERSATION_ID) == expected_conversation_event
+            )
+        return actual_conversation_event == expected_conversation_event

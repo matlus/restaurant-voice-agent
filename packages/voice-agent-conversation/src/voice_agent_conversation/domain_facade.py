@@ -30,6 +30,11 @@ class DomainFacade:
     async def close(self) -> None:
         await self._manager_conversation.close()
 
+    async def check_readiness(self) -> None:
+        """Raises when the conversation domain could not hold a call right now, such as when the restaurant's store cannot
+        be read."""
+        await self._manager_conversation.check_readiness()
+
     async def get_voice_options(self) -> list[VoiceOption]:
         """Every voice a guest can choose, in catalog order."""
         return await self._manager_conversation.get_voice_options()

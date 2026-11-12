@@ -18,7 +18,7 @@ from voice_agent_conversation.managers.exceptions.agent_tool_exceptions import (
     AgentToolArgumentsInvalidException,
     AgentToolCallRepairsExhaustedException,
 )
-from voice_agent_conversation.managers.models.conversation_models import AgentToolCallRequested, AgentToolDefinition
+from voice_agent_conversation.managers.models.conversation_models import AgentToolCallOutcome, AgentToolCallRequested, AgentToolDefinition
 from voice_agent_restaurant import (
     DishLookupValidationException,
     DomainFacade as RestaurantDomainFacade,
@@ -50,9 +50,11 @@ class AgentToolCallRejection:
 @final
 @dataclass(frozen=True)
 class AgentToolCallAnswer:
-    """The JSON the agent reads for one tool call, and how many of its calls in a row have now been wrong."""
+    """The JSON the agent reads for one tool call, how the call was answered, and how many of its calls in a row have now
+    been wrong."""
 
     tool_output_json: str
+    agent_tool_call_outcome: AgentToolCallOutcome
     consecutive_call_repair_count: int
 
 
@@ -93,8 +95,7 @@ class AgentToolbox:
         return tuple(agent_tool.get_tool_definition() for agent_tool in self._agent_tools_by_name.values())
 
     async def run_tool_call(self, agent_tool_call_requested: AgentToolCallRequested, consecutive_call_repair_count: int) -> AgentToolCallAnswer:
-        """Runs the requested tool, given how many of the agent's calls in a row were wrong before this one, and returns the
-        tool's result, a refusal or a correction."""
+        """Raises AgentToolCallRepairsExhaustedException, which ends the call, once too many wrong calls have come in a row."""
         agent_tool: AgentToolProtocol | None = self._agent_tools_by_name.get(agent_tool_call_requested.tool_name)
         if agent_tool is None:
             return self._reject_call(
@@ -117,20 +118,27 @@ class AgentToolbox:
 
     def _reject_call(self, tool_name: str, problem: str, consecutive_call_repair_count: int) -> AgentToolCallAnswer:
         if consecutive_call_repair_count >= self.MAXIMUM_CALL_REPAIRS:
-            raise AgentToolCallRepairsExhaustedException(tool_name=tool_name, repair_limit=self.MAXIMUM_CALL_REPAIRS, last_problem=problem)
+            raise AgentToolCallRepairsExhaustedException(tool_name=tool_name, repair_limit=self.MAXIMUM_CALL_REPAIRS)
         agent_tool_call_rejection: AgentToolCallRejection = AgentToolCallRejection(
             call_rejected=True, problem=problem, instruction=self.CALL_AGAIN_INSTRUCTION
         )
         return AgentToolCallAnswer(
             tool_output_json=pydantic_core.to_json(agent_tool_call_rejection).decode("utf-8"),
+            agent_tool_call_outcome=AgentToolCallOutcome.CORRECTED,
             consecutive_call_repair_count=consecutive_call_repair_count + 1,
         )
 
     @staticmethod
     def _relay_refusal(voice_agent_restaurant_business_exception: VoiceAgentRestaurantBusinessBaseException) -> AgentToolCallAnswer:
         agent_tool_refusal: AgentToolRefusal = AgentToolRefusal(refused=True, reason=voice_agent_restaurant_business_exception.message)
-        return AgentToolCallAnswer(tool_output_json=pydantic_core.to_json(agent_tool_refusal).decode("utf-8"), consecutive_call_repair_count=0)
+        return AgentToolCallAnswer(
+            tool_output_json=pydantic_core.to_json(agent_tool_refusal).decode("utf-8"),
+            agent_tool_call_outcome=AgentToolCallOutcome.REFUSED,
+            consecutive_call_repair_count=0,
+        )
 
     @staticmethod
     def _accept_call(tool_output_json: str) -> AgentToolCallAnswer:
-        return AgentToolCallAnswer(tool_output_json=tool_output_json, consecutive_call_repair_count=0)
+        return AgentToolCallAnswer(
+            tool_output_json=tool_output_json, agent_tool_call_outcome=AgentToolCallOutcome.ANSWERED, consecutive_call_repair_count=0
+        )
