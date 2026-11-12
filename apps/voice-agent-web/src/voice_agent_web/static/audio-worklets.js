@@ -1,6 +1,9 @@
 // Runs on the audio thread. Capture turns microphone samples into 16-bit PCM at the rate the agent expects;
-// playback turns the agent's 16-bit PCM back into samples and can drop everything queued when the guest talks,
-// saying how much it dropped.
+// playback plays the agent's speech, already turned into samples on the page, and can drop everything queued when the
+// guest talks, saying how much it dropped.
+
+// Far longer than any reply; past it, newly arriving speech is dropped rather than held without limit.
+const MAXIMUM_QUEUED_SECONDS = 120;
 
 class GuestCaptureProcessor extends AudioWorkletProcessor {
   constructor(options) {
@@ -47,32 +50,37 @@ class AgentPlaybackProcessor extends AudioWorkletProcessor {
     super();
     this.sourceSampleRate = options.processorOptions.sourceSampleRate;
     this.sourceStep = this.sourceSampleRate / sampleRate;
+    this.maximumQueuedSamples = MAXIMUM_QUEUED_SECONDS * this.sourceSampleRate;
     this.queue = [];
+    this.queuedSamples = 0;
+    // Speech dropped because the queue was full; the guest never hears it, so it counts as unplayed.
+    this.droppedSamples = 0;
     this.current = null;
     this.position = 0;
     this.port.onmessage = (event) => {
       if (event.data === "clear") {
         this.port.postMessage({ unplayedMilliseconds: this.countUnplayedMilliseconds() });
         this.queue = [];
+        this.queuedSamples = 0;
+        this.droppedSamples = 0;
         this.current = null;
         this.position = 0;
         return;
       }
-      const pcm = new Int16Array(event.data);
-      const samples = new Float32Array(pcm.length);
-      for (let i = 0; i < pcm.length; i += 1) {
-        samples[i] = pcm[i] / 0x8000;
+      const samples = event.data;
+      if (this.queuedSamples + samples.length > this.maximumQueuedSamples) {
+        this.droppedSamples += samples.length;
+        return;
       }
       this.queue.push(samples);
+      this.queuedSamples += samples.length;
     };
   }
 
-  // How much queued speech has not been played yet, at the agent's own sample rate.
+  // How much speech the guest has not heard yet, at the agent's own sample rate.
   countUnplayedMilliseconds() {
-    let unplayedSamples = this.current ? Math.max(0, this.current.length - this.position) : 0;
-    for (const samples of this.queue) {
-      unplayedSamples += samples.length;
-    }
+    const unplayedCurrentSamples = this.current ? Math.max(0, this.current.length - this.position) : 0;
+    const unplayedSamples = unplayedCurrentSamples + this.queuedSamples + this.droppedSamples;
     return Math.round((unplayedSamples / this.sourceSampleRate) * 1000);
   }
 
@@ -84,6 +92,9 @@ class AgentPlaybackProcessor extends AudioWorkletProcessor {
           this.position -= this.current.length - 1;
         }
         this.current = this.queue.shift() || null;
+        if (this.current) {
+          this.queuedSamples -= this.current.length;
+        }
         if (!this.current) {
           this.position = 0;
           output.fill(0, i);
