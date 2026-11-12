@@ -103,11 +103,13 @@ class CallLimitReached:
 
 @dataclass(frozen=True)
 class CallEndSignals:
-    """How the parts of one call tell each other it is ending: the guest's side has ended, or a call limit was reached and
-    the farewell asked for. Each is set once and never cleared."""
+    """How the parts of one call tell each other it is ending: the guest's side has ended, a call limit was reached and
+    the farewell asked for, or the session was closed because that farewell did not finish in time. Each is set once and
+    never cleared."""
 
     guest_audio_ended: asyncio.Event
     reached_call_limit: asyncio.Future[CallLimit]
+    farewell_grace_ran_out: asyncio.Event
 
 
 @dataclass(frozen=True)

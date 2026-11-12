@@ -1,5 +1,6 @@
 import json
 from collections import Counter
+from collections.abc import Collection, Iterable
 from importlib import resources
 from typing import Final, cast
 
@@ -8,7 +9,7 @@ from voice_agent_conversation.managers.models.conversation_models import Present
 
 
 class DataManagerVoiceCatalog:
-    """Reads the voice catalog bundled with the package. The file is small, so it is read on every request."""
+    """Reads the voice catalog bundled with the package and checks it, so a broken catalog stops startup."""
 
     CATALOG_FILE_NAME: Final[str] = "voice_catalog.json"
     CATALOG_FOLDER_NAME: Final[str] = "catalog_data"
@@ -49,14 +50,16 @@ class DataManagerVoiceCatalog:
     @classmethod
     def _read_voice_entries(cls, catalog_document: object) -> list[object]:
         if not isinstance(catalog_document, dict):
-            raise cls._create_invalid_catalog_exception(cls.CATALOG_SHAPE_PROBLEM)
+            raise cls._create_invalid_catalog_exception(
+                f"{cls.CATALOG_SHAPE_PROBLEM}, but its top level parsed as a {type(catalog_document).__name__}"
+            )
         voice_entries: object = cast(dict[str, object], catalog_document).get("voices")
         if not isinstance(voice_entries, list):
-            raise cls._create_invalid_catalog_exception(cls.CATALOG_SHAPE_PROBLEM)
+            raise cls._create_invalid_catalog_exception(f"{cls.CATALOG_SHAPE_PROBLEM}, but its 'voices' parsed as a {type(voice_entries).__name__}")
         return cast(list[object], voice_entries)
 
     @classmethod
-    def _read_voice_options(cls, voice_entries: list[object]) -> list[VoiceOption]:
+    def _read_voice_options(cls, voice_entries: Iterable[object]) -> list[VoiceOption]:
         voice_options: list[VoiceOption] = []
         entry_index: int
         voice_entry: object
@@ -65,7 +68,7 @@ class DataManagerVoiceCatalog:
         return voice_options
 
     @classmethod
-    def _verify_catalog_invariants(cls, voice_options: list[VoiceOption]) -> None:
+    def _verify_catalog_invariants(cls, voice_options: Collection[VoiceOption]) -> None:
         if not voice_options:
             raise cls._create_invalid_catalog_exception("must list at least one voice")
         voice_key_counts: Counter[str] = Counter(voice_option.voice_key for voice_option in voice_options)

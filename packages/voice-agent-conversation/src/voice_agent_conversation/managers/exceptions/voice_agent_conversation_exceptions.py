@@ -1,12 +1,13 @@
-import json
 import traceback
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum, IntEnum
-from types import TracebackType
 from typing import Final, override
 
 type ContextualDataDict = dict[str, str | int | float | bool]
+# What callers hand in: read, never changed, so any mapping will do.
+type ContextualDataMapping = Mapping[str, str | int | float | bool]
 
 
 class Severity(IntEnum):
@@ -34,7 +35,6 @@ class LogEventBase(Enum):
 class ExceptionCause:
     exception_type: str
     message: str
-    traceback: TracebackType | None = None
 
 
 class VoiceAgentConversationBaseException(Exception, ABC):
@@ -46,7 +46,7 @@ class VoiceAgentConversationBaseException(Exception, ABC):
 
     APPLICATION_NAME: Final[str] = "VoiceAgentConversation"
 
-    def __init__(self, message: str, log_event: LogEventBase, contextual_data_by_name: ContextualDataDict | None = None) -> None:
+    def __init__(self, message: str, log_event: LogEventBase, contextual_data_by_name: ContextualDataMapping | None = None) -> None:
         # CPython does not enforce ABC abstractness for BaseException descendants.
         abstract_method_names: frozenset[str] = type(self).__abstractmethods__
         if abstract_method_names:
@@ -90,7 +90,7 @@ class VoiceAgentConversationBaseException(Exception, ABC):
         cause_exception: BaseException | None = self.__cause__
         if cause_exception is None:
             return None
-        return ExceptionCause(exception_type=type(cause_exception).__name__, message=str(cause_exception), traceback=cause_exception.__traceback__)
+        return ExceptionCause(exception_type=type(cause_exception).__name__, message=str(cause_exception))
 
     @property
     def contextual_data_by_name(self) -> ContextualDataDict:
@@ -108,11 +108,10 @@ class VoiceAgentConversationBaseException(Exception, ABC):
         contextual_data_by_name.update(self._additional_contextual_data_by_name)
         return contextual_data_by_name
 
-    def add_contextual_data(self, contextual_data_by_name: ContextualDataDict) -> None:
+    def add_contextual_data(self, contextual_data_by_name: ContextualDataMapping) -> None:
         self._additional_contextual_data_by_name.update(contextual_data_by_name)
 
-    def to_string(self) -> str:
-        """Every contextual value and the cause on its own line, then the traceback, for a log entry."""
+    def to_log_entry(self) -> str:
         lines: list[str] = []
         contextual_data_name: str
         contextual_data_value: str | int | float | bool
@@ -128,9 +127,6 @@ class VoiceAgentConversationBaseException(Exception, ABC):
             lines.extend(["", "".join(traceback.format_tb(self.__traceback__))])
 
         return "\n".join(lines)
-
-    def to_json(self) -> str:
-        return json.dumps(self.contextual_data_by_name, indent=2)
 
 
 class VoiceAgentConversationBusinessBaseException(VoiceAgentConversationBaseException, ABC):

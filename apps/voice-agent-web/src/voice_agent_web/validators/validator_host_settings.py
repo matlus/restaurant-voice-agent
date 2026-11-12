@@ -10,6 +10,8 @@ class ValidatorHostSettings:
 
     ALLOWED_ORIGINS_SETTING_NAME: Final[str] = "allowed_origins"
     MAXIMUM_CONCURRENT_CALLS_SETTING_NAME: Final[str] = "maximum_concurrent_calls"
+    PORT_SETTING_NAME: Final[str] = "port"
+    HIGHEST_PORT: Final[int] = 65_535
 
     @classmethod
     def validate_allowed_origins(cls, allowed_origins: Collection[str]) -> frozenset[str]:
@@ -37,3 +39,9 @@ class ValidatorHostSettings:
                 str(maximum_concurrent_calls),
             )
         return maximum_concurrent_calls
+
+    @classmethod
+    def validate_port(cls, port: int) -> int:
+        if not 1 <= port <= cls.HIGHEST_PORT:
+            raise HostSettingException(f"The port must be between 1 and {cls.HIGHEST_PORT} but was {port}.", cls.PORT_SETTING_NAME, str(port))
+        return port

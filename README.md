@@ -66,7 +66,7 @@ next occurrence of their weekday after the store is created (today counts), so t
 | Fully booked Tuesday | Every table is taken all evening. Any request gets "nothing available that day". |
 | Nearly full Wednesday | Only 6:30 PM and 8:30 PM are left, for up to four people. Ask for 7 and hear those two offered. |
 | Closed Monday | The restaurant doesn't open on Mondays. |
-| Holidays | Closed on Thanksgiving, Christmas Eve, Christmas Day and New Year's Day. |
+| Holidays | Closed on Thanksgiving, Christmas Eve, Christmas Day and New Year's Day 2026–27. These are fixed dates in `seed_data/restaurant.json`, unlike the bookings, so after January 1, 2027 this scenario has no closure left until the dates there are moved on. |
 | Existing booking | Priya Raman has a Friday booking under phone number 555-010-1001, confirmation code `KX4TPA`. Change or cancel it with the code, or by phone number, name and date. |
 | Large party | Parties over eight are pointed to the private dining room instead. |
 
@@ -181,6 +181,8 @@ uv run --all-packages voice_agent_web
 ```
 
 Open http://127.0.0.1:8000, choose a voice and press the call button. The browser asks for microphone access once.
+Browsers give a page the microphone only over HTTPS or on `localhost`/`127.0.0.1`, so a deployed app must be served
+over HTTPS.
 
 ### Settings
 
@@ -191,7 +193,7 @@ Open http://127.0.0.1:8000, choose a voice and press the call button. The browse
 | `VOICE_AGENT_RESTAURANT_STORE_SEEDING` | No | `restaurant_and_demo_bookings` seeds a new store with the demo bookings the test scenarios use. Defaults to `restaurant_only`, so a real deployment starts with no bookings. |
 | `VOICE_AGENT_OPENAI_REALTIME_MODEL` | No | The speech model. Defaults to `gpt-realtime-2.1`. `gpt-realtime-2.1-mini` costs less. |
 | `VOICE_AGENT_OPENAI_REALTIME_WEBSOCKET_BASE_URL` | No | Another Realtime address. Tests use this to point at a scripted service. |
-| `VOICE_AGENT_WEB_HOST` / `VOICE_AGENT_WEB_PORT` | No | Where the web app listens. Defaults to `127.0.0.1` and `8000`. |
+| `VOICE_AGENT_WEB_HOST` / `VOICE_AGENT_WEB_PORT` | No | Where the web app listens. Defaults to `127.0.0.1` and `8000`. A port that is not a whole number from 1 to 65535 stops startup with a message naming it. |
 | `VOICE_AGENT_WEB_ALLOWED_ORIGINS` | No | Comma-separated origins of other sites whose pages may open a call, such as `https://booking.example.com`. The app's own page is always allowed. |
 | `VOICE_AGENT_MAXIMUM_CALL_SECONDS` | No | The longest a call lasts before the agent says goodbye. Defaults to `900` (15 minutes). |
 | `VOICE_AGENT_MAXIMUM_SILENCE_SECONDS` | No | How long the caller may stay silent before the agent says goodbye. Defaults to `120`. |

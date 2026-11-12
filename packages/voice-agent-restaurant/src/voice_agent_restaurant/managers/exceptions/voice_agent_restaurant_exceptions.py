@@ -1,13 +1,13 @@
-import json
 import traceback
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import date, datetime, time
 from enum import Enum, IntEnum
-from types import TracebackType
-from typing import Final, final, override
+from typing import Final, override
 
 type ContextualDataDict = dict[str, str | int | float | bool]
+# What callers hand in: read, never changed, so any mapping will do.
+type ContextualDataMapping = Mapping[str, str | int | float | bool]
 
 
 class Severity(IntEnum):
@@ -35,13 +35,6 @@ class LogEventBase(Enum):
 class ExceptionCause:
     exception_type: str
     message: str
-    traceback: TracebackType | None = None
-
-    def to_dict(self) -> dict[str, str]:
-        cause_data: dict[str, str] = {"exception_type": self.exception_type, "message": self.message}
-        if self.traceback:
-            cause_data["traceback"] = "".join(traceback.format_tb(self.traceback))
-        return cause_data
 
 
 class VoiceAgentRestaurantBaseException(Exception, ABC):
@@ -52,9 +45,8 @@ class VoiceAgentRestaurantBaseException(Exception, ABC):
     """
 
     APPLICATION_NAME: Final[str] = "VoiceAgentRestaurant"
-    TRACEBACK_KEY: Final[str] = "Traceback"
 
-    def __init__(self, message: str, log_event: LogEventBase, contextual_data_by_name: ContextualDataDict | None = None) -> None:
+    def __init__(self, message: str, log_event: LogEventBase, contextual_data_by_name: ContextualDataMapping | None = None) -> None:
         # CPython does not enforce ABC abstractness for BaseException descendants.
         abstract_method_names: frozenset[str] = type(self).__abstractmethods__
         if abstract_method_names:
@@ -98,12 +90,12 @@ class VoiceAgentRestaurantBaseException(Exception, ABC):
         cause_exception: BaseException | None = self.__cause__
         if cause_exception is None:
             return None
-        return ExceptionCause(exception_type=type(cause_exception).__name__, message=str(cause_exception), traceback=cause_exception.__traceback__)
+        return ExceptionCause(exception_type=type(cause_exception).__name__, message=str(cause_exception))
 
     @property
     def contextual_data_by_name(self) -> ContextualDataDict:
         # Built lazily so overridden properties are read after the descendant's __init__ has run.
-        contextual_data: ContextualDataDict = {
+        contextual_data_by_name: ContextualDataDict = {
             "ApplicationName": self.application_name,
             "ExceptionType": type(self).__name__,
             "Action": self.action.value,
@@ -113,46 +105,28 @@ class VoiceAgentRestaurantBaseException(Exception, ABC):
             "HttpStatusCode": self.http_status_code,
             "Message": self.message,
         }
-        contextual_data.update(self._additional_contextual_data_by_name)
-        return contextual_data
+        contextual_data_by_name.update(self._additional_contextual_data_by_name)
+        return contextual_data_by_name
 
-    def add_contextual_data(self, contextual_data_by_name: ContextualDataDict) -> None:
+    def add_contextual_data(self, contextual_data_by_name: ContextualDataMapping) -> None:
         self._additional_contextual_data_by_name.update(contextual_data_by_name)
 
-    def to_string(self) -> str:
-        """Every contextual value and the cause on its own line, then the traceback, for a log entry."""
-        complete_exception_data: ContextualDataDict = self._get_exception_data_with_traceback()
-
+    def to_log_entry(self) -> str:
         lines: list[str] = []
-        exception_data_name: str
-        exception_data_value: str | int | float | bool
-        for exception_data_name, exception_data_value in complete_exception_data.items():
-            if exception_data_name != self.TRACEBACK_KEY:
-                lines.append(f"{exception_data_name}: {exception_data_value}")
-
-        if self.TRACEBACK_KEY in complete_exception_data:
-            lines.extend(["", str(complete_exception_data[self.TRACEBACK_KEY])])
-
-        return "\n".join(lines)
-
-    def to_json(self) -> str:
-        return json.dumps(self._get_exception_data_with_traceback(), indent=2)
-
-    def _get_exception_data(self) -> ContextualDataDict:
-        complete_exception_data: ContextualDataDict = self.contextual_data_by_name
+        contextual_data_name: str
+        contextual_data_value: str | int | float | bool
+        for contextual_data_name, contextual_data_value in self.contextual_data_by_name.items():
+            lines.append(f"{contextual_data_name}: {contextual_data_value}")
 
         exception_cause: ExceptionCause | None = self.cause
         if exception_cause:
-            complete_exception_data["CausedBy"] = exception_cause.exception_type
-            complete_exception_data["Cause"] = exception_cause.message
+            lines.append(f"CausedBy: {exception_cause.exception_type}")
+            lines.append(f"Cause: {exception_cause.message}")
 
-        return complete_exception_data
-
-    def _get_exception_data_with_traceback(self) -> ContextualDataDict:
-        complete_exception_data: ContextualDataDict = self._get_exception_data()
         if self.__traceback__:
-            complete_exception_data[self.TRACEBACK_KEY] = "".join(traceback.format_tb(self.__traceback__))
-        return complete_exception_data
+            lines.extend(["", "".join(traceback.format_tb(self.__traceback__))])
+
+        return "\n".join(lines)
 
 
 class VoiceAgentRestaurantBusinessBaseException(VoiceAgentRestaurantBaseException, ABC):
@@ -176,22 +150,3 @@ class VoiceAgentRestaurantTechnicalBaseException(VoiceAgentRestaurantBaseExcepti
     @override
     def http_status_code(self) -> int:
         return 500
-
-
-@final
-class VoiceAgentRestaurantExceptionJsonEncoder(json.JSONEncoder):
-    # Parameter `o` is named this way because json.JSONEncoder.default() defines it as such
-    @override
-    def default(self, o: object) -> object:
-        if isinstance(o, VoiceAgentRestaurantBaseException):
-            return o.contextual_data_by_name
-        if isinstance(o, ExceptionCause):
-            return o.to_dict()
-        if isinstance(o, Enum):
-            return o.value
-        if isinstance(o, datetime | date | time):
-            return o.isoformat()
-        if isinstance(o, Exception):
-            return {"ExceptionType": type(o).__name__, "Message": str(o)}
-
-        return super().default(o)

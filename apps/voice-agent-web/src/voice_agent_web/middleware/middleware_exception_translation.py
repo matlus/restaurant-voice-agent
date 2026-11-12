@@ -92,7 +92,7 @@ class MiddlewareExceptionTranslation:
             )
         elif isinstance(escaped_exception, VoiceAgentConversationBaseException | VoiceAgentRestaurantBaseException):
             escaped_exception.add_contextual_data({self.REQUEST_CONTEXT_KEY: request_description})
-            self._logger.error("Request failed: %s\n%s", request_description, escaped_exception.to_string())
+            self._logger.error("Request failed: %s\n%s", request_description, escaped_exception.to_log_entry())
         else:
             self._logger.error("Request failed unexpectedly: %s", request_description, exc_info=escaped_exception)
 
@@ -102,10 +102,14 @@ class MiddlewareExceptionTranslation:
         if connection_state is ConnectionState.ENDED:
             return
         websocket_failure: WebSocketFailure = ExceptionToWireTranslator.translate_to_websocket_failure(escaped_exception)
-        # Before the handshake is accepted a close frame is all the server can send: it refuses the handshake.
-        if connection_state is ConnectionState.OPEN:
-            await cls._send_websocket_error_message(send, websocket_failure)
-        await cls._close_websocket(send, websocket_failure)
+        try:
+            # Before the handshake is accepted a close frame is all the server can send: it refuses the handshake.
+            if connection_state is ConnectionState.OPEN:
+                await cls._send_websocket_error_message(send, websocket_failure)
+            await cls._close_websocket(send, websocket_failure)
+        except OSError:
+            # The browser went away while being told. The failure is already in the log, and this is not a second one.
+            return
 
     @staticmethod
     async def _send_websocket_error_message(send: Send, websocket_failure: WebSocketFailure) -> None:
