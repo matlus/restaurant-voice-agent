@@ -7,7 +7,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from types import TracebackType
-from typing import Final, Literal, Self, TypedDict, cast
+from typing import Final, Literal, NotRequired, Self, TypedDict, cast
 from urllib.parse import parse_qs, urlsplit
 
 from websockets.asyncio.server import ServerConnection, serve
@@ -22,6 +22,9 @@ SERVICE_STOP_TIMEOUT_SECONDS: Final[float] = 10.0
 CONNECTION_CLOSE_TIMEOUT_SECONDS: Final[float] = 1.0
 PROVIDER_REFUSAL_CLOSE_CODE: Final[int] = 3000
 ACTIVE_RESPONSE_ERROR_CODE: Final[str] = "conversation_already_has_active_response"
+# The reply already under way when a reply request is refused, and an earlier reply whose end arrives late.
+ACTIVE_REPLY_RESPONSE_ID: Final[str] = "response_active"
+LATE_REPLY_RESPONSE_ID: Final[str] = "response_late"
 
 
 # The subset of OpenAI Realtime server events this service sends, shaped as they travel on the wire.
@@ -31,6 +34,8 @@ class ProviderErrorDetailMessage(TypedDict):
     type: str
     code: str | None
     message: str
+    # The client event that caused the error, when one did.
+    event_id: NotRequired[str | None]
 
 
 class ErrorEventMessage(TypedDict):
@@ -73,6 +78,8 @@ class ResponseMessage(TypedDict):
     object: Literal["realtime.response"]
     status: Literal["completed", "failed"]
     status_details: ResponseStatusDetailsMessage | None
+    # What the client attached when it asked for the reply.
+    metadata: NotRequired[dict[str, str] | None]
 
 
 class ResponseDoneEventMessage(TypedDict):
@@ -188,8 +195,20 @@ def create_malformed_agent_speech_event() -> OutputAudioDeltaEventMessage:
     return malformed_output_audio_delta_event_message
 
 
-def create_error_event(error_type: str, error_code: str | None, error_message: str) -> ErrorEventMessage:
-    return {"type": "error", "event_id": "event_error", "error": {"type": error_type, "code": error_code, "message": error_message}}
+def create_error_event(error_type: str, error_code: str | None, error_message: str, causing_client_event_id: str | None = None) -> ErrorEventMessage:
+    return {
+        "type": "error",
+        "event_id": "event_error",
+        "error": {"type": error_type, "code": error_code, "message": error_message, "event_id": causing_client_event_id},
+    }
+
+
+def create_response_done_event(response_id: str, reply_metadata: dict[str, str] | None) -> ResponseDoneEventMessage:
+    return {
+        "type": "response.done",
+        "event_id": f"event_{response_id}_done",
+        "response": {"id": response_id, "object": "realtime.response", "status": "completed", "status_details": None, "metadata": reply_metadata},
+    }
 
 
 def create_failed_response_event(error_type: str, error_code: str | None, error_message: str) -> ResponseDoneEventMessage:
@@ -277,7 +296,9 @@ class RealtimeVoiceServiceScripted:
     It can also refuse the WebSocket handshake with an HTTP status, refuse an accepted connection by closing
     it the way OpenAI does for an invalid API key, or reject the session settings with a provider error event. It can
     refuse chosen reply requests, counted from one, as OpenAI does when a reply is already under way: it reports the
-    refusal and then the end of the reply that was under way.
+    refusal, naming the request it refused, and then the end of the reply that was under way. For other chosen reply
+    requests it first reports the end of an earlier reply, as arrives when that end was still unread. Each reply it speaks
+    carries back the metadata its request attached.
 
     It runs on its own thread and event loop, so asynchronous acceptance tests and the synchronous web
     test client can both use it. Read what it captured after it has stopped: stopping waits for every
@@ -292,12 +313,14 @@ class RealtimeVoiceServiceScripted:
         handshake_refusal_status: HTTPStatus | None = None,
         connection_refusal_close_reason: str | None = None,
         refused_reply_request_numbers: Collection[int] = (),
+        late_reply_completion_request_numbers: Collection[int] = (),
     ) -> None:
         self._events_after_each_guest_audio: tuple[ScriptedServerEventMessage, ...] = tuple(events_after_each_guest_audio)
         self._session_update_error_event_message: ErrorEventMessage | None = session_update_error_event_message
         self._handshake_refusal_status: HTTPStatus | None = handshake_refusal_status
         self._connection_refusal_close_reason: str | None = connection_refusal_close_reason
         self._refused_reply_request_numbers: frozenset[int] = frozenset(refused_reply_request_numbers)
+        self._late_reply_completion_request_numbers: frozenset[int] = frozenset(late_reply_completion_request_numbers)
         self.captured_realtime_sessions: list[CapturedRealtimeSession] = []
         self.captured_handshake_count: int = 0
         self._port: int | None = None
@@ -391,16 +414,14 @@ class RealtimeVoiceServiceScripted:
                 )
             case "response.create":
                 captured_realtime_session.agent_response_request_count += 1
-                response_settings: object = client_event.get("response")
-                captured_realtime_session.agent_response_instructions.append(
-                    cast(str | None, cast(Mapping[str, object], response_settings).get("instructions"))
-                    if isinstance(response_settings, Mapping)
-                    else None
-                )
+                response_settings: Mapping[str, object] = cast(Mapping[str, object], client_event.get("response") or {})
+                captured_realtime_session.agent_response_instructions.append(cast(str | None, response_settings.get("instructions")))
                 if captured_realtime_session.agent_response_request_count in self._refused_reply_request_numbers:
-                    await self._refuse_reply_request(server_connection)
+                    await self._refuse_reply_request(server_connection, cast(str | None, client_event.get("event_id")))
                     return
-                await self._speak_greeting(server_connection)
+                if captured_realtime_session.agent_response_request_count in self._late_reply_completion_request_numbers:
+                    await self._send_event(server_connection, create_response_done_event(LATE_REPLY_RESPONSE_ID, None))
+                await self._speak_greeting(server_connection, cast(dict[str, str] | None, response_settings.get("metadata")))
             case "input_audio_buffer.append":
                 input_audio_buffer_append_event_message: InputAudioBufferAppendEventMessage = cast(InputAudioBufferAppendEventMessage, client_event)
                 captured_realtime_session.guest_audio.append(base64.b64decode(input_audio_buffer_append_event_message["audio"]))
@@ -450,22 +471,20 @@ class RealtimeVoiceServiceScripted:
         )
 
     @classmethod
-    async def _refuse_reply_request(cls, server_connection: ServerConnection) -> None:
+    async def _refuse_reply_request(cls, server_connection: ServerConnection, refused_client_event_id: str | None) -> None:
         await cls._send_event(
             server_connection,
-            create_error_event("invalid_request_error", ACTIVE_RESPONSE_ERROR_CODE, "Conversation already has an active response in progress."),
+            create_error_event(
+                "invalid_request_error",
+                ACTIVE_RESPONSE_ERROR_CODE,
+                "Conversation already has an active response in progress.",
+                refused_client_event_id,
+            ),
         )
-        await cls._send_event(
-            server_connection,
-            {
-                "type": "response.done",
-                "event_id": "event_active_response_done",
-                "response": {"id": "response_active", "object": "realtime.response", "status": "completed", "status_details": None},
-            },
-        )
+        await cls._send_event(server_connection, create_response_done_event(ACTIVE_REPLY_RESPONSE_ID, None))
 
     @classmethod
-    async def _speak_greeting(cls, server_connection: ServerConnection) -> None:
+    async def _speak_greeting(cls, server_connection: ServerConnection, reply_metadata: dict[str, str] | None) -> None:
         await cls._send_event(
             server_connection,
             {
@@ -478,14 +497,7 @@ class RealtimeVoiceServiceScripted:
                 "delta": base64.b64encode(SCRIPTED_GREETING_AUDIO).decode("ascii"),
             },
         )
-        await cls._send_event(
-            server_connection,
-            {
-                "type": "response.done",
-                "event_id": "event_greeting_done",
-                "response": {"id": SCRIPTED_GREETING_RESPONSE_ID, "object": "realtime.response", "status": "completed", "status_details": None},
-            },
-        )
+        await cls._send_event(server_connection, create_response_done_event(SCRIPTED_GREETING_RESPONSE_ID, reply_metadata))
 
     @staticmethod
     async def _send_event(server_connection: ServerConnection, server_event_message: ServerEventMessage) -> None:

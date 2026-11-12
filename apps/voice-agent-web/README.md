@@ -25,4 +25,5 @@ Open http://127.0.0.1:8000, choose a voice and press the button. The browser ask
 
 A `/conversation` handshake whose `Origin` is neither this host nor in `VOICE_AGENT_WEB_ALLOWED_ORIGINS` is refused.
 No more than `VOICE_AGENT_MAXIMUM_CONCURRENT_CALLS` calls (default 10) run in one process; the host enforces this
-before the domain sees the call. A caller beyond it gets an `error` frame and a `1013` close.
+before the domain sees the call. A caller beyond it gets an `error` frame and a `1013` close. An allowed origin
+with no scheme, or a call limit below one, stops the app at startup with a `HostSettingException`.

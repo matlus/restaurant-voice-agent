@@ -80,6 +80,8 @@ class SpeechProviderErrorTolerated:
     error_type: str
     error_code: str | None
     error_message: str
+    # True when what was refused is the goodbye asked for at a call limit, so only that refusal asks for it again.
+    refused_farewell: bool = False
 
 
 @dataclass(frozen=True)
@@ -117,7 +119,10 @@ class GuestAudioAllowance:
 
 @dataclass(frozen=True)
 class AgentTurnFinished:
-    """The agent finished, or abandoned, its current reply."""
+    """The agent finished, or abandoned, its current reply. ended_farewell is True only for the goodbye asked for at a
+    call limit, so the call ends when that reply does and not when some earlier reply's end arrives late."""
+
+    ended_farewell: bool = False
 
 
 @dataclass(frozen=True)

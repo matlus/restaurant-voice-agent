@@ -129,14 +129,15 @@ class ManagerConversation:
         speech is counted as it is passed on, so a cut-off report from the guest's side can tell the provider where the
         guest stopped hearing it.
 
-        Once a call limit is reached and the farewell asked for, the next finished reply ends the call with CallLimitReached.
-        A farewell the provider refuses, because a reply was under way, is asked for again once that reply ends.
+        Once a call limit is reached and the farewell asked for, the end of the farewell's own reply ends the call with
+        CallLimitReached; the end of an earlier reply that arrives late does not. A farewell the provider refuses, because a
+        reply was under way, is asked for again once that reply ends.
         """
         call_end_signals: CallEndSignals = ManagerConversation._create_call_end_signals()
         # Rebound as speech is passed on and as the guest starts and stops talking; the tasks below read the latest
         # value through this frame.
         sent_agent_speech: SentAgentSpeech | None = None
-        guest_speech_activity: GuestSpeechActivity = GuestSpeechActivity(guest_is_speaking=False, last_heard_at=asyncio.get_running_loop().time())
+        guest_speech_activity: GuestSpeechActivity = ManagerConversation._observe_guest_speech_activity(guest_is_speaking=False)
         guest_audio_forwarding: asyncio.Task[None] = ManagerConversation._start_guest_side_forwarding(
             guest_side_events, realtime_voice_session, call_end_signals, lambda: sent_agent_speech
         )
@@ -151,18 +152,20 @@ class ManagerConversation:
             voice_session_event: VoiceSessionEvent
             async for voice_session_event in realtime_voice_session.receive_events():
                 match voice_session_event:
-                    case SpeechProviderErrorTolerated() if call_end_signals.reached_call_limit.done():
-                        # After the limit the only reply asked for is the farewell, so a tolerated refusal is its refusal.
+                    case SpeechProviderErrorTolerated(refused_farewell=True):
                         farewell_was_refused = True
                         yield voice_session_event
-                    case AgentTurnFinished() if call_end_signals.reached_call_limit.done():
+                    case AgentTurnFinished(ended_farewell=True):
                         yield voice_session_event
-                        if not farewell_was_refused:
-                            break
-                        farewell_was_refused = False
-                        await ManagerConversation._request_farewell(
-                            realtime_voice_session, call_end_signals.reached_call_limit.result(), call_end_signals.guest_audio_ended
-                        )
+                        break
+                    case AgentTurnFinished() if call_end_signals.reached_call_limit.done():
+                        # Some other reply ended after the limit; a farewell it held up is asked for again now.
+                        yield voice_session_event
+                        if farewell_was_refused:
+                            farewell_was_refused = False
+                            await ManagerConversation._request_farewell(
+                                realtime_voice_session, call_end_signals.reached_call_limit.result(), call_end_signals.guest_audio_ended
+                            )
                     case AgentToolCallRequested():
                         consecutive_call_repair_count = await ManagerConversation._answer_tool_call(
                             realtime_voice_session,
@@ -181,18 +184,26 @@ class ManagerConversation:
                         if not guest_speech_activity.guest_is_speaking:
                             await ManagerConversation._request_next_reply(realtime_voice_session, call_end_signals.guest_audio_ended)
                     case GuestStartedSpeaking():
-                        guest_speech_activity = GuestSpeechActivity(guest_is_speaking=True, last_heard_at=asyncio.get_running_loop().time())
+                        guest_speech_activity = ManagerConversation._observe_guest_speech_activity(guest_is_speaking=True)
                         yield voice_session_event
                     case GuestStoppedSpeaking():
-                        guest_speech_activity = GuestSpeechActivity(guest_is_speaking=False, last_heard_at=asyncio.get_running_loop().time())
+                        guest_speech_activity = ManagerConversation._observe_guest_speech_activity(guest_is_speaking=False)
                     case _:
                         yield voice_session_event
             # Reached after the farewell finished, or after enforcement closed a session whose farewell never came.
             if call_end_signals.reached_call_limit.done():
                 yield CallLimitReached(call_limit=call_end_signals.reached_call_limit.result())
         finally:
-            await ManagerConversation._settle_call_limit_enforcement(call_limit_enforcement)
-            await ManagerConversation._settle_guest_audio_forwarding(guest_audio_forwarding, call_end_signals.guest_audio_ended)
+            # Nested, so a failure settling the first task still settles the second and none outlives the call.
+            try:
+                await ManagerConversation._settle_call_limit_enforcement(call_limit_enforcement)
+            finally:
+                await ManagerConversation._settle_guest_audio_forwarding(guest_audio_forwarding, call_end_signals.guest_audio_ended)
+
+    @staticmethod
+    def _observe_guest_speech_activity(*, guest_is_speaking: bool) -> GuestSpeechActivity:
+        # Read on the event loop's clock, the one the call limit enforcement measures against.
+        return GuestSpeechActivity(guest_is_speaking=guest_is_speaking, last_heard_at=asyncio.get_running_loop().time())
 
     @staticmethod
     def _create_call_end_signals() -> CallEndSignals:

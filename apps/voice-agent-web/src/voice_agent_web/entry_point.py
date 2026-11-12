@@ -26,6 +26,8 @@ def main() -> None:
         create_app(allowed_origins=allowed_origins, maximum_concurrent_calls=maximum_concurrent_calls),
         host=os.environ.get(HOST_VARIABLE_NAME, DEFAULT_HOST),
         port=int(os.environ.get(PORT_VARIABLE_NAME, str(DEFAULT_PORT))),
+        # "on" makes a failure while the app starts up stop the process; "auto" would log it and keep serving.
+        lifespan="on",
     )
 
 

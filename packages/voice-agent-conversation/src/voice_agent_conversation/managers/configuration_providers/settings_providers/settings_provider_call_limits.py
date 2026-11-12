@@ -35,24 +35,28 @@ class SettingsProviderCallLimits:
         )
 
     def _read_positive_seconds(self, variable_name: str, default_seconds: float) -> float:
-        raw_value: str | None = self._settings_source.read_setting_value(variable_name)
-        if not SettingsSource.is_setting_present(raw_value):
+        seconds_setting_raw_value: str | None = self._settings_source.read_setting_value(variable_name)
+        if not SettingsSource.is_setting_present(seconds_setting_raw_value):
             return default_seconds
         try:
-            seconds: float = float(raw_value.strip())
+            seconds: float = float(seconds_setting_raw_value.strip())
         except ValueError as value_error:
-            raise self._create_not_positive_exception(variable_name, raw_value) from value_error
+            raise self._create_not_positive_exception(variable_name, seconds_setting_raw_value) from value_error
         # float() also reads "nan" and "inf", which would disable the limit or keep it from ever being reached.
         if not math.isfinite(seconds) or seconds <= 0:
-            raise self._create_not_positive_exception(variable_name, raw_value)
+            raise self._create_not_positive_exception(variable_name, seconds_setting_raw_value)
         return seconds
 
-    def _create_not_positive_exception(self, variable_name: str, raw_value: str) -> ConfigurationSettingException:
+    def _create_not_positive_exception(self, variable_name: str, seconds_setting_raw_value: str) -> ConfigurationSettingException:
         return ConfigurationSettingException(
             message=(
-                f"Configuration setting '{variable_name}' must be {self.SECONDS_FORM_DESCRIPTION} greater than zero but was '{raw_value.strip()}'. "
+                f"Configuration setting '{variable_name}' must be {self.SECONDS_FORM_DESCRIPTION} greater than zero "
+                f"but was '{seconds_setting_raw_value.strip()}'. "
                 "Leave it unset to use the default."
             ),
             log_event=LogEventConfiguration.CALL_LIMIT_SETTINGS_RETRIEVAL,
-            contextual_data_by_name={self.ENVIRONMENT_VARIABLE_NAME_CONTEXT_KEY: variable_name, self.SETTING_VALUE_CONTEXT_KEY: raw_value.strip()},
+            contextual_data_by_name={
+                self.ENVIRONMENT_VARIABLE_NAME_CONTEXT_KEY: variable_name,
+                self.SETTING_VALUE_CONTEXT_KEY: seconds_setting_raw_value.strip(),
+            },
         )

@@ -2,7 +2,7 @@
 # speech provider session, so a call ends with a spoken goodbye at its time or silence limit, and guest speech that is
 # too large or arrives faster than it could be spoken never reaches the provider. The
 # scripted Realtime service answers every reply request with the same speech, so the farewell sounds like the greeting;
-# what tells them apart is the instructions the farewell request carried.
+# what tells them apart is the instructions the farewell request carried, and the marker its reply carries back.
 
 import asyncio
 import secrets
@@ -20,6 +20,7 @@ from conversation_acceptance_support.realtime_voice_service_scripted import (
     ACTIVE_RESPONSE_ERROR_CODE,
     SCRIPTED_GREETING_AUDIO,
     RealtimeVoiceServiceScripted,
+    create_speech_started_event,
 )
 from conversation_acceptance_support.service_locator_testing import (
     MAXIMUM_CALL_SECONDS_VARIABLE_NAME,
@@ -41,6 +42,7 @@ from voice_agent_conversation import (
     ConversationStarted,
     DomainFacade,
     ExceptionAction,
+    GuestStartedSpeaking,
     LogEventConfiguration,
     Severity,
     SpeechProviderErrorTolerated,
@@ -57,9 +59,11 @@ GREETING_EVENTS: Final[list[ConversationEvent]] = [
     AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
     AgentTurnFinished(),
 ]
-FAREWELL_EVENTS: Final[list[ConversationEvent]] = [AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO), AgentTurnFinished()]
+FAREWELL_EVENTS: Final[list[ConversationEvent]] = [AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO), AgentTurnFinished(ended_farewell=True)]
 # Short enough that a limit is reached well within the conversation time limit, long enough to follow the greeting.
 SHORT_LIMIT_SECONDS: Final[str] = "0.3"
+# Longer than the short limit, so a call that outlasts the short silence limit ends at this length instead.
+LONGER_LIMIT_SECONDS: Final[str] = "1.0"
 FAREWELL_INSTRUCTION_PHRASE: Final[str] = "tell the caller the call is ending"
 CONVERSATION_TIME_LIMIT_SECONDS: Final[float] = 5.0
 # The guest is silent; the call ends by itself long before the guest would hang up.
@@ -130,6 +134,7 @@ class TestCallLimits:
                 error_type="invalid_request_error",
                 error_code=ACTIVE_RESPONSE_ERROR_CODE,
                 error_message="Conversation already has an active response in progress.",
+                refused_farewell=True,
             ),
             AgentTurnFinished(),
             *FAREWELL_EVENTS,
@@ -153,6 +158,63 @@ class TestCallLimits:
             expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
         )
         assert read_farewell_request(realtime_voice_service_scripted) == expected_farewell_request
+
+    async def test_Converse_WhenAnEarlierReplysEndArrivesAfterTheFarewellIsAskedFor_ThenTheCallEndsOnlyOnceTheFarewellIsSpoken(
+        self, restaurant_database_path: Path
+    ) -> None:
+        guest_microphone: GuestMicrophone = GuestMicrophone()
+        farewell_request_number: int = 2
+        expected_conversation_events: list[ConversationEvent] = [
+            *GREETING_EVENTS,
+            AgentTurnFinished(),
+            *FAREWELL_EVENTS,
+            CallLimitReached(call_limit=CallLimit.MAXIMUM_DURATION),
+        ]
+
+        async with (
+            RealtimeVoiceServiceScripted(late_reply_completion_request_numbers=[farewell_request_number]) as realtime_voice_service_scripted,
+            create_domain_facade(
+                realtime_voice_service_scripted, restaurant_database_path, {MAXIMUM_CALL_SECONDS_VARIABLE_NAME: SHORT_LIMIT_SECONDS}
+            ) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
+        ):
+            actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
+                conversation, [], hang_up_after_event_count=GUEST_KEEPS_LISTENING_EVENT_COUNT
+            )
+
+        AsserterConversation.assert_conversation_events_are_as_expected(
+            expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
+        )
+
+    async def test_Converse_WhenTheGuestKeepsTalkingPastTheSilenceLimit_ThenTheSilenceLimitIsNotReachedAndTheCallEndsAtItsMaximumLength(
+        self, restaurant_database_path: Path
+    ) -> None:
+        guest_microphone: GuestMicrophone = GuestMicrophone()
+        expected_conversation_events: list[ConversationEvent] = [
+            *GREETING_EVENTS,
+            GuestStartedSpeaking(),
+            *FAREWELL_EVENTS,
+            CallLimitReached(call_limit=CallLimit.MAXIMUM_DURATION),
+        ]
+
+        async with (
+            RealtimeVoiceServiceScripted(events_after_each_guest_audio=[create_speech_started_event()]) as realtime_voice_service_scripted,
+            create_domain_facade(
+                realtime_voice_service_scripted,
+                restaurant_database_path,
+                {MAXIMUM_SILENCE_SECONDS_VARIABLE_NAME: SHORT_LIMIT_SECONDS, MAXIMUM_CALL_SECONDS_VARIABLE_NAME: LONGER_LIMIT_SECONDS},
+            ) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
+        ):
+            actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
+                conversation, [secrets.token_bytes(LARGEST_PIECE_BYTE_COUNT)], hang_up_after_event_count=GUEST_KEEPS_LISTENING_EVENT_COUNT
+            )
+
+        AsserterConversation.assert_conversation_events_are_as_expected(
+            expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
+        )
 
     async def test_Converse_WhenTheGuestSendsAnOversizedPieceThenSpeechFasterThanRealTime_ThenOnlySpeechWithinTheAllowanceReachesTheProvider(
         self, restaurant_database_path: Path

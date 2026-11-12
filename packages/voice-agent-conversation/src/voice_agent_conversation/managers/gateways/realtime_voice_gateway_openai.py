@@ -1,12 +1,13 @@
 import asyncio
 import base64
 import binascii
-from collections.abc import AsyncIterator
+import uuid
+from collections.abc import AsyncIterator, Mapping
 from typing import Final, NoReturn, final, override
 
-from openai import AsyncOpenAI, OpenAIError
+from openai import AsyncOpenAI, Omit, OpenAIError, omit
 from openai.resources.realtime.realtime import AsyncRealtimeConnection
-from openai.types.realtime import RealtimeResponseStatus, RealtimeServerEvent
+from openai.types.realtime import RealtimeResponseCreateParamsParam, RealtimeResponseStatus, RealtimeServerEvent
 from openai.types.realtime.realtime_function_tool_param import RealtimeFunctionToolParam
 from openai.types.realtime.realtime_response_status import Error as RealtimeResponseStatusError
 from openai.types.realtime.realtime_session_create_request_param import RealtimeSessionCreateRequestParam
@@ -134,6 +135,9 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
     # A reply asked for after tool calls can meet one the provider started itself when the guest spoke. The provider
     # keeps its own reply and refuses the request, which leaves the conversation as it should be.
     TOLERATED_ERROR_CODES: Final[frozenset[str]] = frozenset({"conversation_already_has_active_response"})
+    REPLY_PURPOSE_METADATA_KEY: Final[str] = "reply_purpose"
+    FAREWELL_REPLY_PURPOSE: Final[str] = "farewell"
+    FAREWELL_REQUEST_EVENT_ID_PREFIX: Final[str] = "farewell_"
 
     def __init__(self, connection: AsyncRealtimeConnection, voice_session_settings: VoiceSessionSettings) -> None:
         self._connection: AsyncRealtimeConnection | None = connection
@@ -168,11 +172,20 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
 
     @override
     async def request_greeting(self, greeting_instructions: str) -> None:
-        await self._request_reply_with_instructions(greeting_instructions, "requesting the greeting")
+        await self._request_reply({"instructions": self._compose_reply_instructions(greeting_instructions)}, omit, "requesting the greeting")
 
     @override
     async def request_farewell(self, farewell_instructions: str) -> None:
-        await self._request_reply_with_instructions(farewell_instructions, "requesting the farewell")
+        # The farewell is marked twice: its reply carries metadata that comes back when it ends, and its request carries an
+        # event id that comes back if the provider refuses it.
+        await self._request_reply(
+            {
+                "instructions": self._compose_reply_instructions(farewell_instructions),
+                "metadata": {self.REPLY_PURPOSE_METADATA_KEY: self.FAREWELL_REPLY_PURPOSE},
+            },
+            f"{self.FAREWELL_REQUEST_EVENT_ID_PREFIX}{uuid.uuid4().hex}",
+            "requesting the farewell",
+        )
 
     @override
     async def request_next_reply(self) -> None:
@@ -228,11 +241,16 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
         except (OpenAIError, WebSocketException, OSError) as provider_error:
             self._raise_connection_failure(provider_error, "closing the session", LogEventRealtimeVoice.SESSION_CLOSE)
 
-    async def _request_reply_with_instructions(self, reply_instructions: str, operation_description: str) -> None:
+    def _compose_reply_instructions(self, reply_instructions: str) -> str:
         # Instructions given with one reply replace the session's for that reply, so the standing ones go with them.
+        return f"{self._voice_session_settings.agent_instructions}\n\n{reply_instructions}"
+
+    async def _request_reply(
+        self, response_create_params: RealtimeResponseCreateParamsParam, request_event_id: str | Omit, operation_description: str
+    ) -> None:
         connection: AsyncRealtimeConnection = self._get_open_connection()
         try:
-            await connection.response.create(response={"instructions": f"{self._voice_session_settings.agent_instructions}\n\n{reply_instructions}"})
+            await connection.response.create(response=response_create_params, event_id=request_event_id)
         except (OpenAIError, WebSocketException, OSError) as provider_error:
             self._raise_connection_failure(provider_error, operation_description, LogEventRealtimeVoice.AGENT_RESPONSE_REQUEST)
 
@@ -295,6 +313,14 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
                 )
 
     @classmethod
+    def _is_farewell_reply(cls, reply_metadata: Mapping[str, str] | None) -> bool:
+        return reply_metadata is not None and reply_metadata.get(cls.REPLY_PURPOSE_METADATA_KEY) == cls.FAREWELL_REPLY_PURPOSE
+
+    @classmethod
+    def _is_farewell_request(cls, request_event_id: str | None) -> bool:
+        return request_event_id is not None and request_event_id.startswith(cls.FAREWELL_REQUEST_EVENT_ID_PREFIX)
+
+    @classmethod
     def _to_voice_session_event(cls, server_event: RealtimeServerEvent) -> VoiceSessionEvent | None:
         match server_event.type:
             case "response.output_audio.delta":
@@ -311,11 +337,14 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
             case "response.done":
                 if server_event.response.status == "failed":
                     raise cls._translate_failed_response(server_event.response.status_details)
-                return AgentTurnFinished()
+                return AgentTurnFinished(ended_farewell=cls._is_farewell_reply(server_event.response.metadata))
             case "error":
                 if server_event.error.code in cls.TOLERATED_ERROR_CODES:
                     return SpeechProviderErrorTolerated(
-                        error_type=server_event.error.type, error_code=server_event.error.code, error_message=server_event.error.message
+                        error_type=server_event.error.type,
+                        error_code=server_event.error.code,
+                        error_message=server_event.error.message,
+                        refused_farewell=cls._is_farewell_request(server_event.error.event_id),
                     )
                 raise TranslatorOpenAIRealtimeExceptions.translate_reported_error(
                     error_type=server_event.error.type,
