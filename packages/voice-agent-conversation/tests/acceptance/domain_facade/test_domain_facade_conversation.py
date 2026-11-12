@@ -84,6 +84,7 @@ OPERATION_CONTEXT_NAME: Final[str] = "RealtimeVoice.Operation"
 PROVIDER_ERROR_TYPE_CONTEXT_NAME: Final[str] = "RealtimeVoice.ProviderErrorType"
 PROVIDER_ERROR_CODE_CONTEXT_NAME: Final[str] = "RealtimeVoice.ProviderErrorCode"
 PROVIDER_ERROR_MESSAGE_CONTEXT_NAME: Final[str] = "RealtimeVoice.ProviderErrorMessage"
+CONNECTION_ERROR_TYPE_CONTEXT_NAME: Final[str] = "RealtimeVoice.ErrorType"
 CONVERSATION_ID_CONTEXT_NAME: Final[str] = "Conversation.Id"
 # The guest never hangs up; the call ends by itself first.
 CONVERSATION_EVENTS_NEVER_HUNG_UP_ON: Final[int] = 99
@@ -98,7 +99,6 @@ class ProviderFailureScenario:
 
 
 def describe_spoken_local_now(restaurant_local_now: datetime) -> str:
-    # How a host would say the restaurant's date and time aloud, without zero padding.
     spoken_hour: int = restaurant_local_now.hour % 12 or 12
     return (
         f"{restaurant_local_now:%A, %B} {restaurant_local_now.day}, {restaurant_local_now.year}, "
@@ -163,11 +163,16 @@ class TestConversation:
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
             aclosing(domain_facade.converse(conversation_request, first_guest_microphone.stream_guest_side_events())) as first_conversation,
             aclosing(domain_facade.converse(conversation_request, second_guest_microphone.stream_guest_side_events())) as second_conversation,
+            # Entered last, so it ends both calls before their conversations are closed, even when one of them fails.
+            asyncio.TaskGroup() as task_group,
         ):
-            actual_conversation_events_by_call: list[list[ConversationEvent]] = await asyncio.gather(
-                first_guest_microphone.take_part(first_conversation, first_guest_audio_chunks),
-                second_guest_microphone.take_part(second_conversation, second_guest_audio_chunks),
+            first_call: asyncio.Task[list[ConversationEvent]] = task_group.create_task(
+                first_guest_microphone.take_part(first_conversation, first_guest_audio_chunks)
             )
+            second_call: asyncio.Task[list[ConversationEvent]] = task_group.create_task(
+                second_guest_microphone.take_part(second_conversation, second_guest_audio_chunks)
+            )
+        actual_conversation_events_by_call: list[list[ConversationEvent]] = [first_call.result(), second_call.result()]
 
         AsserterConversation.assert_conversation_events_are_as_expected(
             expected_conversation_events=[*expected_conversation_events, *expected_conversation_events],
@@ -531,7 +536,12 @@ class TestConversationProviderFailures:
                 severity=Severity.ERROR,
                 log_event=LogEventRealtimeVoice.SESSION_OPEN,
             ),
-            contextual_data_by_name={OPERATION_CONTEXT_NAME: CONNECT_OPERATION, "RealtimeVoice.HttpStatusCode": refusal_status.value},
+            # The handshake refusal is the websockets library's InvalidStatus; its text is the library's own, so only its type is pinned.
+            contextual_data_by_name={
+                OPERATION_CONTEXT_NAME: CONNECT_OPERATION,
+                CONNECTION_ERROR_TYPE_CONTEXT_NAME: "InvalidStatus",
+                "RealtimeVoice.HttpStatusCode": refusal_status.value,
+            },
             absent_phrases=[SCRIPTED_SERVICE_API_KEY],
         )
         expected_provider_session_count: int = 0
