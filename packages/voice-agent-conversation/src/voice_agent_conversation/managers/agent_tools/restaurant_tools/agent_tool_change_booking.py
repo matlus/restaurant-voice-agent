@@ -17,6 +17,7 @@ class ChangeBookingInput(BaseModel):
     reservation_time: str | None = Field(default=None, description="A new time, as 24-hour HH:MM. Leave out to keep the current time.")
     party_size: int | None = Field(default=None, description="A new number of people. Leave out to keep it.")
     notes: str | None = Field(default=None, description="New notes for the restaurant. Leave out to keep the current notes.")
+    clear_notes: bool = Field(default=False, description="True to remove the booking's notes, when the caller asks for that.")
 
 
 @final
@@ -54,6 +55,7 @@ class AgentToolChangeBooking(AgentToolBase[ChangeBookingInput, BookingSummary]):
                 reservation_time=tool_input.reservation_time,
                 party_size=tool_input.party_size,
                 notes=tool_input.notes,
+                clear_notes=tool_input.clear_notes,
             )
         )
         return BookingAnswerMapping.to_booking_summary(changed_reservation)

@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import final
 
+from voice_agent_conversation.managers.agent_tools.restaurant_tools.spoken_answers.spoken_forms import SpokenForms
 from voice_agent_restaurant import Reservation
 
 
@@ -9,7 +10,7 @@ from voice_agent_restaurant import Reservation
 @dataclass(frozen=True)
 class BookingSummary:
     """What the agent may say about a booking the caller found, changed or cancelled: when, and for how many. The time
-    is 24-hour HH:MM, the form the by-details tools take back, so a looked-up booking can be named exactly as given.
+    is spoken, such as '7:30 PM'; the by-details tools take it back as 24-hour HH:MM.
 
     It leaves out the confirmation code, so a booking found without the code never reveals it, and the name, phone number
     and notes, which a guest wrote and the agent has no need to read back.
@@ -40,7 +41,9 @@ class BookingAnswerMapping:
     @staticmethod
     def to_booking_summary(reservation: Reservation) -> BookingSummary:
         return BookingSummary(
-            reservation_date=reservation.reservation_date, reservation_time=f"{reservation.starts_at:%H:%M}", party_size=reservation.party_size
+            reservation_date=reservation.reservation_date,
+            reservation_time=SpokenForms.speak_time(reservation.starts_at),
+            party_size=reservation.party_size,
         )
 
     @staticmethod
@@ -49,7 +52,7 @@ class BookingAnswerMapping:
             confirmation_code=reservation.confirmation_code,
             guest_name=reservation.guest_name,
             reservation_date=reservation.reservation_date,
-            reservation_time=f"{reservation.starts_at:%H:%M}",
+            reservation_time=SpokenForms.speak_time(reservation.starts_at),
             party_size=reservation.party_size,
             notes=reservation.notes,
         )

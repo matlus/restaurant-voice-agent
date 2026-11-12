@@ -35,7 +35,7 @@ phone, like "5 to 10 PM", not "17:00".
 - **Book** with a name and phone number. Before booking, the agent checks the details in one short line and waits for
   a yes. It then gives a six-character confirmation code, slowly, one character at a time.
 - **Find bookings** by the phone number, name and date they are under, for a caller who doesn't have their code.
-- **Change** the date, time, party size or notes of a booking.
+- **Change** the date, time, party size or notes of a booking, or remove its notes.
 - **Cancel** a booking.
 
 To change or cancel, the confirmation code alone is enough. A caller who doesn't have it gives the phone number, the

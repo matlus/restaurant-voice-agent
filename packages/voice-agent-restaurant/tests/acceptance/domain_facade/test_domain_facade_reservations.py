@@ -117,6 +117,8 @@ def create_change_request(
     reservation_time: str | None = None,
     party_size: int | None = None,
     notes: str | None = None,
+    *,
+    clear_notes: bool = False,
 ) -> ReservationChangeRequest:
     return ReservationChangeRequest(
         booking_reference=ConfirmationCodeReference(confirmation_code=confirmation_code, phone_number=phone_number),
@@ -124,6 +126,7 @@ def create_change_request(
         reservation_time=reservation_time,
         party_size=party_size,
         notes=notes,
+        clear_notes=clear_notes,
     )
 
 
@@ -286,7 +289,7 @@ def retrieve_smallest_fitting_table_id(party_size: int) -> str:
     """The table a new booking takes when every table is free: the fewest seats that hold the party, then the lowest table id."""
     fitting_tables: list[SeededTable] = [seeded_table for seeded_table in read_seeded_tables() if seeded_table.seats >= party_size]
     assert fitting_tables, f"The seeded tables must hold a party of {party_size}; the seeded data no longer supports this scenario"
-    return min(fitting_tables, key=lambda fitting_table: (fitting_table.seats, fitting_table.table_id)).table_id
+    return min(fitting_tables, key=lambda seeded_table: (seeded_table.seats, seeded_table.table_id)).table_id
 
 
 def retrieve_seeded_open_weekday(seeded_restaurant: SeededRestaurant, weekday: Weekday) -> SeededOpenWeekday:
@@ -1083,6 +1086,42 @@ class TestChangeReservation:
 
         assert actual_changed_reservation == expected_reservation
 
+    async def test_ChangeReservation_WhenTheGuestAsksToClearTheNotes_ThenTheBookingHasNoNotesAndKeepsEverythingElse(
+        self, restaurant_database_path: Path
+    ) -> None:
+        async with create_domain_facade(restaurant_database_path) as domain_facade:
+            current_reservation: Reservation = await retrieve_unstarted_seeded_booking(
+                domain_facade, SEEDED_PRIYA_PHONE, "Clearing a booking's notes"
+            )
+            annotated_reservation: Reservation = await domain_facade.change_reservation(
+                create_change_request(current_reservation.confirmation_code, SEEDED_PRIYA_PHONE, notes=create_generated_note())
+            )
+            expected_reservation: Reservation = replace(annotated_reservation, notes=None)
+            actual_changed_reservation: Reservation = await domain_facade.change_reservation(
+                create_change_request(current_reservation.confirmation_code, SEEDED_PRIYA_PHONE, clear_notes=True)
+            )
+
+        assert actual_changed_reservation == expected_reservation
+
+    async def test_ChangeReservation_WhenNewNotesAndClearingAreBothAsked_ThenTheRequestIsRefused(self, restaurant_database_path: Path) -> None:
+        expected_problem_phrases: list[str] = ["cannot both be given"]
+        expected_exception_metadata: ExpectedExceptionMetadata = create_validation_refusal_metadata()
+        expected_contextual_data_by_name: dict[str, int] = {RESERVATION_PROBLEM_COUNT_CONTEXT_NAME: len(expected_problem_phrases)}
+
+        async with create_domain_facade(restaurant_database_path) as domain_facade:
+            current_reservation: Reservation = await retrieve_seeded_booking(domain_facade, SEEDED_PRIYA_PHONE)
+            with pytest.raises(ReservationRequestValidationException) as raised:
+                await domain_facade.change_reservation(
+                    create_change_request(current_reservation.confirmation_code, SEEDED_PRIYA_PHONE, notes=create_generated_note(), clear_notes=True)
+                )
+
+        AsserterException.assert_validation_problems_are_as_expected(
+            expected_problem_phrases=expected_problem_phrases,
+            expected_exception_metadata=expected_exception_metadata,
+            expected_contextual_data_by_name=expected_contextual_data_by_name,
+            actual_validation_exception=raised.value,
+        )
+
     async def test_ChangeReservation_WhenTheNewTimeHasNoFittingTable_ThenTheBookingIsUnchangedAndOpenTimesAreOffered(
         self, restaurant_database_path: Path
     ) -> None:
@@ -1388,14 +1427,20 @@ class TestCancelReservation:
                 f"Cancelling to free a table needs booking {current_reservation.confirmation_code} to hold a party of {freed_party_size} at "
                 f"{freed_seating_time:%H:%M} on {BUSY_FRIDAY}; the seeded data no longer supports this scenario: {current_reservation!r}"
             )
+            freed_seating_availability_request: AvailabilityRequest = AvailabilityRequest(
+                reservation_date=BUSY_FRIDAY, reservation_time=f"{freed_seating_time:%H:%M}", party_size=freed_party_size
+            )
+            availability_result_before_cancelling: AvailabilityResult = await domain_facade.check_availability(freed_seating_availability_request)
+            assert not availability_result_before_cancelling.is_available, (
+                f"Cancelling to free a table needs every table for {freed_party_size} taken at {freed_seating_time:%H:%M} on {BUSY_FRIDAY} "
+                f"before the cancellation; the seeded data no longer supports this scenario: {availability_result_before_cancelling!r}"
+            )
             expected_cancelled_reservation: Reservation = replace(current_reservation, reservation_status=ReservationStatus.CANCELLED)
             actual_cancelled_reservation: Reservation = await domain_facade.cancel_reservation(
                 create_code_cancellation_request(current_reservation.confirmation_code, SEEDED_PRIYA_PHONE)
             )
             actual_found_reservations: list[Reservation] = await domain_facade.find_reservations(create_booking_search_request(current_reservation))
-            actual_availability_result: AvailabilityResult = await domain_facade.check_availability(
-                AvailabilityRequest(reservation_date=BUSY_FRIDAY, reservation_time=f"{freed_seating_time:%H:%M}", party_size=freed_party_size)
-            )
+            actual_availability_result: AvailabilityResult = await domain_facade.check_availability(freed_seating_availability_request)
 
         assert actual_cancelled_reservation == expected_cancelled_reservation
         assert actual_found_reservations == expected_found_reservations

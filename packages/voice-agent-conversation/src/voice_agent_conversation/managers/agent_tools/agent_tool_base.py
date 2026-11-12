@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 
 import pydantic_core
 from pydantic import BaseModel, ValidationError
+from pydantic_core import ErrorDetails
 
 from voice_agent_conversation.managers.exceptions.agent_tool_exceptions import AgentToolArgumentsInvalidException
 from voice_agent_conversation.managers.models.conversation_models import AgentToolDefinition, JsonSchema
@@ -42,6 +43,16 @@ class AgentToolBase[TToolInput: BaseModel, TToolOutput](ABC):
         try:
             tool_input: TToolInput = self.input_model.model_validate_json(arguments_json)
         except ValidationError as validation_error:
-            raise AgentToolArgumentsInvalidException(self.name, str(validation_error)) from validation_error
+            raise AgentToolArgumentsInvalidException(self.name, self._describe_validation_problems(validation_error)) from validation_error
         tool_output: TToolOutput = await self.run(tool_input)
         return pydantic_core.to_json(tool_output).decode("utf-8")
+
+    @staticmethod
+    def _describe_validation_problems(validation_error: ValidationError) -> str:
+        """Each problem as its field and what is wrong with it. The model reads this, so it leaves out Pydantic's echo of
+        the value it sent and its documentation links."""
+        error_details: list[ErrorDetails] = validation_error.errors(include_url=False, include_input=False, include_context=False)
+        return "; ".join(
+            f"'{'.'.join(str(location_part) for location_part in error_detail['loc']) or 'arguments'}': {error_detail['msg']}"
+            for error_detail in error_details
+        )
