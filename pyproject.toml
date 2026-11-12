@@ -17,6 +17,8 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=4.0.0",
+    "playwright>=1.65.1",
+    "pytest-timeout>=2.4.0",
 ]
 
 [tool.uv]
@@ -232,6 +234,8 @@ python_functions = ["test_*"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra --strict-config --strict-markers --import-mode=importlib"
+# A hung test fails instead of stalling the run. The slowest test takes a few seconds.
+timeout = 60
 norecursedirs = [
     ".git",
     ".venv",

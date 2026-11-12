@@ -232,9 +232,10 @@ enforce.
 
 ### Checks
 
-Run these from the repository root before committing:
+Run these from the repository root before committing. The browser tests need Chromium, which Playwright installs once:
 
 ```bash
+uv run --all-packages --all-groups playwright install chromium
 uv run --all-packages --all-groups ruff check .
 uv run --all-packages --all-groups ruff format --check .
 uv run --all-packages --all-groups pyright
@@ -252,6 +253,12 @@ public `DomainFacade` the way a real caller would, against a real SQLite store s
 the real OpenAI gateway connects over a real WebSocket to a scripted Realtime service that the tests run on the local
 machine. That service plays back the events a real session would send, including tool calls, and records what the
 gateway sent in reply.
+
+The browser tests (`apps/voice-agent-web/tests/browser`) load the real page in headless Chromium with a fake
+microphone. They start and end a call, check that the guest's speech arrives, show the server's reason when a call
+fails, and recover from a double click on the call button. To use a Chromium you already have, set
+`VOICE_AGENT_TEST_CHROMIUM_PATH` to its executable. Every test has a 60-second limit, so a hung test fails instead of
+stalling the run.
 
 ### How the code is organized
 
