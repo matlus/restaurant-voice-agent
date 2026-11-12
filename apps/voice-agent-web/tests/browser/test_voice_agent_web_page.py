@@ -77,14 +77,15 @@ class TestVoiceAgentWebPage:
             create_page_host(realtime_voice_service_scripted, tmp_path) as page_host,
         ):
             page: Page = open_call_page(browser, page_host)
-            status_line: Locator = page.locator("#status")
-            page.locator("#call-button").click()
-            expect(status_line).to_have_text(CONNECTED_STATUS)
+            status_line_locator: Locator = page.locator("#status")
+            call_button_locator: Locator = page.locator("#call-button")
+            call_button_locator.click()
+            expect(status_line_locator).to_have_text(CONNECTED_STATUS)
             actual_guest_was_heard: bool = observe_voice_service(
                 page, lambda: bool(realtime_voice_service_scripted.captured_realtime_sessions[0].guest_audio)
             )
-            page.locator("#call-button").click()
-            expect(status_line).to_have_text(ENDED_STATUS)
+            call_button_locator.click()
+            expect(status_line_locator).to_have_text(ENDED_STATUS)
             # Looked for while the host still runs: stopping the host would close the session whatever the page did.
             actual_session_was_closed: bool = observe_voice_service(
                 page, lambda: realtime_voice_service_scripted.captured_realtime_sessions[0].was_closed_by_client
@@ -101,28 +102,41 @@ class TestVoiceAgentWebPage:
             create_page_host(realtime_voice_service_scripted, tmp_path) as page_host,
         ):
             page: Page = open_call_page(browser, page_host)
-            page.locator("#call-button").click()
+            call_button_locator: Locator = page.locator("#call-button")
+            call_button_locator.click()
 
             expect(page.locator("#status")).to_have_text(PROVIDER_ACCESS_DENIED_REASON)
-            expect(page.locator("#call-button")).to_have_attribute("data-state", IDLE_STATE)
+            expect(call_button_locator).to_have_attribute("data-state", IDLE_STATE)
 
     def test_Page_WhenTheGuestDoubleClicksTheButton_ThenTheSecondClickCancelsTheCallAndTheNextCallConnects(
         self, browser: Browser, tmp_path: Path
     ) -> None:
+        expected_every_session_was_closed: bool = True
+
         with (
             RealtimeVoiceServiceScripted() as realtime_voice_service_scripted,
             create_page_host(realtime_voice_service_scripted, tmp_path) as page_host,
         ):
             page: Page = open_call_page(browser, page_host)
-            status_line: Locator = page.locator("#status")
-            page.locator("#call-button").dblclick()
-            expect(status_line).to_have_text(ENDED_STATUS)
-            page.locator("#call-button").click()
-            expect(status_line).to_have_text(CONNECTED_STATUS)
-            page.locator("#call-button").click()
-            expect(status_line).to_have_text(ENDED_STATUS)
+            status_line_locator: Locator = page.locator("#status")
+            call_button_locator: Locator = page.locator("#call-button")
+            call_button_locator.dblclick()
+            expect(status_line_locator).to_have_text(ENDED_STATUS)
+            call_button_locator.click()
+            expect(status_line_locator).to_have_text(CONNECTED_STATUS)
+            call_button_locator.click()
+            expect(status_line_locator).to_have_text(ENDED_STATUS)
+            # Every session the page opened, the cancelled one included, was closed by the page. Looked for while the
+            # host still runs, as stopping it would close them all whatever the page did.
+            actual_every_session_was_closed: bool = observe_voice_service(
+                page,
+                lambda: (
+                    bool(realtime_voice_service_scripted.captured_realtime_sessions)
+                    and all(
+                        captured_realtime_session.was_closed_by_client
+                        for captured_realtime_session in realtime_voice_service_scripted.captured_realtime_sessions
+                    )
+                ),
+            )
 
-        # Every session the page opened was closed by the page, the cancelled one included.
-        assert all(
-            captured_realtime_session.was_closed_by_client for captured_realtime_session in realtime_voice_service_scripted.captured_realtime_sessions
-        )
+        assert actual_every_session_was_closed == expected_every_session_was_closed

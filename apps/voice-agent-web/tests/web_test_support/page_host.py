@@ -32,12 +32,19 @@ class PageHost:
         deadline: float = time.monotonic() + PAGE_HOST_START_TIMEOUT_SECONDS
         while not self._server.started:
             if not self._server_thread.is_alive() or time.monotonic() > deadline:
+                # __exit__ does not run when __enter__ fails, so a server that starts late is stopped here.
+                self._stop_server()
                 raise RuntimeError("The page host did not start listening.")
             time.sleep(PAGE_HOST_START_POLL_SECONDS)
+        # Port 0 lets the system choose a free port, and uvicorn offers no public way to read it back, so it is read
+        # from the listening socket's (host, port) address.
         self._port = self._server.servers[0].sockets[0].getsockname()[1]
         return self
 
     def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None) -> None:
+        self._stop_server()
+
+    def _stop_server(self) -> None:
         self._server.should_exit = True
         self._server_thread.join(PAGE_HOST_STOP_TIMEOUT_SECONDS)
         if self._server_thread.is_alive():
