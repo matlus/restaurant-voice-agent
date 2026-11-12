@@ -55,6 +55,7 @@ def create_app(
             Middleware(create_call_admission, maximum_concurrent_calls=call_slot_count),
         ],
         routes=[
+            Route("/healthz", conversation_handler.check_health, methods=["GET"]),
             Route("/voices", conversation_handler.list_voices, methods=["GET"]),
             WebSocketRoute("/conversation", conversation_handler.hold_conversation),
             Mount("/", StaticAssetsApp(static_folder)),

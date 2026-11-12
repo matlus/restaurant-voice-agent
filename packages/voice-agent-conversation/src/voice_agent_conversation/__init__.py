@@ -27,6 +27,8 @@ from voice_agent_conversation.managers.exceptions.voice_agent_conversation_excep
 from voice_agent_conversation.managers.models.conversation_models import (
     AgentSpeechChunk,
     AgentSpeechCutOff,
+    AgentToolCallAnswered,
+    AgentToolCallOutcome,
     AgentTurnFinished,
     CallLimit,
     CallLimitReached,
@@ -47,6 +49,8 @@ from voice_agent_conversation.managers.models.conversation_models import (
 __all__ = [
     "AgentSpeechChunk",
     "AgentSpeechCutOff",
+    "AgentToolCallAnswered",
+    "AgentToolCallOutcome",
     "AgentToolCallRepairsExhaustedException",
     "AgentTurnFinished",
     "CallLimit",

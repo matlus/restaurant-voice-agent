@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Final
 
 import pytest
-from conversation_acceptance_support.asserters.asserter_conversation import AsserterConversation
+from conversation_acceptance_support.asserters.asserter_conversation import ANY_CONVERSATION_ID, AsserterConversation
 from conversation_acceptance_support.asserters.asserter_exception import AsserterException, ExpectedExceptionContent, ExpectedExceptionMetadata
 from conversation_acceptance_support.bundled_voice_catalog import read_catalog_voice_option
 from conversation_acceptance_support.guest_microphone import GREETING_EVENT_COUNT, GuestMicrophone
@@ -55,7 +55,9 @@ PROVIDER_CONVERSATION_AUDIO_FORMAT: Final[ConversationAudioFormat] = Conversatio
     guest_audio_sample_rate_hz=24_000, agent_audio_sample_rate_hz=24_000
 )
 GREETING_EVENTS: Final[list[ConversationEvent]] = [
-    ConversationStarted(conversation_audio_format=PROVIDER_CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+    ConversationStarted(
+        conversation_id=ANY_CONVERSATION_ID, conversation_audio_format=PROVIDER_CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION
+    ),
     AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
     AgentTurnFinished(),
 ]

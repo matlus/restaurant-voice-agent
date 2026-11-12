@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Final
 
 import pytest
-from conversation_acceptance_support.asserters.asserter_conversation import AsserterConversation
+from conversation_acceptance_support.asserters.asserter_conversation import ANY_CONVERSATION_ID, AsserterConversation
 from conversation_acceptance_support.asserters.asserter_exception import AsserterException, ExpectedExceptionContent, ExpectedExceptionMetadata
 from conversation_acceptance_support.bundled_voice_catalog import read_catalog_voice_option
 from conversation_acceptance_support.generated_guests import GeneratedGuest, create_generated_guest, create_generated_note
@@ -30,6 +30,8 @@ from conversation_acceptance_support.service_locator_testing import create_domai
 
 from voice_agent_conversation import (
     AgentSpeechChunk,
+    AgentToolCallAnswered,
+    AgentToolCallOutcome,
     AgentToolCallRepairsExhaustedException,
     AgentTurnFinished,
     ConversationAudioFormat,
@@ -73,13 +75,14 @@ KETO_SEARCH_ARGUMENTS_JSON: Final[str] = '{"diet_labels": ["keto"]}'
 WRONG_CALLS_ALLOWED_IN_A_ROW: Final[int] = 3
 TECHNICAL_FAILURE_HTTP_STATUS_CODE: Final[int] = 500
 GREETING_EVENTS: Final[list[ConversationEvent]] = [
-    ConversationStarted(conversation_audio_format=PROVIDER_CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+    ConversationStarted(
+        conversation_id=ANY_CONVERSATION_ID, conversation_audio_format=PROVIDER_CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION
+    ),
     AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
     AgentTurnFinished(),
 ]
 # The reply the agent gives once its tool call is answered.
-ANSWER_EVENTS: Final[list[ConversationEvent]] = [AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO), AgentTurnFinished()]
-EXPECTED_CONVERSATION_EVENTS: Final[list[ConversationEvent]] = GREETING_EVENTS + ANSWER_EVENTS
+REPLY_EVENTS: Final[list[ConversationEvent]] = [AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO), AgentTurnFinished()]
 TOMORROWS_BOOKING_TIME: Final[str] = "19:00"
 TOMORROWS_BOOKING_PARTY_SIZE: Final[int] = 2
 RESTAURANT_TOOL_NAMES: Final[tuple[str, ...]] = (
@@ -124,8 +127,33 @@ class BookingConfirmationDetails:
     notes: str | None
 
 
+def create_answer_events(tool_name: str, agent_tool_call_outcome: AgentToolCallOutcome) -> list[ConversationEvent]:
+    """The tool call the host records, then the reply the agent gives once it is answered."""
+    return [AgentToolCallAnswered(tool_name=tool_name, agent_tool_call_outcome=agent_tool_call_outcome), *REPLY_EVENTS]
+
+
+@dataclass(frozen=True)
+class SeparatedConversationEvents:
+    """A call's events with the recorded tool calls taken out, and those tool calls in their own order. When several
+    questions arrive together the two interleave as the calls are answered, but each keeps its order."""
+
+    other_conversation_events: list[ConversationEvent]
+    agent_tool_calls_answered: list[AgentToolCallAnswered]
+
+
+def separate_agent_tool_calls(conversation_events: list[ConversationEvent]) -> SeparatedConversationEvents:
+    return SeparatedConversationEvents(
+        other_conversation_events=[
+            conversation_event for conversation_event in conversation_events if not isinstance(conversation_event, AgentToolCallAnswered)
+        ],
+        agent_tool_calls_answered=[
+            conversation_event for conversation_event in conversation_events if isinstance(conversation_event, AgentToolCallAnswered)
+        ],
+    )
+
+
 def count_events_after_answers(answer_count: int) -> int:
-    return len(GREETING_EVENTS) + len(ANSWER_EVENTS) * answer_count
+    return len(GREETING_EVENTS) + (1 + len(REPLY_EVENTS)) * answer_count
 
 
 def collect_tool_outputs(realtime_voice_service_scripted: RealtimeVoiceServiceScripted) -> list[CapturedToolOutput]:
@@ -233,6 +261,10 @@ class TestAgentTools:
         self, restaurant_database_path: Path
     ) -> None:
         guest_microphone: GuestMicrophone = GuestMicrophone()
+        expected_conversation_events: list[ConversationEvent] = [
+            *GREETING_EVENTS,
+            *create_answer_events("search_menu", AgentToolCallOutcome.ANSWERED),
+        ]
         async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
             keto_dishes: list[Dish] = (
                 await restaurant_domain_facade.search_menu(
@@ -268,7 +300,7 @@ class TestAgentTools:
             ["allergen_notice" in actual_tool_answer for actual_tool_answer in actual_tool_answers],
         )
         AsserterConversation.assert_conversation_events_are_as_expected(
-            expected_conversation_events=EXPECTED_CONVERSATION_EVENTS, actual_conversation_events=actual_conversation_events
+            expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
         )
         assert (actual_tool_answer, count_agent_response_requests(realtime_voice_service_scripted)) == (
             expected_tool_answer,
@@ -282,7 +314,16 @@ class TestAgentTools:
         # second start is passed on only after the first tool calling reply has been handled, so a next reply asked for
         # then would already show. The provider answers a talking guest by itself once they finish.
         guest_microphone: GuestMicrophone = GuestMicrophone()
-        expected_conversation_events: list[ConversationEvent] = [*GREETING_EVENTS, GuestStartedSpeaking(), GuestStartedSpeaking()]
+        search_menu_answered: AgentToolCallAnswered = AgentToolCallAnswered(
+            tool_name="search_menu", agent_tool_call_outcome=AgentToolCallOutcome.ANSWERED
+        )
+        expected_conversation_events: list[ConversationEvent] = [
+            *GREETING_EVENTS,
+            GuestStartedSpeaking(),
+            search_menu_answered,
+            GuestStartedSpeaking(),
+            search_menu_answered,
+        ]
         expected_agent_response_request_count: int = 1
 
         async with (
@@ -309,7 +350,11 @@ class TestAgentTools:
         self, restaurant_database_path: Path
     ) -> None:
         guest_microphone: GuestMicrophone = GuestMicrophone()
-        expected_conversation_events: list[ConversationEvent] = [*GREETING_EVENTS, GuestStartedSpeaking(), *ANSWER_EVENTS]
+        expected_conversation_events: list[ConversationEvent] = [
+            *GREETING_EVENTS,
+            GuestStartedSpeaking(),
+            *create_answer_events("search_menu", AgentToolCallOutcome.ANSWERED),
+        ]
         expected_agent_response_request_count: int = 2
 
         async with (
@@ -553,6 +598,10 @@ class TestAgentTools:
         self, restaurant_database_path: Path
     ) -> None:
         guest_microphone: GuestMicrophone = GuestMicrophone()
+        expected_conversation_events: list[ConversationEvent] = [
+            *GREETING_EVENTS,
+            *create_answer_events("check_availability", AgentToolCallOutcome.REFUSED),
+        ]
         async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
             restaurant_local_now: datetime = await restaurant_domain_facade.get_restaurant_local_now()
             closed_date: date = derive_next_closed_date(restaurant_local_now, await restaurant_domain_facade.get_opening_hours())
@@ -577,7 +626,7 @@ class TestAgentTools:
 
         actual_tool_answers: list[AgentToolRefusalAnswer] = read_refusal_answers(realtime_voice_service_scripted)
         AsserterConversation.assert_conversation_events_are_as_expected(
-            expected_conversation_events=EXPECTED_CONVERSATION_EVENTS, actual_conversation_events=actual_conversation_events
+            expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
         )
         assert actual_tool_answers == expected_tool_answers
 
@@ -598,6 +647,7 @@ class TestAgentTools:
         self, restaurant_database_path: Path, tool_name: str, arguments_json: str, expected_problem_phrase: str
     ) -> None:
         guest_microphone: GuestMicrophone = GuestMicrophone()
+        expected_conversation_events: list[ConversationEvent] = [*GREETING_EVENTS, *create_answer_events(tool_name, AgentToolCallOutcome.CORRECTED)]
         expected_call_rejections: list[tuple[bool, bool]] = [(True, True)]
 
         async with (
@@ -617,7 +667,7 @@ class TestAgentTools:
             for tool_answer in (json.loads(actual_tool_output.output) for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted))
         ]
         AsserterConversation.assert_conversation_events_are_as_expected(
-            expected_conversation_events=EXPECTED_CONVERSATION_EVENTS, actual_conversation_events=actual_conversation_events
+            expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
         )
         assert actual_call_rejections == expected_call_rejections
 
@@ -669,7 +719,13 @@ class TestAgentTools:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         guest_question_count: int = WRONG_CALLS_ALLOWED_IN_A_ROW + 1
         answered_call_count: int = guest_question_count * 2
-        expected_conversation_events: list[ConversationEvent] = GREETING_EVENTS + ANSWER_EVENTS * answered_call_count
+        # The questions arrive together, so the replies and the recorded tool calls interleave as the calls are answered;
+        # each keeps its own order.
+        expected_conversation_events: list[ConversationEvent] = GREETING_EVENTS + REPLY_EVENTS * answered_call_count
+        expected_agent_tool_calls_answered: list[AgentToolCallAnswered] = [
+            AgentToolCallAnswered(tool_name=UNKNOWN_TOOL_NAME, agent_tool_call_outcome=AgentToolCallOutcome.CORRECTED),
+            AgentToolCallAnswered(tool_name="search_menu", agent_tool_call_outcome=AgentToolCallOutcome.ANSWERED),
+        ] * guest_question_count
         expected_answered_call_ids: list[str] = [TOOL_CALL_ID, SECOND_TOOL_CALL_ID] * guest_question_count
 
         async with (
@@ -692,10 +748,15 @@ class TestAgentTools:
         actual_answered_call_ids: list[str] = [
             actual_tool_output.call_id for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted)
         ]
+        actual_separated_conversation_events: SeparatedConversationEvents = separate_agent_tool_calls(actual_conversation_events)
         AsserterConversation.assert_conversation_events_are_as_expected(
-            expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
+            expected_conversation_events=expected_conversation_events,
+            actual_conversation_events=actual_separated_conversation_events.other_conversation_events,
         )
-        assert actual_answered_call_ids == expected_answered_call_ids
+        assert (actual_separated_conversation_events.agent_tool_calls_answered, actual_answered_call_ids) == (
+            expected_agent_tool_calls_answered,
+            expected_answered_call_ids,
+        )
 
     @pytest.mark.parametrize(
         ("reservation_time", "party_size", "expected_reason_phrase"),
@@ -708,6 +769,10 @@ class TestAgentTools:
         self, restaurant_database_path: Path, reservation_time: str, party_size: int, expected_reason_phrase: str
     ) -> None:
         guest_microphone: GuestMicrophone = GuestMicrophone()
+        expected_conversation_events: list[ConversationEvent] = [
+            *GREETING_EVENTS,
+            *create_answer_events("check_availability", AgentToolCallOutcome.REFUSED),
+        ]
         availability_request: AvailabilityRequest = await create_tomorrows_availability_request(
             restaurant_database_path, reservation_time, party_size
         )
@@ -731,7 +796,7 @@ class TestAgentTools:
 
         actual_tool_answers: list[AgentToolRefusalAnswer] = read_refusal_answers(realtime_voice_service_scripted)
         AsserterConversation.assert_conversation_events_are_as_expected(
-            expected_conversation_events=EXPECTED_CONVERSATION_EVENTS, actual_conversation_events=actual_conversation_events
+            expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
         )
         assert actual_tool_answers == expected_tool_answers
 
@@ -744,7 +809,10 @@ class TestAgentTools:
         refusal_count: int = WRONG_CALLS_ALLOWED_IN_A_ROW + 1
         availability_request: AvailabilityRequest = await create_tomorrows_availability_request(restaurant_database_path, "19:00", 10)
         policy_refusal: str = await read_policy_refusal(restaurant_database_path, availability_request)
-        expected_conversation_events: list[ConversationEvent] = GREETING_EVENTS + ANSWER_EVENTS * refusal_count
+        expected_conversation_events: list[ConversationEvent] = GREETING_EVENTS + REPLY_EVENTS * refusal_count
+        expected_agent_tool_calls_answered: list[AgentToolCallAnswered] = [
+            AgentToolCallAnswered(tool_name="check_availability", agent_tool_call_outcome=AgentToolCallOutcome.REFUSED)
+        ] * refusal_count
         expected_tool_answers: list[AgentToolRefusalAnswer] = [AgentToolRefusalAnswer(refused=True, reason=policy_refusal)] * refusal_count
 
         async with (
@@ -760,7 +828,12 @@ class TestAgentTools:
             )
 
         actual_tool_answers: list[AgentToolRefusalAnswer] = read_refusal_answers(realtime_voice_service_scripted)
+        actual_separated_conversation_events: SeparatedConversationEvents = separate_agent_tool_calls(actual_conversation_events)
         AsserterConversation.assert_conversation_events_are_as_expected(
-            expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
+            expected_conversation_events=expected_conversation_events,
+            actual_conversation_events=actual_separated_conversation_events.other_conversation_events,
         )
-        assert actual_tool_answers == expected_tool_answers
+        assert (actual_separated_conversation_events.agent_tool_calls_answered, actual_tool_answers) == (
+            expected_agent_tool_calls_answered,
+            expected_tool_answers,
+        )

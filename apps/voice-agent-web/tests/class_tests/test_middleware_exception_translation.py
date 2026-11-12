@@ -67,7 +67,8 @@ def create_http_scope() -> Scope:
 
 
 def count_failure_logs(caplog: pytest.LogCaptureFixture) -> int:
-    return len([log_record for log_record in caplog.records if log_record.name == MIDDLEWARE_LOGGER_NAME and log_record.levelno == logging.ERROR])
+    """How many entries the middleware logged at warning or above: a business refusal is a warning, a fault an error."""
+    return len([log_record for log_record in caplog.records if log_record.name == MIDDLEWARE_LOGGER_NAME and log_record.levelno >= logging.WARNING])
 
 
 def create_voice_not_offered_exception() -> VoiceNotOfferedException:
@@ -88,7 +89,7 @@ class TestMiddlewareExceptionTranslationWebSocket:
         expected_sent_messages: list[Message] = [{"type": "websocket.accept"}]
         expected_failure_log_count: int = 1
 
-        with caplog.at_level(logging.ERROR, logger=MIDDLEWARE_LOGGER_NAME):
+        with caplog.at_level(logging.WARNING, logger=MIDDLEWARE_LOGGER_NAME):
             await middleware_exception_translation(create_websocket_scope(), scripted_asgi_server.receive, scripted_asgi_server.send)
 
         assert (scripted_asgi_server.sent_messages, count_failure_logs(caplog)) == (expected_sent_messages, expected_failure_log_count)
@@ -104,7 +105,7 @@ class TestMiddlewareExceptionTranslationWebSocket:
         expected_sent_messages: list[Message] = [{"type": "websocket.accept"}]
         expected_failure_log_count: int = 1
 
-        with caplog.at_level(logging.ERROR, logger=MIDDLEWARE_LOGGER_NAME):
+        with caplog.at_level(logging.WARNING, logger=MIDDLEWARE_LOGGER_NAME):
             await middleware_exception_translation(create_websocket_scope(), scripted_asgi_server.receive, scripted_asgi_server.send)
 
         assert (scripted_asgi_server.sent_messages, count_failure_logs(caplog)) == (expected_sent_messages, expected_failure_log_count)
@@ -127,7 +128,7 @@ class TestMiddlewareExceptionTranslationWebSocket:
         ]
         expected_failure_log_count: int = 1
 
-        with caplog.at_level(logging.ERROR, logger=MIDDLEWARE_LOGGER_NAME):
+        with caplog.at_level(logging.WARNING, logger=MIDDLEWARE_LOGGER_NAME):
             await middleware_exception_translation(create_websocket_scope(), scripted_asgi_server.receive, scripted_asgi_server.send)
 
         assert (scripted_asgi_server.sent_messages, count_failure_logs(caplog)) == (expected_sent_messages, expected_failure_log_count)
@@ -160,7 +161,7 @@ class TestMiddlewareExceptionTranslationWebSocket:
         }
         expected_unexpected_failure_log_count: int = 1
 
-        with caplog.at_level(logging.ERROR, logger=MIDDLEWARE_LOGGER_NAME):
+        with caplog.at_level(logging.WARNING, logger=MIDDLEWARE_LOGGER_NAME):
             await middleware_exception_translation(create_websocket_scope(), scripted_asgi_server.receive, scripted_asgi_server.send)
 
         actual_unexpected_failure_log_count: int = len([log_record for log_record in caplog.records if "unexpectedly" in log_record.getMessage()])
@@ -183,7 +184,7 @@ class TestMiddlewareExceptionTranslationHttp:
         expected_request_context: str = f"http {VOICES_PATH}"
         expected_failure_log_count: int = 1
 
-        with caplog.at_level(logging.ERROR, logger=MIDDLEWARE_LOGGER_NAME):
+        with caplog.at_level(logging.WARNING, logger=MIDDLEWARE_LOGGER_NAME):
             await middleware_exception_translation(create_http_scope(), scripted_asgi_server.receive, scripted_asgi_server.send)
 
         actual_status_code: int = scripted_asgi_server.sent_messages[0]["status"]
@@ -211,3 +212,30 @@ class TestMiddlewareExceptionTranslationHttp:
             actual_header_value_by_name[b"exception-type"],
             INTERNAL_FAILURE_DETAIL in bytes(actual_response_body["body"]).decode("utf-8"),
         ) == (expected_status_code, expected_exception_type_header, expected_internal_detail_is_sent)
+
+    @pytest.mark.parametrize(
+        ("escaped_exception", "expected_logged_level"),
+        [
+            pytest.param(create_voice_not_offered_exception(), (logging.WARNING, False), id="business-refusal-is-a-warning-without-traceback"),
+            pytest.param(
+                RealtimeVoiceProviderUnavailableException("The provider is down.", LogEventRealtimeVoice.SESSION_OPEN),
+                (logging.ERROR, False),
+                id="technical-failure-is-an-error",
+            ),
+            pytest.param(RuntimeError(INTERNAL_FAILURE_DETAIL), (logging.ERROR, True), id="unexpected-failure-is-an-error-with-traceback"),
+        ],
+    )
+    async def test_Call_WhenARequestFails_ThenTheFailureIsLoggedOnceAtTheLevelItsKindWarrants(
+        self, caplog: pytest.LogCaptureFixture, escaped_exception: Exception, expected_logged_level: tuple[int, bool]
+    ) -> None:
+        scripted_asgi_server: ScriptedAsgiServer = ScriptedAsgiServer([{"type": "http.request", "body": b"", "more_body": False}])
+        middleware_exception_translation: MiddlewareExceptionTranslation = MiddlewareExceptionTranslation(create_app_that_fails(escaped_exception))
+        expected_logged_levels: list[tuple[int, bool]] = [expected_logged_level]
+
+        with caplog.at_level(logging.DEBUG, logger=MIDDLEWARE_LOGGER_NAME):
+            await middleware_exception_translation(create_http_scope(), scripted_asgi_server.receive, scripted_asgi_server.send)
+
+        actual_logged_levels: list[tuple[int, bool]] = [
+            (log_record.levelno, log_record.exc_info is not None) for log_record in caplog.records if log_record.name == MIDDLEWARE_LOGGER_NAME
+        ]
+        assert actual_logged_levels == expected_logged_levels

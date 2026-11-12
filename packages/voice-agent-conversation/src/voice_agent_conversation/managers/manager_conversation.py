@@ -1,15 +1,17 @@
 import asyncio
 import contextlib
+import uuid
 from collections.abc import AsyncGenerator, AsyncIterable, Callable
 from datetime import datetime
 from types import TracebackType
-from typing import Self
+from typing import Final, Self
 
 from voice_agent_conversation.managers.agent_tools.agent_toolbox import AgentToolbox, AgentToolCallAnswer
 from voice_agent_conversation.managers.configuration_providers.configuration_provider import ConfigurationProvider
 from voice_agent_conversation.managers.configuration_providers.settings_models.call_limit_settings import CallLimitSettings
 from voice_agent_conversation.managers.data_managers.data_manager_voice_catalog import DataManagerVoiceCatalog
 from voice_agent_conversation.managers.exceptions.conversation_exceptions import LogEventConversation, VoiceNotOfferedException
+from voice_agent_conversation.managers.exceptions.voice_agent_conversation_exceptions import VoiceAgentConversationBaseException
 from voice_agent_conversation.managers.gateways.realtime_voice_gateway_base import RealtimeVoiceGatewayBase, RealtimeVoiceSessionBase
 from voice_agent_conversation.managers.gateways.realtime_voice_gateway_openai import RealtimeVoiceGatewayOpenAI
 from voice_agent_conversation.managers.models.conversation_models import (
@@ -18,6 +20,7 @@ from voice_agent_conversation.managers.models.conversation_models import (
     AgentSpeechCutOff,
     AgentSpeechPart,
     AgentSpeechReceived,
+    AgentToolCallAnswered,
     AgentToolCallRequested,
     AgentTurnFinished,
     CallEndSignals,
@@ -44,7 +47,7 @@ from voice_agent_conversation.managers.rules.call_limits import CallLimits
 from voice_agent_conversation.managers.rules.guest_audio_pacing import GuestAudioPacing
 from voice_agent_conversation.managers.service_locators.service_locator_base import ServiceLocatorBase
 from voice_agent_conversation.managers.validators.validator_conversation_requests import ValidatorConversationRequests
-from voice_agent_restaurant import DomainFacade as RestaurantDomainFacade, RestaurantProfile
+from voice_agent_restaurant import DomainFacade as RestaurantDomainFacade, RestaurantProfile, VoiceAgentRestaurantBaseException
 
 
 class ManagerConversation:
@@ -54,6 +57,8 @@ class ManagerConversation:
     guest goes quiet for too long. How many calls run at once is the host's to bound: it is process-wide state, which no
     behavior class here holds.
     """
+
+    CONVERSATION_ID_CONTEXT_KEY: Final[str] = "Conversation.Id"
 
     def __init__(self, service_locator: ServiceLocatorBase) -> None:
         configuration_provider: ConfigurationProvider = service_locator.get_configuration_provider()
@@ -73,6 +78,10 @@ class ManagerConversation:
         await self._realtime_voice_gateway.close()
         await self._restaurant_domain_facade.close()
 
+    async def check_readiness(self) -> None:
+        """Reads the restaurant's store, so a host's health check fails when calls could not be held."""
+        await self._restaurant_domain_facade.get_restaurant_profile()
+
     async def get_voice_options(self) -> list[VoiceOption]:
         return await asyncio.to_thread(DataManagerVoiceCatalog.get_voice_options)
 
@@ -80,23 +89,33 @@ class ManagerConversation:
         self, conversation_request: ConversationRequest, guest_side_events: AsyncIterable[GuestSideEvent]
     ) -> AsyncGenerator[ConversationEvent]:
         voice_key: str = ValidatorConversationRequests.validate_conversation_request(conversation_request)
-        voice_option: VoiceOption = await self._retrieve_voice_option(voice_key)
-        restaurant_profile: RestaurantProfile = await self._restaurant_domain_facade.get_restaurant_profile()
-        voice_session_settings: VoiceSessionSettings = VoiceSessionSettings(
-            provider_voice_id=voice_option.provider_voice_id,
-            agent_instructions=await self._compose_agent_instructions(restaurant_profile.name),
-            agent_tool_definitions=self._agent_toolbox.get_tool_definitions(),
-        )
-        async with await self._realtime_voice_gateway.open_session(voice_session_settings) as realtime_voice_session:
-            yield ConversationStarted(conversation_audio_format=realtime_voice_session.conversation_audio_format, voice_option=voice_option)
-            await realtime_voice_session.request_greeting(AgentInstructions.compose_greeting(restaurant_profile.name))
-            # Closing the relay here, in this task, settles guest side forwarding before the session closes.
-            async with contextlib.aclosing(
-                self._relay_conversation(realtime_voice_session, guest_side_events, self._agent_toolbox, self._call_limit_settings)
-            ) as agent_session_events:
-                agent_session_event: AgentSessionEvent
-                async for agent_session_event in agent_session_events:
-                    yield agent_session_event
+        conversation_id: str = uuid.uuid4().hex
+        try:
+            voice_option: VoiceOption = await self._retrieve_voice_option(voice_key)
+            restaurant_profile: RestaurantProfile = await self._restaurant_domain_facade.get_restaurant_profile()
+            voice_session_settings: VoiceSessionSettings = VoiceSessionSettings(
+                provider_voice_id=voice_option.provider_voice_id,
+                agent_instructions=await self._compose_agent_instructions(restaurant_profile.name),
+                agent_tool_definitions=self._agent_toolbox.get_tool_definitions(),
+            )
+            async with await self._realtime_voice_gateway.open_session(voice_session_settings) as realtime_voice_session:
+                yield ConversationStarted(
+                    conversation_id=conversation_id,
+                    conversation_audio_format=realtime_voice_session.conversation_audio_format,
+                    voice_option=voice_option,
+                )
+                await realtime_voice_session.request_greeting(AgentInstructions.compose_greeting(restaurant_profile.name))
+                # Closing the relay here, in this task, settles guest side forwarding before the session closes.
+                async with contextlib.aclosing(
+                    self._relay_conversation(realtime_voice_session, guest_side_events, self._agent_toolbox, self._call_limit_settings)
+                ) as agent_session_events:
+                    agent_session_event: AgentSessionEvent
+                    async for agent_session_event in agent_session_events:
+                        yield agent_session_event
+        except (VoiceAgentConversationBaseException, VoiceAgentRestaurantBaseException) as domain_exception:
+            # Ties the failure to this conversation in the host's log; the exception itself passes on unchanged.
+            domain_exception.add_contextual_data({self.CONVERSATION_ID_CONTEXT_KEY: conversation_id})
+            raise
 
     async def _retrieve_voice_option(self, voice_key: str) -> VoiceOption:
         voice_options: list[VoiceOption] = await self.get_voice_options()
@@ -166,15 +185,17 @@ class ManagerConversation:
                             await ManagerConversation._request_farewell(
                                 realtime_voice_session, call_end_signals.reached_call_limit.result(), call_end_signals.guest_audio_ended
                             )
-                    case AgentToolCallRequested():
-                        consecutive_call_repair_count = await ManagerConversation._answer_tool_call(
+                    case AgentToolCallRequested(tool_name=tool_name):
+                        agent_tool_call_answer: AgentToolCallAnswer = await ManagerConversation._answer_tool_call(
                             realtime_voice_session,
                             agent_toolbox,
                             voice_session_event,
                             consecutive_call_repair_count,
                             call_end_signals.guest_audio_ended,
                         )
+                        consecutive_call_repair_count = agent_tool_call_answer.consecutive_call_repair_count
                         has_answered_tool_calls = True
+                        yield AgentToolCallAnswered(tool_name=tool_name, agent_tool_call_outcome=agent_tool_call_answer.agent_tool_call_outcome)
                     case AgentSpeechReceived(pcm_audio=pcm_audio):
                         sent_agent_speech = AgentSpeechPlayback.count_sent_agent_speech(sent_agent_speech, voice_session_event)
                         yield AgentSpeechChunk(pcm_audio=pcm_audio)
@@ -238,13 +259,13 @@ class ManagerConversation:
         agent_tool_call_requested: AgentToolCallRequested,
         consecutive_call_repair_count: int,
         guest_audio_ended: asyncio.Event,
-    ) -> int:
-        """Runs the tool the agent asked for and sends the answer back, and returns how many wrong calls in a row now stand.
-        A guest who hung up while the tool ran is not answered: the session is already closing."""
+    ) -> AgentToolCallAnswer:
+        """Runs the tool the agent asked for and sends the answer back. A guest who hung up while the tool ran is not
+        answered: the session is already closing."""
         agent_tool_call_answer: AgentToolCallAnswer = await agent_toolbox.run_tool_call(agent_tool_call_requested, consecutive_call_repair_count)
         if not guest_audio_ended.is_set():
             await realtime_voice_session.send_tool_result(agent_tool_call_requested.call_id, agent_tool_call_answer.tool_output_json)
-        return agent_tool_call_answer.consecutive_call_repair_count
+        return agent_tool_call_answer
 
     @staticmethod
     async def _request_next_reply(realtime_voice_session: RealtimeVoiceSessionBase, guest_audio_ended: asyncio.Event) -> None:

@@ -13,6 +13,8 @@ class VoicesResource(TypedDict):
 
 class ConversationStartedMessage(TypedDict):
     type: Literal["conversation_started"]
+    # Names the call in the host's log, so a caller reporting a problem can be matched to it.
+    conversation_id: str
     guest_audio_sample_rate_hz: int
     agent_audio_sample_rate_hz: int
     voice: VoiceResource

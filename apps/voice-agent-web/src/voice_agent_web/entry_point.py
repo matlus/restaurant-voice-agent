@@ -5,6 +5,7 @@ from typing import Final
 import uvicorn
 from dotenv import load_dotenv
 
+from voice_agent_web.json_log_formatter import JsonLogFormatter
 from voice_agent_web.main import DEFAULT_MAXIMUM_CONCURRENT_CALLS, create_app
 
 HOST_VARIABLE_NAME: Final[str] = "VOICE_AGENT_WEB_HOST"
@@ -19,7 +20,10 @@ DEFAULT_PORT: Final[int] = 8000
 def main() -> None:
     # Keys live only in the gitignored .env; settings providers read the environment it fills.
     load_dotenv()
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # One JSON object per line, so the container's log store can query the call summaries and failures by field.
+    log_handler: logging.Handler = logging.StreamHandler()
+    log_handler.setFormatter(JsonLogFormatter())
+    logging.basicConfig(level=logging.INFO, handlers=[log_handler])
     allowed_origins: list[str] = [origin.strip() for origin in os.environ.get(ALLOWED_ORIGINS_VARIABLE_NAME, "").split(",") if origin.strip()]
     maximum_concurrent_calls: int = int(os.environ.get(MAXIMUM_CONCURRENT_CALLS_VARIABLE_NAME, str(DEFAULT_MAXIMUM_CONCURRENT_CALLS)))
     uvicorn.run(

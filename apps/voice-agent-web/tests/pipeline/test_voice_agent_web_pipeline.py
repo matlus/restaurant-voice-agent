@@ -48,6 +48,13 @@ class TestVoiceAgentWebPipeline:
         actual_voice_shapes: list[tuple[str, ...]] = sorted({tuple(sorted(actual_voice)) for actual_voice in actual_voices})
         assert (actual_response.status_code, actual_voice_shapes) == (expected_status_code, expected_voice_shapes)
 
+    def test_GetHealthz_WhenTheStoreCanBeRead_ThenItAnswersOk(self, test_client: TestClient) -> None:
+        expected_response: tuple[int, dict[str, str]] = (HTTP_OK_STATUS_CODE, {"status": "ok"})
+
+        actual_response: Response = test_client.get("/healthz")
+
+        assert (actual_response.status_code, actual_response.json()) == expected_response
+
     def test_GetRoot_WhenRequested_ThenTheMicrophonePageIsServed(self, test_client: TestClient) -> None:
         expected_status_code: int = HTTP_OK_STATUS_CODE
         expected_page_marker: str = 'id="call-button"'

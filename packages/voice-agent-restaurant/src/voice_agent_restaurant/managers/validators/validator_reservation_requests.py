@@ -367,7 +367,8 @@ class ValidatorReservationRequests:
         if phone_number is None:
             return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name=cls.PHONE_NUMBER_FIELD_NAME)]
         if not ReservationValueParsing.is_phone_number(phone_number):
-            return [f"'{cls.PHONE_NUMBER_FIELD_NAME}' value '{phone_number}' must be a 10-digit phone number"]
+            # The number given is not repeated: this message can reach the log, and a phone number is personal.
+            return [f"'{cls.PHONE_NUMBER_FIELD_NAME}' must be a 10-digit phone number"]
         return []
 
     @classmethod

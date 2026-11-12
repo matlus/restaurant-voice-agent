@@ -34,13 +34,12 @@ class AgentToolArgumentsInvalidException(VoiceAgentConversationBusinessBaseExcep
 class AgentToolCallRepairsExhaustedException(VoiceAgentConversationTechnicalBaseException):
     """The speech model kept calling tools wrongly after being told how to correct each call, so the conversation ends."""
 
-    def __init__(self, tool_name: str, repair_limit: int, last_problem: str) -> None:
+    def __init__(self, tool_name: str, repair_limit: int) -> None:
         self.tool_name: str = tool_name
+        # The problem the agent was last told is left out: it can quote what the caller said, such as a phone number, and
+        # this message reaches the log.
         super().__init__(
-            message=(
-                f"The agent called its tools wrongly more than {repair_limit} times in a row; "
-                f"the last call, to '{tool_name}', failed with: {last_problem}"
-            ),
+            message=f"The agent called its tools wrongly more than {repair_limit} times in a row; the last call was to '{tool_name}'.",
             log_event=LogEventAgentTool.TOOL_CALL,
             contextual_data_by_name={"AgentTool.Name": tool_name, "AgentTool.RepairLimit": repair_limit},
         )

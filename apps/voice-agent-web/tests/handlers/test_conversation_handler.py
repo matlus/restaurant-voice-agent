@@ -20,6 +20,8 @@ from web_test_support.scripted_browser import ScriptedBrowser
 from voice_agent_conversation import (
     AgentSpeechChunk,
     AgentSpeechCutOff,
+    AgentToolCallAnswered,
+    AgentToolCallOutcome,
     AgentTurnFinished,
     CallLimit,
     CallLimitReached,
@@ -45,12 +47,14 @@ CONVERSATION_AUDIO_FORMAT: Final[ConversationAudioFormat] = ConversationAudioFor
     guest_audio_sample_rate_hz=16_000, agent_audio_sample_rate_hz=24_000
 )
 AGENT_SPEECH: Final[bytes] = b"agent speech pcm"
+SCRIPTED_CONVERSATION_ID: Final[str] = "0123456789abcdef0123456789abcdef"
 NORMAL_CLOSURE_CODE: Final[int] = 1000
 GOING_AWAY_CLOSE_CODE: Final[int] = 1001
 ABNORMAL_CLOSURE_CODE: Final[int] = 1006
 AGENT_SPEECH_CUT_OFF_MESSAGE_TYPE: Final[str] = "agent_speech_cut_off"
 UNPLAYED_MILLISECONDS_FIELD_NAME: Final[str] = "unplayed_milliseconds"
 HANDLER_LOGGER_NAME: Final[str] = "voice_agent_web.handlers.conversation_handler"
+CALL_ENDED_EVENT: Final[str] = "call_ended"
 
 
 def create_voices_request() -> Request:
@@ -78,6 +82,17 @@ class TestConversationHandlerListVoices:
             expected_media_type,
             expected_body,
         )
+
+
+def read_call_summaries(caplog: pytest.LogCaptureFixture) -> list[dict[str, object]]:
+    """The structured call summaries the handler logged, without the call's length, which a test cannot know."""
+    call_summaries: list[dict[str, object]] = []
+    log_record: logging.LogRecord
+    for log_record in caplog.records:
+        event_fields: object = getattr(log_record, "event_fields", None)
+        if log_record.name == HANDLER_LOGGER_NAME and isinstance(event_fields, dict) and event_fields.get("event") == CALL_ENDED_EVENT:
+            call_summaries.append({name: value for name, value in event_fields.items() if name != "call_seconds"})
+    return call_summaries
 
 
 class TestConversationHandlerHoldConversation:
@@ -145,7 +160,9 @@ class TestConversationHandlerHoldConversation:
 
     async def test_HoldConversation_WhenTheDomainYieldsEveryKindOfEvent_ThenTheBrowserGetsEachAsItsWireFrameInOrderAndThenTheClose(self) -> None:
         scripted_conversation_events: list[ConversationEvent] = [
-            ConversationStarted(conversation_audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+            ConversationStarted(
+                conversation_id=SCRIPTED_CONVERSATION_ID, conversation_audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION
+            ),
             AgentSpeechChunk(pcm_audio=AGENT_SPEECH),
             GuestStartedSpeaking(),
             AgentTurnFinished(),
@@ -165,6 +182,7 @@ class TestConversationHandlerHoldConversation:
         expected_started_text: str = json.dumps(
             {
                 "type": "conversation_started",
+                "conversation_id": SCRIPTED_CONVERSATION_ID,
                 "guest_audio_sample_rate_hz": 16_000,
                 "agent_audio_sample_rate_hz": 24_000,
                 "voice": {"voice_key": "openai-cedar", "presented_gender": "male", "description": CEDAR_VOICE_OPTION.description},
@@ -223,7 +241,9 @@ class TestConversationHandlerHoldConversation:
 
     async def test_HoldConversation_WhenTheBrowserHangsUpBeforeTheFirstFrame_ThenNothingMoreIsSentAndTheCallEndsWithoutAFailure(self) -> None:
         scripted_conversation_events: list[ConversationEvent] = [
-            ConversationStarted(conversation_audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+            ConversationStarted(
+                conversation_id=SCRIPTED_CONVERSATION_ID, conversation_audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION
+            ),
             AgentSpeechChunk(pcm_audio=AGENT_SPEECH),
             AgentTurnFinished(),
         ]
@@ -243,7 +263,9 @@ class TestConversationHandlerHoldConversation:
     async def test_HoldConversation_WhenAFrameCannotBeSent_ThenTheFailurePassesUntouchedToTheMiddleware(self) -> None:
         # The connection is gone but no disconnect has been read, so the handler still believes the browser is there.
         scripted_conversation_events: list[ConversationEvent] = [
-            ConversationStarted(conversation_audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION)
+            ConversationStarted(
+                conversation_id=SCRIPTED_CONVERSATION_ID, conversation_audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION
+            )
         ]
         scripted_browser: ScriptedBrowser = ScriptedBrowser(query_string=b"voice=openai-cedar", connection_is_lost=True)
         conversation_handler_for_test: ConversationHandlerForTest = ConversationHandlerForTest(
@@ -264,7 +286,11 @@ class TestConversationHandlerHoldConversation:
         )
         scripted_browser: ScriptedBrowser = ScriptedBrowser(query_string=b"voice=openai-cedar")
         conversation_handler_for_test: ConversationHandlerForTest = ConversationHandlerForTest(
-            scripted_conversation_events=[ConversationStarted(conversation_audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION)],
+            scripted_conversation_events=[
+                ConversationStarted(
+                    conversation_id=SCRIPTED_CONVERSATION_ID, conversation_audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION
+                )
+            ],
             scripted_conversation_failure=scripted_realtime_voice_provider_unavailable_exception,
         )
         expected_contextual_data_by_name: dict[str, str | int | float | bool] = dict(
@@ -285,3 +311,63 @@ class TestConversationHandlerHoldConversation:
             expected_contextual_data_by_name,
             expected_delivered_message_types,
         )
+
+    async def test_HoldConversation_WhenACallEnds_ThenOneSummaryNamesTheConversationHowItEndedAndTheToolCallsButNotThePage(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        scripted_conversation_events: list[ConversationEvent] = [
+            ConversationStarted(
+                conversation_id=SCRIPTED_CONVERSATION_ID, conversation_audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION
+            ),
+            AgentToolCallAnswered(tool_name="check_availability", agent_tool_call_outcome=AgentToolCallOutcome.CORRECTED),
+            AgentToolCallAnswered(tool_name="check_availability", agent_tool_call_outcome=AgentToolCallOutcome.ANSWERED),
+            AgentToolCallAnswered(tool_name="book_table", agent_tool_call_outcome=AgentToolCallOutcome.ANSWERED),
+            CallLimitReached(call_limit=CallLimit.MAXIMUM_DURATION),
+        ]
+        scripted_browser: ScriptedBrowser = ScriptedBrowser(query_string=b"voice=openai-cedar")
+        conversation_handler_for_test: ConversationHandlerForTest = ConversationHandlerForTest(
+            scripted_conversation_events=scripted_conversation_events
+        )
+        expected_delivered_message_types: list[str] = ["websocket.accept", "websocket.send", "websocket.send", "websocket.close"]
+        expected_call_summaries: list[dict[str, object]] = [
+            {
+                "event": CALL_ENDED_EVENT,
+                "conversation_id": SCRIPTED_CONVERSATION_ID,
+                "voice_key": "openai-cedar",
+                "ending": "call_limit:maximum_duration",
+                "agent_tool_calls": {"check_availability": {"corrected": 1, "answered": 1}, "book_table": {"answered": 1}},
+            }
+        ]
+
+        with caplog.at_level(logging.INFO, logger=HANDLER_LOGGER_NAME):
+            await conversation_handler_for_test.hold_conversation(scripted_browser.create_websocket())
+
+        actual_delivered_message_types: list[str] = [delivered_message["type"] for delivered_message in scripted_browser.delivered_messages]
+        assert (actual_delivered_message_types, read_call_summaries(caplog)) == (expected_delivered_message_types, expected_call_summaries)
+
+    async def test_HoldConversation_WhenTheDomainFailsMidCall_ThenTheCallSummarySaysTheCallFailed(self, caplog: pytest.LogCaptureFixture) -> None:
+        scripted_browser: ScriptedBrowser = ScriptedBrowser(query_string=b"voice=openai-cedar")
+        conversation_handler_for_test: ConversationHandlerForTest = ConversationHandlerForTest(
+            scripted_conversation_events=[
+                ConversationStarted(
+                    conversation_id=SCRIPTED_CONVERSATION_ID, conversation_audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION
+                )
+            ],
+            scripted_conversation_failure=RealtimeVoiceProviderUnavailableException(
+                "The provider dropped the session.", LogEventRealtimeVoice.EVENT_RECEIPT
+            ),
+        )
+        expected_call_summaries: list[dict[str, object]] = [
+            {
+                "event": CALL_ENDED_EVENT,
+                "conversation_id": SCRIPTED_CONVERSATION_ID,
+                "voice_key": "openai-cedar",
+                "ending": "failed",
+                "agent_tool_calls": {},
+            }
+        ]
+
+        with caplog.at_level(logging.INFO, logger=HANDLER_LOGGER_NAME), pytest.raises(RealtimeVoiceProviderUnavailableException):
+            await conversation_handler_for_test.hold_conversation(scripted_browser.create_websocket())
+
+        assert read_call_summaries(caplog) == expected_call_summaries
