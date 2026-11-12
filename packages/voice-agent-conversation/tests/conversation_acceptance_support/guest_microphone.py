@@ -61,7 +61,6 @@ class GuestMicrophone:
         hang_up_after_event_count: int = GREETING_EVENT_COUNT,
         guest_microphone_breakdown_exception: GuestMicrophoneBreakdownException | None = None,
         unplayed_milliseconds_when_talked_over: int | None = None,
-        guest_pause: GuestPause | None = None,
     ) -> list[ConversationEvent]:
         """Plays the guest through the call and returns every event it heard. The guest speaks only after the greeting,
         because a real caller waits for the agent to answer."""
@@ -77,9 +76,20 @@ class GuestMicrophone:
                     self.break_down(guest_microphone_breakdown_exception)
             if guest_microphone_breakdown_exception is None and len(actual_conversation_events) == hang_up_after_event_count:
                 self.hang_up()
-            if guest_pause is not None and len(actual_conversation_events) == guest_pause.after_event_count:
-                await guest_pause.wait_for()
         return actual_conversation_events
+
+    @staticmethod
+    async def listen_with_pause(conversation: AsyncIterator[ConversationEvent], guest_pause: GuestPause) -> AsyncIterator[ConversationEvent]:
+        """The conversation as a guest hears it who stops listening after a number of events until wait_for returns. The
+        pause starts when the next event is asked for, so the guest acts on the last event heard before it."""
+        heard_event_count: int = 0
+        conversation_event: ConversationEvent
+        async for conversation_event in conversation:
+            yield conversation_event
+            heard_event_count += 1
+            # Waited for before the next event is read, so the domain holds it until the pause ends.
+            if heard_event_count == guest_pause.after_event_count:
+                await guest_pause.wait_for()
 
     def _speak_chunks(self, guest_audio_chunks: Iterable[bytes]) -> None:
         guest_audio_chunk: bytes

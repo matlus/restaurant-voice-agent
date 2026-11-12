@@ -44,13 +44,13 @@ class ProcessorCallLimitEnforcement:
         call_limit: CallLimit | None
         while True:
             call_limit = CallLimits.find_reached_call_limit(
-                self._call_limit_settings, call_started_at, self._read_guest_speech_activity(), event_loop.time()
+                self._call_limit_settings.call_length_limits, call_started_at, self._read_guest_speech_activity(), event_loop.time()
             )
             if call_limit is not None:
                 return call_limit
             await asyncio.sleep(
                 CallLimits.count_seconds_until_a_limit_could_be_reached(
-                    self._call_limit_settings, call_started_at, self._read_guest_speech_activity(), event_loop.time()
+                    self._call_limit_settings.call_length_limits, call_started_at, self._read_guest_speech_activity(), event_loop.time()
                 )
             )
 

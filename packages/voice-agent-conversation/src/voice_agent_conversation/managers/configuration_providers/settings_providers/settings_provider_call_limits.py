@@ -2,7 +2,7 @@ import math
 from collections.abc import Mapping
 from typing import Final
 
-from voice_agent_conversation.managers.configuration_providers.settings_models.call_limit_settings import CallLimitSettings
+from voice_agent_conversation.managers.configuration_providers.settings_models.call_limit_settings import CallLengthLimits, CallLimitSettings
 from voice_agent_conversation.managers.configuration_providers.settings_source import SettingsSource
 from voice_agent_conversation.managers.exceptions.configuration_exceptions import ConfigurationSettingException, LogEventConfiguration
 
@@ -33,8 +33,10 @@ class SettingsProviderCallLimits:
 
     def _initialize_settings(self) -> CallLimitSettings:
         return CallLimitSettings(
-            maximum_call_seconds=self._read_positive_seconds(self.MAXIMUM_CALL_SECONDS_VARIABLE_NAME, self.DEFAULT_MAXIMUM_CALL_SECONDS),
-            maximum_silence_seconds=self._read_positive_seconds(self.MAXIMUM_SILENCE_SECONDS_VARIABLE_NAME, self.DEFAULT_MAXIMUM_SILENCE_SECONDS),
+            call_length_limits=CallLengthLimits(
+                maximum_call_seconds=self._read_positive_seconds(self.MAXIMUM_CALL_SECONDS_VARIABLE_NAME, self.DEFAULT_MAXIMUM_CALL_SECONDS),
+                maximum_silence_seconds=self._read_positive_seconds(self.MAXIMUM_SILENCE_SECONDS_VARIABLE_NAME, self.DEFAULT_MAXIMUM_SILENCE_SECONDS),
+            ),
             farewell_grace_seconds=self._read_positive_seconds(self.FAREWELL_GRACE_SECONDS_VARIABLE_NAME, self.DEFAULT_FAREWELL_GRACE_SECONDS),
         )
 

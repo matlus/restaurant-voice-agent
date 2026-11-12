@@ -415,8 +415,10 @@ class RealtimeVoiceServiceScripted:
                     await self._answer_client_event(server_connection, captured_realtime_session, json.loads(client_message))
         except ConnectionClosed:
             pass
-        captured_realtime_session.was_closed_by_client = server_connection.protocol.close_rcvd_then_sent is True
-        self._session_ended.set()
+        finally:
+            # Recorded however the session ended, so a test waiting for the end is not left waiting on a failure.
+            captured_realtime_session.was_closed_by_client = server_connection.protocol.close_rcvd_then_sent is True
+            self._session_ended.set()
 
     async def _answer_client_event(
         self, server_connection: ServerConnection, captured_realtime_session: CapturedRealtimeSession, client_event: Mapping[str, object]

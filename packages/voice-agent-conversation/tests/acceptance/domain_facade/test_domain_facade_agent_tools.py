@@ -65,6 +65,9 @@ from voice_agent_restaurant import (
 
 # The booking answer field the stored code travels in; the tests check it against the store, not a copy.
 CONFIRMATION_CODE_FIELD_NAME: Final[str] = "confirmation_code"
+DISH_DETAILS_FIELD_NAME: Final[str] = "dish_details"
+# Opens the greeting instruction the agent is given for its first reply only.
+GREETING_MARKER: Final[str] = "Greet the caller"
 CEDAR_VOICE_OPTION: Final[VoiceOption] = read_catalog_voice_option("openai-cedar")
 CONVERSATION_REQUEST: Final[ConversationRequest] = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
 PROVIDER_CONVERSATION_AUDIO_FORMAT: Final[ConversationAudioFormat] = ConversationAudioFormat(
@@ -484,10 +487,12 @@ class TestAgentTools:
             aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
-                conversation,
+                GuestMicrophone.listen_with_pause(
+                    conversation,
+                    GuestPause(after_event_count=hang_up_event_count, wait_for=realtime_voice_service_scripted.wait_until_session_ends),
+                ),
                 [GUEST_QUESTION_AUDIO],
                 hang_up_after_event_count=hang_up_event_count,
-                guest_pause=GuestPause(after_event_count=hang_up_event_count, wait_for=realtime_voice_service_scripted.wait_until_session_ends),
             )
 
         AsserterConversation.assert_conversation_events_are_as_expected(
@@ -660,12 +665,11 @@ class TestAgentTools:
         ):
             await guest_microphone.take_part(conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1))
 
-        dish_details_field_name: str = "dish_details"
         actual_dish_answers: list[tuple[str, str, bool, str]] = [
             (
-                dish_answer[dish_details_field_name]["name"],
-                dish_answer[dish_details_field_name]["price"],
-                "dish_id" in dish_answer[dish_details_field_name],
+                dish_answer[DISH_DETAILS_FIELD_NAME]["name"],
+                dish_answer[DISH_DETAILS_FIELD_NAME]["price"],
+                "dish_id" in dish_answer[DISH_DETAILS_FIELD_NAME],
                 dish_answer["allergen_notice"],
             )
             for dish_answer in (json.loads(actual_tool_output.output) for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted))
@@ -836,7 +840,6 @@ class TestAgentTools:
         # The greeting instruction once lived in the standing instructions the model reads before every reply, and the
         # model greeted again when asked to go on after a lookup. Now only the first reply request carries it.
         guest_microphone: GuestMicrophone = GuestMicrophone()
-        greeting_marker: str = "Greet the caller"
         expected_greeting_placement: tuple[list[bool], bool] = ([True, False], False)
 
         async with (
@@ -852,10 +855,10 @@ class TestAgentTools:
         captured_realtime_session: CapturedRealtimeSession = realtime_voice_service_scripted.captured_realtime_sessions[0]
         actual_greeting_placement: tuple[list[bool], bool] = (
             [
-                reply_instructions is not None and greeting_marker in reply_instructions
+                reply_instructions is not None and GREETING_MARKER in reply_instructions
                 for reply_instructions in captured_realtime_session.agent_response_instructions
             ],
-            any(greeting_marker in session_settings.agent_instructions for session_settings in captured_realtime_session.session_settings),
+            any(GREETING_MARKER in session_settings.agent_instructions for session_settings in captured_realtime_session.session_settings),
         )
         assert actual_greeting_placement == expected_greeting_placement
 

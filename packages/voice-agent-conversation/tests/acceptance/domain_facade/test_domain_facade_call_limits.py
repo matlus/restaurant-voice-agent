@@ -272,10 +272,12 @@ class TestCallLimits:
             aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
-                conversation,
+                GuestMicrophone.listen_with_pause(
+                    conversation,
+                    GuestPause(after_event_count=GREETING_EVENT_COUNT + 1, wait_for=realtime_voice_service_scripted.wait_until_session_ends),
+                ),
                 [],
                 hang_up_after_event_count=GUEST_KEEPS_LISTENING_EVENT_COUNT,
-                guest_pause=GuestPause(after_event_count=GREETING_EVENT_COUNT + 1, wait_for=realtime_voice_service_scripted.wait_until_session_ends),
             )
 
         AsserterConversation.assert_conversation_events_are_as_expected(
