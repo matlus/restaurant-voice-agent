@@ -68,6 +68,8 @@ class ManagerConversation:
         self._agent_toolbox: AgentToolbox = AgentToolbox(self._restaurant_domain_facade)
         self._realtime_voice_gateway: RealtimeVoiceGatewayBase = RealtimeVoiceGatewayOpenAI(configuration_provider.get_openai_realtime_settings())
         self._call_limit_settings: CallLimitSettings = configuration_provider.get_call_limit_settings()
+        # The catalog ships inside the package and cannot change while the process runs, so it is read once.
+        self._voice_options: tuple[VoiceOption, ...] = tuple(DataManagerVoiceCatalog.get_voice_options())
 
     async def __aenter__(self) -> Self:
         return self
@@ -85,7 +87,7 @@ class ManagerConversation:
         await self._restaurant_domain_facade.get_restaurant_profile()
 
     async def get_voice_options(self) -> list[VoiceOption]:
-        return await asyncio.to_thread(DataManagerVoiceCatalog.get_voice_options)
+        return list(self._voice_options)
 
     async def converse(
         self, conversation_request: ConversationRequest, guest_side_events: AsyncIterable[GuestSideEvent]

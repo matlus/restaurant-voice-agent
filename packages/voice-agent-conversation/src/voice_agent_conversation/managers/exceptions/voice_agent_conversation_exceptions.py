@@ -1,9 +1,7 @@
-import json
 import traceback
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, IntEnum
-from types import TracebackType
 from typing import Final, override
 
 type ContextualDataDict = dict[str, str | int | float | bool]
@@ -34,7 +32,6 @@ class LogEventBase(Enum):
 class ExceptionCause:
     exception_type: str
     message: str
-    traceback: TracebackType | None = None
 
 
 class VoiceAgentConversationBaseException(Exception, ABC):
@@ -90,7 +87,7 @@ class VoiceAgentConversationBaseException(Exception, ABC):
         cause_exception: BaseException | None = self.__cause__
         if cause_exception is None:
             return None
-        return ExceptionCause(exception_type=type(cause_exception).__name__, message=str(cause_exception), traceback=cause_exception.__traceback__)
+        return ExceptionCause(exception_type=type(cause_exception).__name__, message=str(cause_exception))
 
     @property
     def contextual_data_by_name(self) -> ContextualDataDict:
@@ -128,9 +125,6 @@ class VoiceAgentConversationBaseException(Exception, ABC):
             lines.extend(["", "".join(traceback.format_tb(self.__traceback__))])
 
         return "\n".join(lines)
-
-    def to_json(self) -> str:
-        return json.dumps(self.contextual_data_by_name, indent=2)
 
 
 class VoiceAgentConversationBusinessBaseException(VoiceAgentConversationBaseException, ABC):

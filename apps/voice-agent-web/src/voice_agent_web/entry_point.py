@@ -1,20 +1,18 @@
 import logging
 import os
-from typing import Final
 
 import uvicorn
 from dotenv import load_dotenv
+from fastapi import FastAPI
 
+from voice_agent_conversation import ConfigurationSettingException as ConversationConfigurationSettingException
+from voice_agent_restaurant import ConfigurationSettingException as RestaurantConfigurationSettingException
+from voice_agent_web.configuration_providers.host_settings import HostSettings
+from voice_agent_web.configuration_providers.host_settings_provider import HostSettingsProvider
+from voice_agent_web.exceptions.host_setting_exception import HostSettingException
 from voice_agent_web.json_log_formatter import JsonLogFormatter
-from voice_agent_web.main import DEFAULT_MAXIMUM_CONCURRENT_CALLS, create_app
-
-HOST_VARIABLE_NAME: Final[str] = "VOICE_AGENT_WEB_HOST"
-PORT_VARIABLE_NAME: Final[str] = "VOICE_AGENT_WEB_PORT"
-# Comma-separated origins, such as https://booking.example.com, of other sites whose pages may open a call.
-ALLOWED_ORIGINS_VARIABLE_NAME: Final[str] = "VOICE_AGENT_WEB_ALLOWED_ORIGINS"
-MAXIMUM_CONCURRENT_CALLS_VARIABLE_NAME: Final[str] = "VOICE_AGENT_MAXIMUM_CONCURRENT_CALLS"
-DEFAULT_HOST: Final[str] = "127.0.0.1"
-DEFAULT_PORT: Final[int] = 8000
+from voice_agent_web.main import create_app
+from voice_agent_web.validators.validator_host_settings import ValidatorHostSettings
 
 
 def main() -> None:
@@ -23,12 +21,18 @@ def main() -> None:
     log_handler: logging.Handler = logging.StreamHandler()
     log_handler.setFormatter(JsonLogFormatter())
     logging.basicConfig(level=logging.INFO, handlers=[log_handler])
-    allowed_origins: list[str] = [origin.strip() for origin in os.environ.get(ALLOWED_ORIGINS_VARIABLE_NAME, "").split(",") if origin.strip()]
-    maximum_concurrent_calls: int = int(os.environ.get(MAXIMUM_CONCURRENT_CALLS_VARIABLE_NAME, str(DEFAULT_MAXIMUM_CONCURRENT_CALLS)))
+    try:
+        host_settings: HostSettings = HostSettingsProvider(os.environ).get_host_settings()
+        port: int = ValidatorHostSettings.validate_port(host_settings.port)
+        app: FastAPI = create_app(allowed_origins=host_settings.allowed_origins, maximum_concurrent_calls=host_settings.maximum_concurrent_calls)
+    except (HostSettingException, ConversationConfigurationSettingException, RestaurantConfigurationSettingException) as setting_exception:
+        # A setting the operator must fix: its message says which and how, so a traceback would only bury it.
+        logging.getLogger(__name__).error("The voice agent cannot start: %s", setting_exception)
+        raise SystemExit(1) from None
     uvicorn.run(
-        create_app(allowed_origins=allowed_origins, maximum_concurrent_calls=maximum_concurrent_calls),
-        host=os.environ.get(HOST_VARIABLE_NAME, DEFAULT_HOST),
-        port=int(os.environ.get(PORT_VARIABLE_NAME, str(DEFAULT_PORT))),
+        app,
+        host=host_settings.host,
+        port=port,
         # "on" makes a failure while the app starts up stop the process; "auto" would log it and keep serving.
         lifespan="on",
         # The root handler above formats uvicorn's own lines too; uvicorn's default config would give them plain-text handlers.

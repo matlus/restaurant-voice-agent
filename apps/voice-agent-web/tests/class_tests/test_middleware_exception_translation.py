@@ -110,6 +110,22 @@ class TestMiddlewareExceptionTranslationWebSocket:
 
         assert (scripted_asgi_server.sent_messages, count_failure_logs(caplog)) == (expected_sent_messages, expected_failure_log_count)
 
+    async def test_Call_WhenTheClientIsGoneBeforeTheFailureIsTold_ThenTheRefusedErrorFrameDoesNotEscapeAndTheFailureIsLoggedOnce(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The app fails without sending anything after the handshake, so only the middleware's own error frame finds the client gone.
+        scripted_asgi_server: ScriptedAsgiServer = ScriptedAsgiServer([], client_is_gone=True)
+        middleware_exception_translation: MiddlewareExceptionTranslation = MiddlewareExceptionTranslation(
+            create_app_that_fails(create_voice_not_offered_exception(), [{"type": "websocket.accept"}])
+        )
+        expected_sent_messages: list[Message] = [{"type": "websocket.accept"}]
+        expected_failure_log_count: int = 1
+
+        with caplog.at_level(logging.WARNING, logger=MIDDLEWARE_LOGGER_NAME):
+            await middleware_exception_translation(create_websocket_scope(), scripted_asgi_server.receive, scripted_asgi_server.send)
+
+        assert (scripted_asgi_server.sent_messages, count_failure_logs(caplog)) == (expected_sent_messages, expected_failure_log_count)
+
     async def test_Call_WhenAnAcceptedWebSocketFails_ThenTheErrorFrameAndThenTheCloseAreSentAndTheFailureIsLoggedOnce(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:

@@ -2,13 +2,13 @@ from collections.abc import AsyncGenerator, Callable, Collection
 from contextlib import asynccontextmanager
 from importlib import resources
 from pathlib import Path
-from typing import Final
 
 from fastapi import FastAPI
 from starlette.middleware import Middleware
 from starlette.routing import Mount, Route, WebSocketRoute
 
 from voice_agent_conversation import DomainFacade
+from voice_agent_web.configuration_providers.host_settings_provider import HostSettingsProvider
 from voice_agent_web.handlers.conversation_handler import ConversationHandler
 from voice_agent_web.middleware.call_admission import create_call_admission
 from voice_agent_web.middleware.middleware_exception_translation import MiddlewareExceptionTranslation
@@ -18,13 +18,11 @@ from voice_agent_web.validators.validator_host_settings import ValidatorHostSett
 
 type DomainFacadeFactory = Callable[[], DomainFacade]
 
-DEFAULT_MAXIMUM_CONCURRENT_CALLS: Final[int] = 10
-
 
 def create_app(
     create_domain_facade: DomainFacadeFactory = DomainFacade,
     allowed_origins: Collection[str] = (),
-    maximum_concurrent_calls: int = DEFAULT_MAXIMUM_CONCURRENT_CALLS,
+    maximum_concurrent_calls: int = HostSettingsProvider.DEFAULT_MAXIMUM_CONCURRENT_CALLS,
 ) -> FastAPI:
     """Assembles the host. The one DomainFacade lives as long as the app; tests pass a factory that builds it on a test locator.
 

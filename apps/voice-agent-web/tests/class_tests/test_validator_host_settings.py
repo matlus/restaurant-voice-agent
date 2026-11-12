@@ -1,6 +1,6 @@
 # Class tests for ValidatorHostSettings. They prove allowed origins come back normalized, that an allowed origin naming
 # no scheme and a call limit below one are refused with a HostSettingException naming the setting and the value, and
-# that create_app refuses such a setting while it assembles the host, before the first request.
+# that a port outside 1 to 65535 is refused, and that create_app refuses such a setting while it assembles the host, before the first request.
 
 from typing import Final
 
@@ -13,6 +13,7 @@ from voice_agent_web.validators.validator_host_settings import ValidatorHostSett
 
 ALLOWED_ORIGINS_SETTING_NAME: Final[str] = "allowed_origins"
 MAXIMUM_CONCURRENT_CALLS_SETTING_NAME: Final[str] = "maximum_concurrent_calls"
+PORT_SETTING_NAME: Final[str] = "port"
 BARE_HOST_ORIGIN: Final[str] = "booking.example.com"
 
 
@@ -69,3 +70,14 @@ class TestValidatorHostSettings:
 
         actual_outcome: tuple[str, int] = (raised.value.setting_name, domain_facade_factory_recording.build_count)
         assert actual_outcome == expected_outcome
+
+    @pytest.mark.parametrize("port", [pytest.param(0, id="zero"), pytest.param(65_536, id="above the highest port")])
+    def test_ValidatePort_WhenOutsideTheRange_ThenAHostSettingExceptionNamesTheSettingAndTheValue(self, port: int) -> None:
+        expected_setting: tuple[str, str] = (PORT_SETTING_NAME, str(port))
+        expected_message_phrase: str = "must be between 1 and 65535"
+
+        with pytest.raises(HostSettingException) as raised:
+            ValidatorHostSettings.validate_port(port)
+
+        actual_setting: tuple[str, str] = (raised.value.setting_name, raised.value.setting_value)
+        assert (actual_setting, expected_message_phrase in str(raised.value)) == (expected_setting, True)

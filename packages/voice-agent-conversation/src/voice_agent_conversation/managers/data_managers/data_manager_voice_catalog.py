@@ -8,7 +8,7 @@ from voice_agent_conversation.managers.models.conversation_models import Present
 
 
 class DataManagerVoiceCatalog:
-    """Reads the voice catalog bundled with the package. The file is small, so it is read on every request."""
+    """Reads the voice catalog bundled with the package and checks it, so a broken catalog stops startup."""
 
     CATALOG_FILE_NAME: Final[str] = "voice_catalog.json"
     CATALOG_FOLDER_NAME: Final[str] = "catalog_data"
