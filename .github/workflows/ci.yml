@@ -21,6 +21,9 @@ jobs:
           python-version: "3.14"
       - name: Install from the lock file
         run: uv sync --frozen --all-packages --all-groups
+      # The browser tests drive the page in headless Chromium; the version matches the locked Playwright.
+      - name: Install Chromium for the browser tests
+        run: uv run --frozen --all-packages --all-groups playwright install --with-deps chromium
       - name: Lint
         run: uv run --frozen --all-packages --all-groups ruff check .
       - name: Format
