@@ -10,6 +10,7 @@ from voice_agent_conversation.managers.exceptions.voice_agent_conversation_excep
 
 class LogEventConfiguration(LogEventBase):
     OPENAI_REALTIME_SETTINGS_RETRIEVAL = "OpenAIRealtimeSettingsRetrieval"
+    CALL_LIMIT_SETTINGS_RETRIEVAL = "CallLimitSettingsRetrieval"
 
 
 @final

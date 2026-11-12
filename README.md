@@ -192,6 +192,30 @@ Open http://127.0.0.1:8000, choose a voice and press the call button. The browse
 | `VOICE_AGENT_OPENAI_REALTIME_MODEL` | No | The speech model. Defaults to `gpt-realtime-2.1`. `gpt-realtime-2.1-mini` costs less. |
 | `VOICE_AGENT_OPENAI_REALTIME_WEBSOCKET_BASE_URL` | No | Another Realtime address. Tests use this to point at a scripted service. |
 | `VOICE_AGENT_WEB_HOST` / `VOICE_AGENT_WEB_PORT` | No | Where the web app listens. Defaults to `127.0.0.1` and `8000`. |
+| `VOICE_AGENT_WEB_ALLOWED_ORIGINS` | No | Comma-separated origins of other sites whose pages may open a call, such as `https://booking.example.com`. The app's own page is always allowed. |
+| `VOICE_AGENT_MAXIMUM_CALL_SECONDS` | No | The longest a call lasts before the agent says goodbye. Defaults to `900` (15 minutes). |
+| `VOICE_AGENT_MAXIMUM_SILENCE_SECONDS` | No | How long the caller may stay silent before the agent says goodbye. Defaults to `120`. |
+| `VOICE_AGENT_MAXIMUM_CONCURRENT_CALLS` | No | How many calls one process runs at once; a further caller is told all lines are busy. Defaults to `10`. |
+
+### Limits and security
+
+Every open call holds a paid OpenAI Realtime session, so the app bounds what a call can cost:
+
+- A call ends with a short spoken goodbye once it reaches the maximum length or the caller has been silent too long.
+  The page then shows why the call ended.
+- Only so many calls run at once. A caller beyond the limit is told all lines are busy and the socket closes with
+  code `1013` (try again later).
+- Guest audio pieces larger than 200 ms are dropped, and so is audio arriving faster than it could be spoken (beyond
+  a one-second burst). The page sends 50 ms pieces in real time, so it never loses any.
+- Browsers do not apply the same-origin policy to WebSockets and send the site's cookies with the handshake. The app
+  refuses a `/conversation` handshake whose `Origin` is neither its own host nor in `VOICE_AGENT_WEB_ALLOWED_ORIGINS`,
+  so a page on another site cannot open a call from a signed-in user's browser, whatever the sign-in cookie's
+  `SameSite` setting is.
+
+**The image has no authentication of its own.** The Dockerfile binds `0.0.0.0`, and on Azure the Container Apps
+sign-in stands in front of it. Run the image anywhere without a sign-in in front and anyone who can reach it can spend
+the OpenAI key and change bookings. Also set a monthly spend limit on the OpenAI project, as a backstop the app cannot
+enforce.
 
 ## Development
 

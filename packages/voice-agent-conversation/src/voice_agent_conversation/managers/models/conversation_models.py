@@ -1,9 +1,17 @@
+import asyncio
 from dataclasses import dataclass
 from enum import StrEnum
 
 
 class SpeechProvider(StrEnum):
     OPENAI = "openai"
+
+
+class CallLimit(StrEnum):
+    """Which limit ended a call. Each holds a paid speech provider session open, so neither runs unbounded."""
+
+    MAXIMUM_DURATION = "maximum_duration"
+    MAXIMUM_SILENCE = "maximum_silence"
 
 
 class PresentedGender(StrEnum):
@@ -72,11 +80,49 @@ class SpeechProviderErrorTolerated:
     error_type: str
     error_code: str | None
     error_message: str
+    # True when what was refused is the goodbye asked for at a call limit, so only that refusal asks for it again.
+    refused_farewell: bool = False
+
+
+@dataclass(frozen=True)
+class CallLimitReached:
+    """The last event of a call a limit ended: the agent has said goodbye, and the host should end the call."""
+
+    call_limit: CallLimit
+
+
+@dataclass(frozen=True)
+class CallEndSignals:
+    """How the parts of one call tell each other it is ending: the guest's side has ended, or a call limit was reached and
+    the farewell asked for. Each is set once and never cleared."""
+
+    guest_audio_ended: asyncio.Event
+    reached_call_limit: asyncio.Future[CallLimit]
+
+
+@dataclass(frozen=True)
+class GuestSpeechActivity:
+    """Whether the guest is talking, and when they were last heard starting or stopping, on the event loop's clock."""
+
+    guest_is_speaking: bool
+    last_heard_at: float
+
+
+@dataclass(frozen=True)
+class GuestAudioAllowance:
+    """How much guest speech may still go to the provider at once, as of measured_at on the event loop's clock. Speech
+    earns allowance as fast as it can be spoken, so a sender cannot push audio faster than real time for long."""
+
+    available_byte_count: float
+    measured_at: float
 
 
 @dataclass(frozen=True)
 class AgentTurnFinished:
-    """The agent finished, or abandoned, its current reply."""
+    """The agent finished, or abandoned, its current reply. ended_farewell is True only for the goodbye asked for at a
+    call limit, so the call ends when that reply does and not when some earlier reply's end arrives late."""
+
+    ended_farewell: bool = False
 
 
 @dataclass(frozen=True)
@@ -140,11 +186,11 @@ class SentAgentSpeech:
 
 
 # What the guest's side of a call is sent: the page plays or acts on every one of these.
-type GuestFacingConversationEvent = ConversationStarted | AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished
+type GuestFacingConversationEvent = ConversationStarted | AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished | CallLimitReached
 
 type ConversationEvent = GuestFacingConversationEvent | SpeechProviderErrorTolerated
 
-type AgentSessionEvent = AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished | SpeechProviderErrorTolerated
+type AgentSessionEvent = AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished | SpeechProviderErrorTolerated | CallLimitReached
 
 type VoiceSessionEvent = (
     AgentSpeechReceived | GuestStartedSpeaking | GuestStoppedSpeaking | AgentTurnFinished | AgentToolCallRequested | SpeechProviderErrorTolerated

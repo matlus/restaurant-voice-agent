@@ -35,6 +35,10 @@ class RealtimeVoiceSessionBase(ABC):
         """Asks the agent to speak first and greet the guest. The greeting instructions apply to that one reply only."""
 
     @abstractmethod
+    async def request_farewell(self, farewell_instructions: str) -> None:
+        """Asks the agent for a last reply that says goodbye. The farewell instructions apply to that one reply only."""
+
+    @abstractmethod
     async def send_tool_result(self, call_id: str, tool_output: str) -> None:
         """Answers a tool call the session reported. Once every call in its reply is answered, ask for the next reply."""
 
