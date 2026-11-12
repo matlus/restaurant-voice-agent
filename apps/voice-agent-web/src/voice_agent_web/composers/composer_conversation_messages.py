@@ -1,6 +1,13 @@
 from collections.abc import Iterable
 
-from voice_agent_conversation import AgentSpeechChunk, AgentTurnFinished, ConversationEvent, ConversationStarted, GuestStartedSpeaking, VoiceOption
+from voice_agent_conversation import (
+    AgentSpeechChunk,
+    AgentTurnFinished,
+    ConversationStarted,
+    GuestFacingConversationEvent,
+    GuestStartedSpeaking,
+    VoiceOption,
+)
 from voice_agent_web.resource_models.conversation_resources import ConversationMessage, VoiceResource, VoicesResource
 
 
@@ -9,8 +16,8 @@ class ComposerConversationMessages:
     PCM at the announced agent sample rate, so nothing but speech may ever be composed as bytes."""
 
     @staticmethod
-    def compose_event(conversation_event: ConversationEvent) -> ConversationMessage:
-        match conversation_event:
+    def compose_event(guest_facing_conversation_event: GuestFacingConversationEvent) -> ConversationMessage:
+        match guest_facing_conversation_event:
             case AgentSpeechChunk(pcm_audio=pcm_audio):
                 return pcm_audio
             case ConversationStarted(conversation_audio_format=conversation_audio_format, voice_option=voice_option):

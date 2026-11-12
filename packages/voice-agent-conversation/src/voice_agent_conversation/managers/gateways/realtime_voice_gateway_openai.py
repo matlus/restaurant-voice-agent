@@ -16,7 +16,7 @@ from voice_agent_conversation.managers.configuration_providers.settings_models.o
 from voice_agent_conversation.managers.exceptions.realtime_voice_exceptions import LogEventRealtimeVoice
 from voice_agent_conversation.managers.exceptions.voice_agent_conversation_exceptions import (
     LogEventBase,
-    VoiceAgentConversationTechnicalBaseException,
+    VoiceAgentConversationBaseException,
 )
 from voice_agent_conversation.managers.gateways.exception_translators.translator_openai_realtime_exceptions import (
     TranslatorOpenAIRealtimeExceptions,
@@ -30,6 +30,8 @@ from voice_agent_conversation.managers.models.conversation_models import (
     AgentTurnFinished,
     ConversationAudioFormat,
     GuestStartedSpeaking,
+    GuestStoppedSpeaking,
+    SpeechProviderErrorTolerated,
     VoiceSessionEvent,
     VoiceSessionSettings,
 )
@@ -56,20 +58,8 @@ class RealtimeVoiceGatewayOpenAI(RealtimeVoiceGatewayBase):
 
     @override
     async def open_session(self, voice_session_settings: VoiceSessionSettings) -> RealtimeVoiceSessionBase:
-        client: AsyncOpenAI = self._get_open_client()
-        try:
-            connection: AsyncRealtimeConnection = await client.realtime.connect(model=self._model).enter()
-        except (OpenAIError, WebSocketException, OSError) as provider_error:
-            raise TranslatorOpenAIRealtimeExceptions.translate_connection_failure(
-                provider_error, self._describe_connect_operation(), LogEventRealtimeVoice.SESSION_OPEN
-            ) from provider_error
-        realtime_voice_session_openai: _RealtimeVoiceSessionOpenAI = _RealtimeVoiceSessionOpenAI(connection, voice_session_settings)
-        try:
-            await realtime_voice_session_openai.configure()
-        except BaseException:
-            await realtime_voice_session_openai.close()
-            raise
-        return realtime_voice_session_openai
+        connection: AsyncRealtimeConnection = await self._connect()
+        return await self._configure_session(connection, voice_session_settings)
 
     @override
     async def close(self) -> None:
@@ -84,6 +74,27 @@ class RealtimeVoiceGatewayOpenAI(RealtimeVoiceGatewayBase):
             raise TranslatorOpenAIRealtimeExceptions.translate_connection_failure(
                 provider_error, self.CLOSE_OPERATION_DESCRIPTION, LogEventRealtimeVoice.CLIENT_CLOSE
             ) from provider_error
+
+    async def _connect(self) -> AsyncRealtimeConnection:
+        client: AsyncOpenAI = self._get_open_client()
+        try:
+            return await client.realtime.connect(model=self._model).enter()
+        except (OpenAIError, WebSocketException, OSError) as provider_error:
+            raise TranslatorOpenAIRealtimeExceptions.translate_connection_failure(
+                provider_error, self._describe_connect_operation(), LogEventRealtimeVoice.SESSION_OPEN
+            ) from provider_error
+
+    @staticmethod
+    async def _configure_session(connection: AsyncRealtimeConnection, voice_session_settings: VoiceSessionSettings) -> RealtimeVoiceSessionBase:
+        """Hands the connection to a session and returns it once the provider has accepted the settings. A session that
+        cannot be configured is closed here, because the caller never receives it to close."""
+        realtime_voice_session_openai: _RealtimeVoiceSessionOpenAI = _RealtimeVoiceSessionOpenAI(connection, voice_session_settings)
+        try:
+            await realtime_voice_session_openai.configure()
+        except BaseException:
+            await realtime_voice_session_openai.close()
+            raise
+        return realtime_voice_session_openai
 
     def _get_open_client(self) -> AsyncOpenAI:
         if self._client is None:
@@ -104,6 +115,10 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
     The provider emits many more event types than a voice-only conversation needs, such as transcripts
     and item bookkeeping. Those are ignored by design, not by omission.
 
+    The provider reports most errors without closing the session. Only the error codes known to leave the conversation
+    as it should be are tolerated and passed on for the host to log; any other error ends the call, so an error nobody
+    has judged harmless is never hidden.
+
     It keeps no record of the conversation beyond its connection: whoever drives it decides when to ask for the next
     reply and how much of the agent's speech the guest heard.
     """
@@ -116,8 +131,9 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
     SESSION_CONFIRMATION_TIMEOUT_SECONDS: Final[float] = 10.0
     CONFIGURE_OPERATION_DESCRIPTION: Final[str] = "configuring the session"
     CONVERSE_OPERATION_DESCRIPTION: Final[str] = "conversing"
-    # The provider's refusal of a reply request while a reply is already under way.
-    ACTIVE_RESPONSE_ERROR_CODE: Final[str] = "conversation_already_has_active_response"
+    # A reply asked for after tool calls can meet one the provider started itself when the guest spoke. The provider
+    # keeps its own reply and refuses the request, which leaves the conversation as it should be.
+    TOLERATED_ERROR_CODES: Final[frozenset[str]] = frozenset({"conversation_already_has_active_response"})
 
     def __init__(self, connection: AsyncRealtimeConnection, voice_session_settings: VoiceSessionSettings) -> None:
         self._connection: AsyncRealtimeConnection | None = connection
@@ -283,6 +299,8 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
                 )
             case "input_audio_buffer.speech_started":
                 return GuestStartedSpeaking()
+            case "input_audio_buffer.speech_stopped":
+                return GuestStoppedSpeaking()
             case "response.function_call_arguments.done":
                 return AgentToolCallRequested(call_id=server_event.call_id, tool_name=server_event.name, arguments_json=server_event.arguments)
             case "response.done":
@@ -290,10 +308,10 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
                     raise cls._translate_failed_response(server_event.response.status_details)
                 return AgentTurnFinished()
             case "error":
-                # A reply asked for after tool calls can meet one the provider started itself when the guest spoke. The
-                # provider keeps its own reply and refuses the request, which leaves the conversation as it should be.
-                if server_event.error.code == cls.ACTIVE_RESPONSE_ERROR_CODE:
-                    return None
+                if server_event.error.code in cls.TOLERATED_ERROR_CODES:
+                    return SpeechProviderErrorTolerated(
+                        error_type=server_event.error.type, error_code=server_event.error.code, error_message=server_event.error.message
+                    )
                 raise TranslatorOpenAIRealtimeExceptions.translate_reported_error(
                     error_type=server_event.error.type,
                     error_code=server_event.error.code,
@@ -305,7 +323,7 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
                 return None
 
     @classmethod
-    def _translate_failed_response(cls, status_details: RealtimeResponseStatus | None) -> VoiceAgentConversationTechnicalBaseException:
+    def _translate_failed_response(cls, status_details: RealtimeResponseStatus | None) -> VoiceAgentConversationBaseException:
         # The provider does not always say why a reply failed, so a missing reason still yields a classified failure.
         failure: RealtimeResponseStatusError | None = status_details.error if status_details is not None else None
         return TranslatorOpenAIRealtimeExceptions.translate_reported_error(

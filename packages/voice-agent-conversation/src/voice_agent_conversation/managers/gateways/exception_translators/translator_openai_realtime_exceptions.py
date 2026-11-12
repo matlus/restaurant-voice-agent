@@ -6,10 +6,12 @@ from voice_agent_conversation.managers.exceptions.realtime_voice_exceptions impo
     RealtimeVoiceProviderAccessDeniedException,
     RealtimeVoiceProviderErrorException,
     RealtimeVoiceProviderUnavailableException,
+    RealtimeVoiceSessionExpiredException,
 )
 from voice_agent_conversation.managers.exceptions.voice_agent_conversation_exceptions import (
     ContextualDataDict,
     LogEventBase,
+    VoiceAgentConversationBaseException,
     VoiceAgentConversationTechnicalBaseException,
 )
 
@@ -18,24 +20,27 @@ class TranslatorOpenAIRealtimeExceptions:
     """Turns OpenAI Realtime failures into the domain's speech provider exceptions, in one place.
 
     Connection trouble may pass if a new conversation is started. Refused credentials need the key
-    fixed. Anything else the provider reports means our request was wrong and a developer must look.
+    fixed. A session that reached the provider's time limit ends the call, and the guest can call again. Anything
+    else the provider reports means our request was wrong and a developer must look.
     """
 
     ACCESS_DENIED_HTTP_STATUS_CODES: Final[frozenset[int]] = frozenset({401, 403})
     TRANSIENT_HTTP_STATUS_CODES: Final[frozenset[int]] = frozenset({408, 429, 500, 502, 503, 504})
     ACCESS_DENIED_ERROR_CODES: Final[frozenset[str]] = frozenset({"invalid_api_key", "insufficient_quota"})
     SERVER_ERROR_TYPE: Final[str] = "server_error"
+    SESSION_EXPIRED_ERROR_CODE: Final[str] = "session_expired"
     # OpenAI refuses a connection it has already accepted, such as one with an invalid API key, by closing
     # it with an application close code (3000-4999) whose reason reads "<error type>.<error code>".
     PROVIDER_CLOSE_CODES: Final[range] = range(3000, 5000)
     OPERATION_CONTEXT_KEY: Final[str] = "RealtimeVoice.Operation"
     PROVIDER_ERROR_CODE_CONTEXT_KEY: Final[str] = "RealtimeVoice.ProviderErrorCode"
+    PROVIDER_ERROR_MESSAGE_CONTEXT_KEY: Final[str] = "RealtimeVoice.ProviderErrorMessage"
     PROVIDER_NAME: Final[str] = "OpenAI Realtime"
 
     @classmethod
     def translate_connection_failure(
         cls, provider_error: Exception, operation_description: str, log_event: LogEventBase
-    ) -> VoiceAgentConversationTechnicalBaseException:
+    ) -> VoiceAgentConversationBaseException:
         provider_close_reason: str | None = cls._get_provider_close_reason(provider_error)
         if provider_close_reason is not None:
             return cls._translate_provider_refusal(provider_close_reason, operation_description, log_event)
@@ -47,13 +52,35 @@ class TranslatorOpenAIRealtimeExceptions:
     @classmethod
     def translate_reported_error(
         cls, error_type: str, error_code: str | None, error_message: str, operation_description: str, log_event: LogEventBase
-    ) -> VoiceAgentConversationTechnicalBaseException:
+    ) -> VoiceAgentConversationBaseException:
+        contextual_data_by_name: ContextualDataDict = cls._build_reported_error_context(error_type, error_code, operation_description)
+        return cls._create_reported_error_exception(error_type, error_code, error_message, operation_description, log_event, contextual_data_by_name)
+
+    @classmethod
+    def _build_reported_error_context(cls, error_type: str, error_code: str | None, operation_description: str) -> ContextualDataDict:
         contextual_data_by_name: ContextualDataDict = {
             cls.OPERATION_CONTEXT_KEY: operation_description,
             "RealtimeVoice.ProviderErrorType": error_type,
         }
         if error_code is not None:
             contextual_data_by_name[cls.PROVIDER_ERROR_CODE_CONTEXT_KEY] = error_code
+        return contextual_data_by_name
+
+    @classmethod
+    def _create_reported_error_exception(
+        cls,
+        error_type: str,
+        error_code: str | None,
+        error_message: str,
+        operation_description: str,
+        log_event: LogEventBase,
+        contextual_data_by_name: ContextualDataDict,
+    ) -> VoiceAgentConversationBaseException:
+        if error_code == cls.SESSION_EXPIRED_ERROR_CODE:
+            # The message is written for the guest, so the provider's own words go to the log through the context.
+            return RealtimeVoiceSessionExpiredException(
+                log_event=log_event, contextual_data_by_name={**contextual_data_by_name, cls.PROVIDER_ERROR_MESSAGE_CONTEXT_KEY: error_message}
+            )
         if error_code in cls.ACCESS_DENIED_ERROR_CODES:
             return RealtimeVoiceProviderAccessDeniedException(
                 message=f"{cls.PROVIDER_NAME} refused the account while {operation_description}: {error_message}",
@@ -82,7 +109,7 @@ class TranslatorOpenAIRealtimeExceptions:
     @classmethod
     def _translate_provider_refusal(
         cls, provider_close_reason: str, operation_description: str, log_event: LogEventBase
-    ) -> VoiceAgentConversationTechnicalBaseException:
+    ) -> VoiceAgentConversationBaseException:
         error_type: str
         error_code: str
         error_type, _, error_code = provider_close_reason.partition(".")

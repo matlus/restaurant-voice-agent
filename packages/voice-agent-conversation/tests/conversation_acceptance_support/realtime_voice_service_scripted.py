@@ -45,6 +45,13 @@ class SpeechStartedEventMessage(TypedDict):
     item_id: str
 
 
+class SpeechStoppedEventMessage(TypedDict):
+    type: Literal["input_audio_buffer.speech_stopped"]
+    event_id: str
+    audio_end_ms: int
+    item_id: str
+
+
 class OutputAudioDeltaEventMessage(TypedDict):
     type: Literal["response.output_audio.delta"]
     event_id: str
@@ -91,7 +98,12 @@ class SessionEventMessage(TypedDict):
 
 
 type ScriptedServerEventMessage = (
-    SpeechStartedEventMessage | ErrorEventMessage | ResponseDoneEventMessage | FunctionCallArgumentsDoneEventMessage | OutputAudioDeltaEventMessage
+    SpeechStartedEventMessage
+    | SpeechStoppedEventMessage
+    | ErrorEventMessage
+    | ResponseDoneEventMessage
+    | FunctionCallArgumentsDoneEventMessage
+    | OutputAudioDeltaEventMessage
 )
 type ServerEventMessage = ScriptedServerEventMessage | SessionEventMessage
 
@@ -152,8 +164,11 @@ def create_speech_started_event() -> SpeechStartedEventMessage:
     return {"type": "input_audio_buffer.speech_started", "event_id": "event_speech_started", "audio_start_ms": 0, "item_id": "item_guest"}
 
 
+def create_speech_stopped_event() -> SpeechStoppedEventMessage:
+    return {"type": "input_audio_buffer.speech_stopped", "event_id": "event_speech_stopped", "audio_end_ms": 0, "item_id": "item_guest"}
+
+
 def create_agent_speech_event(item_id: str, pcm_audio: bytes) -> OutputAudioDeltaEventMessage:
-    """One piece of the agent's speech in the reply item given, as OpenAI streams it."""
     return {
         "type": "response.output_audio.delta",
         "event_id": f"event_{item_id}_audio",
@@ -167,9 +182,9 @@ def create_agent_speech_event(item_id: str, pcm_audio: bytes) -> OutputAudioDelt
 
 def create_malformed_agent_speech_event() -> OutputAudioDeltaEventMessage:
     """A piece of agent speech whose audio is not valid base64, as a corrupted provider frame would carry."""
-    malformed_agent_speech_event: OutputAudioDeltaEventMessage = create_agent_speech_event("item_malformed", b"")
-    malformed_agent_speech_event["delta"] = "not base64 audio!"
-    return malformed_agent_speech_event
+    malformed_output_audio_delta_event_message: OutputAudioDeltaEventMessage = create_agent_speech_event("item_malformed", b"")
+    malformed_output_audio_delta_event_message["delta"] = "not base64 audio!"
+    return malformed_output_audio_delta_event_message
 
 
 def create_error_event(error_type: str, error_code: str | None, error_message: str) -> ErrorEventMessage:

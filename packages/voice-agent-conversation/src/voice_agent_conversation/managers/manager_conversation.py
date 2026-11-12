@@ -23,6 +23,8 @@ from voice_agent_conversation.managers.models.conversation_models import (
     ConversationStarted,
     GuestSideEvent,
     GuestSpeechChunk,
+    GuestStartedSpeaking,
+    GuestStoppedSpeaking,
     SentAgentSpeech,
     VoiceOption,
     VoiceSessionEvent,
@@ -67,7 +69,7 @@ class ManagerConversation:
         restaurant_profile: RestaurantProfile = await self._restaurant_domain_facade.get_restaurant_profile()
         voice_session_settings: VoiceSessionSettings = VoiceSessionSettings(
             provider_voice_id=voice_option.provider_voice_id,
-            agent_instructions=await self._compose_agent_instructions(restaurant_profile),
+            agent_instructions=await self._compose_agent_instructions(restaurant_profile.name),
             agent_tool_definitions=self._agent_toolbox.get_tool_definitions(),
         )
         async with await self._realtime_voice_gateway.open_session(voice_session_settings) as realtime_voice_session:
@@ -92,9 +94,9 @@ class ManagerConversation:
             )
         return matching_voice_options[0]
 
-    async def _compose_agent_instructions(self, restaurant_profile: RestaurantProfile) -> str:
+    async def _compose_agent_instructions(self, restaurant_name: str) -> str:
         restaurant_local_now: datetime = await self._restaurant_domain_facade.get_restaurant_local_now()
-        return AgentInstructions.compose(restaurant_profile.name, restaurant_local_now)
+        return AgentInstructions.compose(restaurant_name, restaurant_local_now)
 
     @staticmethod
     async def _relay_conversation(
@@ -104,8 +106,10 @@ class ManagerConversation:
         a failure on either side escapes.
 
         A reply in which the agent calls tools ends without speech; it speaks once it has the answers. So when such a reply
-        ends, the next reply is asked for instead of reporting the turn as finished. The agent's speech is counted as it is
-        passed on, so a cut-off report from the guest's side can tell the provider where the guest stopped hearing it.
+        ends, the next reply is asked for instead of reporting the turn as finished, unless the guest is talking: the
+        provider answers the guest by itself once they finish, and a reply asked for now would talk over them. The agent's
+        speech is counted as it is passed on, so a cut-off report from the guest's side can tell the provider where the
+        guest stopped hearing it.
         """
         guest_audio_ended: asyncio.Event = asyncio.Event()
         # Rebound as speech is passed on; the guest side forwarding reads the latest count through this frame.
@@ -116,6 +120,7 @@ class ManagerConversation:
         # Wrong tool calls are counted per conversation; the toolbox ends the call when too many come in a row.
         consecutive_call_repair_count: int = 0
         has_answered_tool_calls: bool = False
+        guest_is_speaking: bool = False
         try:
             voice_session_event: VoiceSessionEvent
             async for voice_session_event in realtime_voice_session.receive_events():
@@ -130,7 +135,14 @@ class ManagerConversation:
                         yield AgentSpeechChunk(pcm_audio=pcm_audio)
                     case AgentTurnFinished() if has_answered_tool_calls:
                         has_answered_tool_calls = False
-                        await ManagerConversation._request_next_reply(realtime_voice_session, guest_audio_ended)
+                        # A guest who is talking gets the reply the provider starts by itself when they finish.
+                        if not guest_is_speaking:
+                            await ManagerConversation._request_next_reply(realtime_voice_session, guest_audio_ended)
+                    case GuestStartedSpeaking():
+                        guest_is_speaking = True
+                        yield voice_session_event
+                    case GuestStoppedSpeaking():
+                        guest_is_speaking = False
                     case _:
                         yield voice_session_event
         finally:

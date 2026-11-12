@@ -1,4 +1,5 @@
 import json
+import logging
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import aclosing
 
@@ -7,7 +8,14 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import Message
 from starlette.websockets import WebSocket, WebSocketState
 
-from voice_agent_conversation import ConversationEvent, ConversationRequest, DomainFacade, GuestSideEvent, VoiceOption
+from voice_agent_conversation import (
+    ConversationEvent,
+    ConversationRequest,
+    DomainFacade,
+    GuestSideEvent,
+    SpeechProviderErrorTolerated,
+    VoiceOption,
+)
 from voice_agent_web.composers.composer_conversation_messages import ComposerConversationMessages
 from voice_agent_web.parsers.parser_conversation_request import ParserConversationRequest
 from voice_agent_web.parsers.parser_guest_side_message import ParserGuestSideMessage
@@ -20,10 +28,12 @@ class ConversationHandler:
     Each method reads, parses, calls the domain through one Hook and composes the reply. Failures pass
     untouched to the exception translation middleware. A browser hanging up is the normal end of a call,
     not a failure: the guest audio stream ends at the disconnect, and nothing is sent once the browser is gone.
+    A speech provider error the call carried on through is logged here, at the host boundary, and never sent to the page.
     """
 
     def __init__(self, domain_facade: DomainFacade) -> None:
         self._domain_facade: DomainFacade = domain_facade
+        self._logger: logging.Logger = logging.getLogger(__name__)
 
     async def list_voices(self, _request: Request) -> Response:
         voice_options: list[VoiceOption] = await self._get_voice_options_through_domain()
@@ -44,13 +54,24 @@ class ConversationHandler:
     ) -> AsyncGenerator[ConversationEvent]:
         return self._domain_facade.converse(conversation_request, guest_side_events)
 
-    @classmethod
-    async def _relay_conversation_to_browser(cls, websocket: WebSocket, conversation: AsyncIterator[ConversationEvent]) -> None:
+    async def _relay_conversation_to_browser(self, websocket: WebSocket, conversation: AsyncIterator[ConversationEvent]) -> None:
         conversation_event: ConversationEvent
         async for conversation_event in conversation:
-            # After the guest hangs up the conversation winds down; there is no one left to send to.
-            if cls._is_browser_connected(websocket):
-                await cls._send_conversation_message(websocket, ComposerConversationMessages.compose_event(conversation_event))
+            match conversation_event:
+                case SpeechProviderErrorTolerated():
+                    self._log_tolerated_provider_error(conversation_event)
+                case _:
+                    # After the guest hangs up the conversation winds down; there is no one left to send to.
+                    if self._is_browser_connected(websocket):
+                        await self._send_conversation_message(websocket, ComposerConversationMessages.compose_event(conversation_event))
+
+    def _log_tolerated_provider_error(self, speech_provider_error_tolerated: SpeechProviderErrorTolerated) -> None:
+        self._logger.warning(
+            "The speech provider reported an error the call carried on through: type=%s code=%s message=%s",
+            speech_provider_error_tolerated.error_type,
+            speech_provider_error_tolerated.error_code,
+            speech_provider_error_tolerated.error_message,
+        )
 
     @classmethod
     async def _close_browser_connection(cls, websocket: WebSocket) -> None:
