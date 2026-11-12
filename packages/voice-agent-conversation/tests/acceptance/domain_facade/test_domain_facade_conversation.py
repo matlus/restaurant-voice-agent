@@ -176,6 +176,38 @@ class TestConversation:
             expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
         )
 
+    async def test_Converse_WhenTheProviderRefusesAReplyRequestBecauseAReplyIsUnderWay_ThenTheCallGoesOn(
+        self, restaurant_database_path: Path
+    ) -> None:
+        # A reply asked for after tool calls can meet the reply the provider began itself when the guest spoke.
+        guest_microphone: GuestMicrophone = GuestMicrophone()
+        conversation_request: ConversationRequest = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
+        active_response_refusal: ErrorEventMessage = create_error_event(
+            "invalid_request_error", "conversation_already_has_active_response", "Conversation already has an active response in progress."
+        )
+        expected_conversation_events: list[ConversationEvent] = [
+            ConversationStarted(conversation_audio_format=PROVIDER_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+            AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
+            AgentTurnFinished(),
+            GuestStartedSpeaking(),
+        ]
+
+        async with (
+            RealtimeVoiceServiceScripted(
+                events_after_each_guest_audio=[active_response_refusal, create_speech_started_event()]
+            ) as realtime_voice_service_scripted,
+            create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_guest_side_events())) as conversation,
+        ):
+            actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
+                conversation, GUEST_AUDIO_CHUNKS[:1], hang_up_after_event_count=len(expected_conversation_events)
+            )
+
+        AsserterConversation.assert_conversation_events_are_as_expected(
+            expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
+        )
+
     async def test_Converse_WhenTheGuestTalksOverTheAgent_ThenTheProviderForgetsTheSpeechTheGuestDidNotHear(
         self, restaurant_database_path: Path
     ) -> None:

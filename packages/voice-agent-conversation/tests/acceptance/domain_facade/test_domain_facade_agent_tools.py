@@ -101,6 +101,14 @@ class BookingSummaryAnswer:
 
 
 @dataclass(frozen=True)
+class AgentToolRefusalAnswer:
+    """A refusal as the agent reads it: that the restaurant refused, and its reason, and no other fields."""
+
+    refused: bool
+    reason: str
+
+
+@dataclass(frozen=True)
 class BookingConfirmationDetails:
     """A new booking's answer as the agent reads it, apart from the confirmation code the store assigns."""
 
@@ -159,6 +167,14 @@ def create_expected_booking_summary(reservation: Reservation) -> BookingSummaryA
         reservation_time=f"{reservation.starts_at:%H:%M}",
         party_size=reservation.party_size,
     )
+
+
+def read_refusal_answers(realtime_voice_service_scripted: RealtimeVoiceServiceScripted) -> list[AgentToolRefusalAnswer]:
+    """Each tool answer read as a refusal; an answer carrying any other field fails to read as AgentToolRefusalAnswer."""
+    return [
+        AgentToolRefusalAnswer(**json.loads(captured_tool_output.output))
+        for captured_tool_output in collect_tool_outputs(realtime_voice_service_scripted)
+    ]
 
 
 def read_booking_summary_answers(realtime_voice_service_scripted: RealtimeVoiceServiceScripted) -> list[list[BookingSummaryAnswer]]:
@@ -482,7 +498,7 @@ class TestAgentTools:
             )
             with pytest.raises(RestaurantClosedOnDateException) as raised:
                 await restaurant_domain_facade.check_availability(availability_request)
-        expected_tool_answers: list[dict[str, object]] = [{"refused": True, "reason": raised.value.message}]
+        expected_tool_answers: list[AgentToolRefusalAnswer] = [AgentToolRefusalAnswer(refused=True, reason=raised.value.message)]
 
         async with (
             RealtimeVoiceServiceScripted(
@@ -496,9 +512,7 @@ class TestAgentTools:
                 conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1)
             )
 
-        actual_tool_answers: list[dict[str, object]] = [
-            json.loads(actual_tool_output.output) for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted)
-        ]
+        actual_tool_answers: list[AgentToolRefusalAnswer] = read_refusal_answers(realtime_voice_service_scripted)
         AsserterConversation.assert_conversation_events_are_as_expected(
             expected_conversation_events=EXPECTED_CONVERSATION_EVENTS, actual_conversation_events=actual_conversation_events
         )
@@ -638,7 +652,7 @@ class TestAgentTools:
         assert expected_reason_phrase in policy_refusal, (
             f"The restaurant's refusal no longer gives the reason this scenario needs: {policy_refusal!r}"
         )
-        expected_tool_answers: list[dict[str, object]] = [{"refused": True, "reason": policy_refusal}]
+        expected_tool_answers: list[AgentToolRefusalAnswer] = [AgentToolRefusalAnswer(refused=True, reason=policy_refusal)]
 
         async with (
             RealtimeVoiceServiceScripted(
@@ -652,9 +666,7 @@ class TestAgentTools:
                 conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1)
             )
 
-        actual_tool_answers: list[dict[str, object]] = [
-            json.loads(actual_tool_output.output) for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted)
-        ]
+        actual_tool_answers: list[AgentToolRefusalAnswer] = read_refusal_answers(realtime_voice_service_scripted)
         AsserterConversation.assert_conversation_events_are_as_expected(
             expected_conversation_events=EXPECTED_CONVERSATION_EVENTS, actual_conversation_events=actual_conversation_events
         )
@@ -670,7 +682,7 @@ class TestAgentTools:
         availability_request: AvailabilityRequest = await create_tomorrows_availability_request(restaurant_database_path, "19:00", 10)
         policy_refusal: str = await read_policy_refusal(restaurant_database_path, availability_request)
         expected_conversation_events: list[ConversationEvent] = GREETING_EVENTS + ANSWER_EVENTS * refusal_count
-        expected_tool_answers: list[dict[str, object]] = [{"refused": True, "reason": policy_refusal}] * refusal_count
+        expected_tool_answers: list[AgentToolRefusalAnswer] = [AgentToolRefusalAnswer(refused=True, reason=policy_refusal)] * refusal_count
 
         async with (
             RealtimeVoiceServiceScripted(
@@ -684,9 +696,7 @@ class TestAgentTools:
                 conversation, [GUEST_QUESTION_AUDIO] * refusal_count, hang_up_after_event_count=count_events_after_answers(refusal_count)
             )
 
-        actual_tool_answers: list[dict[str, object]] = [
-            json.loads(actual_tool_output.output) for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted)
-        ]
+        actual_tool_answers: list[AgentToolRefusalAnswer] = read_refusal_answers(realtime_voice_service_scripted)
         AsserterConversation.assert_conversation_events_are_as_expected(
             expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
         )

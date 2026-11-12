@@ -63,7 +63,6 @@ class ConversationHandler:
 
     @staticmethod
     async def _receive_guest_side_events(websocket: WebSocket) -> AsyncGenerator[GuestSideEvent]:
-        """Yields the guest's speech and the page's agent speech cut-off reports until the browser hangs up."""
         while True:
             websocket_message: Message = await websocket.receive()
             if websocket_message["type"] == "websocket.disconnect":

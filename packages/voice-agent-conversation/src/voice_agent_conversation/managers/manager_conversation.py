@@ -206,7 +206,8 @@ class ManagerConversation:
         sent_agent_speech: SentAgentSpeech | None,
         cut_off_agent_speech_part: AgentSpeechPart | None,
     ) -> AgentSpeechPart | None:
-        """Tells the provider where the guest stopped hearing the agent's latest speech, and returns the part now cut off."""
+        """Returns the part cut off so far, which the caller hands back with the next report: a report that removes nothing
+        the guest did not hear, or names a part already cut off, changes nothing."""
         if sent_agent_speech is None or not AgentSpeechPlayback.drops_unheard_speech(
             sent_agent_speech, agent_speech_cut_off, cut_off_agent_speech_part
         ):

@@ -13,6 +13,7 @@ from starlette.responses import Response
 from starlette.types import Message
 from starlette.websockets import WebSocketDisconnect
 from web_test_support.conversation_handler_for_test import ConversationHandlerForTest, GuestAudioReading
+from web_test_support.generated_words import create_generated_word
 from web_test_support.scripted_browser import ScriptedBrowser
 
 from voice_agent_conversation import (
@@ -33,8 +34,9 @@ from voice_agent_conversation import (
 )
 from voice_agent_conversation.managers.exceptions.realtime_voice_exceptions import LogEventRealtimeVoice
 
-CEDAR_VOICE_OPTION: Final[VoiceOption] = VoiceOption("openai-cedar", SpeechProvider.OPENAI, "cedar", PresentedGender.MALE, "Calm and grounded.")
-CORAL_VOICE_OPTION: Final[VoiceOption] = VoiceOption("openai-coral", SpeechProvider.OPENAI, "coral", PresentedGender.FEMALE, "Bright and friendly.")
+# The descriptions are incidental: the handler passes whatever the domain says.
+CEDAR_VOICE_OPTION: Final[VoiceOption] = VoiceOption("openai-cedar", SpeechProvider.OPENAI, "cedar", PresentedGender.MALE, create_generated_word())
+CORAL_VOICE_OPTION: Final[VoiceOption] = VoiceOption("openai-coral", SpeechProvider.OPENAI, "coral", PresentedGender.FEMALE, create_generated_word())
 CONVERSATION_AUDIO_FORMAT: Final[ConversationAudioFormat] = ConversationAudioFormat(
     guest_audio_sample_rate_hz=16_000, agent_audio_sample_rate_hz=24_000
 )
@@ -59,8 +61,8 @@ class TestConversationHandlerListVoices:
         expected_media_type: str = "application/json"
         expected_body: dict[str, object] = {
             "voices": [
-                {"voice_key": "openai-cedar", "presented_gender": "male", "description": "Calm and grounded."},
-                {"voice_key": "openai-coral", "presented_gender": "female", "description": "Bright and friendly."},
+                {"voice_key": "openai-cedar", "presented_gender": "male", "description": CEDAR_VOICE_OPTION.description},
+                {"voice_key": "openai-coral", "presented_gender": "female", "description": CORAL_VOICE_OPTION.description},
             ]
         }
 
@@ -122,6 +124,7 @@ class TestConversationHandlerHoldConversation:
                     "text": json.dumps({"type": AGENT_SPEECH_CUT_OFF_MESSAGE_TYPE, UNPLAYED_MILLISECONDS_FIELD_NAME: True}),
                 },
                 {"type": "websocket.receive", "text": json.dumps({"type": AGENT_SPEECH_CUT_OFF_MESSAGE_TYPE, UNPLAYED_MILLISECONDS_FIELD_NAME: -5})},
+                {"type": "websocket.receive", "text": json.dumps({"type": "guest_started_speaking", UNPLAYED_MILLISECONDS_FIELD_NAME: 5})},
                 {"type": "websocket.receive", "text": "{not json"},
                 {"type": "websocket.disconnect", "code": NORMAL_CLOSURE_CODE},
             ],
@@ -151,7 +154,7 @@ class TestConversationHandlerHoldConversation:
                 "type": "conversation_started",
                 "guest_audio_sample_rate_hz": 16_000,
                 "agent_audio_sample_rate_hz": 24_000,
-                "voice": {"voice_key": "openai-cedar", "presented_gender": "male", "description": "Calm and grounded."},
+                "voice": {"voice_key": "openai-cedar", "presented_gender": "male", "description": CEDAR_VOICE_OPTION.description},
             }
         )
         expected_delivered_messages: list[Message] = [

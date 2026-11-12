@@ -317,6 +317,9 @@ class RealtimeVoiceServiceScripted:
             self._service_loop.call_soon_threadsafe(self._stop_requested.set)
         if self._service_thread is not None:
             self._service_thread.join(SERVICE_STOP_TIMEOUT_SECONDS)
+            # What it captured is read only after it stops, so a thread still running would hand a test half the story.
+            if self._service_thread.is_alive():
+                raise RuntimeError("The scripted Realtime service did not stop in time.")
 
     async def _serve(self) -> None:
         self._service_loop = asyncio.get_running_loop()

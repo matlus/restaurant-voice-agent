@@ -14,7 +14,10 @@ from websockets.exceptions import WebSocketException
 
 from voice_agent_conversation.managers.configuration_providers.settings_models.openai_realtime_settings import OpenAIRealtimeSettings
 from voice_agent_conversation.managers.exceptions.realtime_voice_exceptions import LogEventRealtimeVoice
-from voice_agent_conversation.managers.exceptions.voice_agent_conversation_exceptions import LogEventBase
+from voice_agent_conversation.managers.exceptions.voice_agent_conversation_exceptions import (
+    LogEventBase,
+    VoiceAgentConversationTechnicalBaseException,
+)
 from voice_agent_conversation.managers.gateways.exception_translators.translator_openai_realtime_exceptions import (
     TranslatorOpenAIRealtimeExceptions,
 )
@@ -113,6 +116,8 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
     SESSION_CONFIRMATION_TIMEOUT_SECONDS: Final[float] = 10.0
     CONFIGURE_OPERATION_DESCRIPTION: Final[str] = "configuring the session"
     CONVERSE_OPERATION_DESCRIPTION: Final[str] = "conversing"
+    # The provider's refusal of a reply request while a reply is already under way.
+    ACTIVE_RESPONSE_ERROR_CODE: Final[str] = "conversation_already_has_active_response"
 
     def __init__(self, connection: AsyncRealtimeConnection, voice_session_settings: VoiceSessionSettings) -> None:
         self._connection: AsyncRealtimeConnection | None = connection
@@ -282,17 +287,13 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
                 return AgentToolCallRequested(call_id=server_event.call_id, tool_name=server_event.name, arguments_json=server_event.arguments)
             case "response.done":
                 if server_event.response.status == "failed":
-                    status_details: RealtimeResponseStatus | None = server_event.response.status_details
-                    failure: RealtimeResponseStatusError | None = status_details.error if status_details is not None else None
-                    raise TranslatorOpenAIRealtimeExceptions.translate_reported_error(
-                        error_type=(failure.type if failure is not None else None) or "response_failed",
-                        error_code=failure.code if failure is not None else None,
-                        error_message=(failure.message if failure is not None else None) or "The agent's response failed.",
-                        operation_description=cls.CONVERSE_OPERATION_DESCRIPTION,
-                        log_event=LogEventRealtimeVoice.EVENT_RECEIPT,
-                    )
+                    raise cls._translate_failed_response(server_event.response.status_details)
                 return AgentTurnFinished()
             case "error":
+                # A reply asked for after tool calls can meet one the provider started itself when the guest spoke. The
+                # provider keeps its own reply and refuses the request, which leaves the conversation as it should be.
+                if server_event.error.code == cls.ACTIVE_RESPONSE_ERROR_CODE:
+                    return None
                 raise TranslatorOpenAIRealtimeExceptions.translate_reported_error(
                     error_type=server_event.error.type,
                     error_code=server_event.error.code,
@@ -302,6 +303,18 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
                 )
             case _:
                 return None
+
+    @classmethod
+    def _translate_failed_response(cls, status_details: RealtimeResponseStatus | None) -> VoiceAgentConversationTechnicalBaseException:
+        # The provider does not always say why a reply failed, so a missing reason still yields a classified failure.
+        failure: RealtimeResponseStatusError | None = status_details.error if status_details is not None else None
+        return TranslatorOpenAIRealtimeExceptions.translate_reported_error(
+            error_type=(failure.type if failure is not None else None) or "response_failed",
+            error_code=failure.code if failure is not None else None,
+            error_message=(failure.message if failure is not None else None) or "The agent's response failed.",
+            operation_description=cls.CONVERSE_OPERATION_DESCRIPTION,
+            log_event=LogEventRealtimeVoice.EVENT_RECEIPT,
+        )
 
     @classmethod
     def _decode_agent_speech(cls, base64_audio: str) -> bytes:

@@ -23,7 +23,7 @@ def read_catalog_voice_options() -> list[VoiceOption]:
 
 
 def read_catalog_voice_option(voice_key: str) -> VoiceOption:
-    """The voice the bundled catalog offers under voice_key."""
+    """Fails the test's arrangement unless the bundled catalog offers exactly one voice under voice_key."""
     matching_voice_options: list[VoiceOption] = [voice_option for voice_option in read_catalog_voice_options() if voice_option.voice_key == voice_key]
     assert len(matching_voice_options) == 1, f"The bundled voice catalog must offer exactly one voice '{voice_key}'; found {matching_voice_options!r}"
     return matching_voice_options[0]
