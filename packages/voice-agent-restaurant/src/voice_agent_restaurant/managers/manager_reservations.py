@@ -115,7 +115,9 @@ class ManagerReservations:
         )
         day_seatings: list[Seating] = await self._data_manager_reservations.find_seatings_on(seatable_requested_seating.reservation_date)
         # The caller's own booking does not hold its table against a move, and its time is not offered back, as for a change.
-        own_seating: RequestedSeating | None = await self._find_own_seating_among(day_seatings, validated_availability_request.own_confirmation_code)
+        own_requested_seating: RequestedSeating | None = await self._find_own_requested_seating_among(
+            day_seatings, validated_availability_request.own_confirmation_code
+        )
         other_seatings: list[Seating] = self._leave_out_booking(day_seatings, validated_availability_request.own_confirmation_code)
         table_is_free: bool = SeatingRules.has_free_table(
             seating_plan.fitting_tables, other_seatings, seatable_requested_seating.starts_at, seating_plan.ends_at
@@ -127,7 +129,7 @@ class ManagerReservations:
             is_available=table_is_free,
             alternative_times=[]
             if table_is_free
-            else self._find_alternative_times(seating_plan, other_seatings, self._find_kept_time(seatable_requested_seating, own_seating)),
+            else self._find_alternative_times(seating_plan, other_seatings, self._find_kept_time(seatable_requested_seating, own_requested_seating)),
         )
 
     async def create_reservation(self, reservation_request: ReservationRequest) -> Reservation:
@@ -346,7 +348,7 @@ class ManagerReservations:
             },
         )
 
-    async def _find_own_seating_among(self, day_seatings: Iterable[Seating], own_confirmation_code: str | None) -> RequestedSeating | None:
+    async def _find_own_requested_seating_among(self, day_seatings: Iterable[Seating], own_confirmation_code: str | None) -> RequestedSeating | None:
         """The seating the caller's own booking holds, when it holds a table that day. A code for no booking that day changes
         nothing, so it is not looked up and does not reveal whether such a booking exists."""
         if own_confirmation_code is None or all(seating.confirmation_code != own_confirmation_code for seating in day_seatings):
@@ -361,15 +363,16 @@ class ManagerReservations:
         return [seating for seating in seatings if seating.confirmation_code != left_out_confirmation_code]
 
     @staticmethod
-    def _find_kept_time(requested_seating: RequestedSeating, held_seating: RequestedSeating | None) -> time | None:
+    def _find_kept_time(requested_seating: RequestedSeating, held_requested_seating: RequestedSeating | None) -> time | None:
         """The time the booking being moved already holds, when the move asks for the same party on the same day. For a
         different day or party size that time is a real alternative, so it is not held back."""
-        if held_seating is None:
+        if held_requested_seating is None:
             return None
         requested_seating_keeps_party_and_day: bool = (
-            requested_seating.reservation_date == held_seating.reservation_date and requested_seating.party_size == held_seating.party_size
+            requested_seating.reservation_date == held_requested_seating.reservation_date
+            and requested_seating.party_size == held_requested_seating.party_size
         )
-        return held_seating.starts_at if requested_seating_keeps_party_and_day else None
+        return held_requested_seating.starts_at if requested_seating_keeps_party_and_day else None
 
     @staticmethod
     def _find_alternative_times(seating_plan: _SeatingPlan, seatings: list[Seating], kept_time: time | None) -> list[time]:

@@ -619,8 +619,14 @@ class TestAgentTools:
         ):
             await guest_microphone.take_part(conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1))
 
+        dish_details_field_name: str = "dish_details"
         actual_dish_answers: list[tuple[str, str, bool, str]] = [
-            (dish_answer["dish"]["name"], dish_answer["dish"]["price"], "dish_id" in dish_answer["dish"], dish_answer["allergen_notice"])
+            (
+                dish_answer[dish_details_field_name]["name"],
+                dish_answer[dish_details_field_name]["price"],
+                "dish_id" in dish_answer[dish_details_field_name],
+                dish_answer["allergen_notice"],
+            )
             for dish_answer in (json.loads(actual_tool_output.output) for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted))
         ]
         assert actual_dish_answers == expected_dish_answers

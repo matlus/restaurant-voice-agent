@@ -56,7 +56,7 @@ class DishDescription:
     """What the agent reads about one dish: the dish, and the restaurant's own allergen notice, which the agent passes on
     whenever it answers about the dish's allergens or free-from diets."""
 
-    dish: DishDetails
+    dish_details: DishDetails
     allergen_notice: str
 
 
@@ -80,7 +80,7 @@ class MenuAnswerMapping:
     @staticmethod
     def to_dish_description(dish: Dish, allergen_notice: str) -> DishDescription:
         return DishDescription(
-            dish=DishDetails(
+            dish_details=DishDetails(
                 name=dish.name,
                 section=dish.category,
                 description=dish.description,

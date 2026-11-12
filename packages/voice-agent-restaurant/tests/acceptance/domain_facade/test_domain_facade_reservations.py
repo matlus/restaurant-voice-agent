@@ -289,7 +289,7 @@ def retrieve_smallest_fitting_table_id(party_size: int) -> str:
     """The table a new booking takes when every table is free: the fewest seats that hold the party, then the lowest table id."""
     fitting_tables: list[SeededTable] = [seeded_table for seeded_table in read_seeded_tables() if seeded_table.seats >= party_size]
     assert fitting_tables, f"The seeded tables must hold a party of {party_size}; the seeded data no longer supports this scenario"
-    return min(fitting_tables, key=lambda fitting_table: (fitting_table.seats, fitting_table.table_id)).table_id
+    return min(fitting_tables, key=lambda seeded_table: (seeded_table.seats, seeded_table.table_id)).table_id
 
 
 def retrieve_seeded_open_weekday(seeded_restaurant: SeededRestaurant, weekday: Weekday) -> SeededOpenWeekday:
@@ -1430,10 +1430,10 @@ class TestCancelReservation:
             freed_seating_availability_request: AvailabilityRequest = AvailabilityRequest(
                 reservation_date=BUSY_FRIDAY, reservation_time=f"{freed_seating_time:%H:%M}", party_size=freed_party_size
             )
-            availability_before_cancelling: AvailabilityResult = await domain_facade.check_availability(freed_seating_availability_request)
-            assert not availability_before_cancelling.is_available, (
+            availability_result_before_cancelling: AvailabilityResult = await domain_facade.check_availability(freed_seating_availability_request)
+            assert not availability_result_before_cancelling.is_available, (
                 f"Cancelling to free a table needs every table for {freed_party_size} taken at {freed_seating_time:%H:%M} on {BUSY_FRIDAY} "
-                f"before the cancellation; the seeded data no longer supports this scenario: {availability_before_cancelling!r}"
+                f"before the cancellation; the seeded data no longer supports this scenario: {availability_result_before_cancelling!r}"
             )
             expected_cancelled_reservation: Reservation = replace(current_reservation, reservation_status=ReservationStatus.CANCELLED)
             actual_cancelled_reservation: Reservation = await domain_facade.cancel_reservation(
