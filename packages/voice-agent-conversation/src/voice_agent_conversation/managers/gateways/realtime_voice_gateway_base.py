@@ -3,7 +3,12 @@ from collections.abc import AsyncIterator
 from types import TracebackType
 from typing import Self
 
-from voice_agent_conversation.managers.models.conversation_models import ConversationAudioFormat, VoiceSessionEvent, VoiceSessionSettings
+from voice_agent_conversation.managers.models.conversation_models import (
+    AgentSpeechPart,
+    ConversationAudioFormat,
+    VoiceSessionEvent,
+    VoiceSessionSettings,
+)
 
 
 class RealtimeVoiceSessionBase(ABC):
@@ -11,16 +16,19 @@ class RealtimeVoiceSessionBase(ABC):
 
     @property
     @abstractmethod
-    def audio_format(self) -> ConversationAudioFormat: ...
+    def conversation_audio_format(self) -> ConversationAudioFormat: ...
 
     @abstractmethod
     async def send_guest_audio(self, pcm_audio: bytes) -> None:
         """Passes on the next piece of the guest's speech. The provider detects turns itself."""
 
     @abstractmethod
-    async def cut_off_agent_speech(self, unplayed_milliseconds: int) -> None:
-        """Tells the provider the host dropped this much of the agent's latest speech unplayed, so the agent forgets
-        the part the guest never heard. Nothing dropped, or no agent speech yet, leaves the conversation as it is."""
+    async def request_next_reply(self) -> None:
+        """Asks the agent for its next reply, as it needs once every tool call in its last reply is answered."""
+
+    @abstractmethod
+    async def cut_off_agent_speech(self, agent_speech_part: AgentSpeechPart, heard_milliseconds: int) -> None:
+        """Tells the provider the guest heard only this much of a part of the agent's speech, so the agent forgets the rest."""
 
     @abstractmethod
     async def request_greeting(self, greeting_instructions: str) -> None:
@@ -28,7 +36,7 @@ class RealtimeVoiceSessionBase(ABC):
 
     @abstractmethod
     async def send_tool_result(self, call_id: str, tool_output: str) -> None:
-        """Answers a tool call the session reported. The agent goes on speaking once every call in its reply is answered."""
+        """Answers a tool call the session reported. Once every call in its reply is answered, ask for the next reply."""
 
     @abstractmethod
     def receive_events(self) -> AsyncIterator[VoiceSessionEvent]:

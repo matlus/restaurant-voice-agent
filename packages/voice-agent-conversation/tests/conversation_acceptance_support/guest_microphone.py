@@ -52,9 +52,8 @@ class GuestMicrophone:
         guest_microphone_breakdown_exception: GuestMicrophoneBreakdownException | None = None,
         unplayed_milliseconds_when_talked_over: int | None = None,
     ) -> list[ConversationEvent]:
-        """Listens to the call and gathers its events. Once the agent's greeting is over the guest says each chunk;
-        the guest hangs up after the given number of events, or the microphone breaks right after speaking if a breakdown is given.
-        Given an unplayed duration, the guest's side reports that much agent speech cut off each time the guest talks over the agent."""
+        """Plays the guest through the call and returns every event it heard. The guest speaks only after the greeting,
+        because a real caller waits for the agent to answer."""
         actual_conversation_events: list[ConversationEvent] = []
         conversation_event: ConversationEvent
         async for conversation_event in conversation:

@@ -43,7 +43,7 @@ class ConversationAudioFormat:
 class ConversationStarted:
     """The first event of every conversation. Guest audio must be sent in this format from now on."""
 
-    audio_format: ConversationAudioFormat
+    conversation_audio_format: ConversationAudioFormat
     voice_option: VoiceOption
 
 
@@ -98,11 +98,36 @@ class AgentSpeechCutOff:
 type GuestSideEvent = GuestSpeechChunk | AgentSpeechCutOff
 
 
+@dataclass(frozen=True)
+class AgentSpeechPart:
+    """Which part of which agent reply a piece of speech belongs to, as the speech provider identifies it, so speech the
+    guest did not hear can be cut off later."""
+
+    reply_item_id: str
+    content_index: int
+
+
+@dataclass(frozen=True)
+class AgentSpeechReceived:
+    """A piece of the agent's speech as the session receives it, with the part it belongs to."""
+
+    pcm_audio: bytes
+    agent_speech_part: AgentSpeechPart
+
+
+@dataclass(frozen=True)
+class SentAgentSpeech:
+    """How much of the agent's latest speech part has been passed on to the host."""
+
+    agent_speech_part: AgentSpeechPart
+    sent_byte_count: int
+
+
 type ConversationEvent = ConversationStarted | AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished
 
 type AgentSessionEvent = AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished
 
-type VoiceSessionEvent = AgentSessionEvent | AgentToolCallRequested
+type VoiceSessionEvent = AgentSpeechReceived | GuestStartedSpeaking | AgentTurnFinished | AgentToolCallRequested
 
 # A JSON Schema document, as the speech model reads a tool's parameters.
 type JsonSchema = dict[str, object]

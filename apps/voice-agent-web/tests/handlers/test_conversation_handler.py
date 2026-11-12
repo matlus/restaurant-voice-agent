@@ -42,6 +42,8 @@ AGENT_SPEECH: Final[bytes] = b"agent speech pcm"
 NORMAL_CLOSURE_CODE: Final[int] = 1000
 GOING_AWAY_CLOSE_CODE: Final[int] = 1001
 ABNORMAL_CLOSURE_CODE: Final[int] = 1006
+AGENT_SPEECH_CUT_OFF_MESSAGE_TYPE: Final[str] = "agent_speech_cut_off"
+UNPLAYED_MILLISECONDS_FIELD_NAME: Final[str] = "unplayed_milliseconds"
 
 
 def create_voices_request() -> Request:
@@ -100,16 +102,26 @@ class TestConversationHandlerHoldConversation:
             scripted_browser.delivered_messages,
         ) == (expected_conversation_request, expected_guest_side_events, expected_delivered_messages)
 
-    async def test_HoldConversation_WhenThePageReportsAgentSpeechCutOff_ThenTheDomainGetsHowMuchWentUnplayedAndMalformedReportsArePassedOver(
+    async def test_HoldConversation_WhenThePageReportsAgentSpeechCutOff_ThenTheDomainGetsHowMuchWentUnplayedAndInvalidReportsArePassedOver(
         self,
     ) -> None:
         unplayed_milliseconds: int = 640
         scripted_browser: ScriptedBrowser = ScriptedBrowser(
             query_string=b"voice=openai-cedar",
             browser_messages=[
-                {"type": "websocket.receive", "text": json.dumps({"type": "agent_speech_cut_off", "unplayed_milliseconds": unplayed_milliseconds})},
-                {"type": "websocket.receive", "text": json.dumps({"type": "agent_speech_cut_off", "unplayed_milliseconds": "a lot"})},
-                {"type": "websocket.receive", "text": json.dumps({"type": "agent_speech_cut_off", "unplayed_milliseconds": True})},
+                {
+                    "type": "websocket.receive",
+                    "text": json.dumps({"type": AGENT_SPEECH_CUT_OFF_MESSAGE_TYPE, UNPLAYED_MILLISECONDS_FIELD_NAME: unplayed_milliseconds}),
+                },
+                {
+                    "type": "websocket.receive",
+                    "text": json.dumps({"type": AGENT_SPEECH_CUT_OFF_MESSAGE_TYPE, UNPLAYED_MILLISECONDS_FIELD_NAME: "a lot"}),
+                },
+                {
+                    "type": "websocket.receive",
+                    "text": json.dumps({"type": AGENT_SPEECH_CUT_OFF_MESSAGE_TYPE, UNPLAYED_MILLISECONDS_FIELD_NAME: True}),
+                },
+                {"type": "websocket.receive", "text": json.dumps({"type": AGENT_SPEECH_CUT_OFF_MESSAGE_TYPE, UNPLAYED_MILLISECONDS_FIELD_NAME: -5})},
                 {"type": "websocket.receive", "text": "{not json"},
                 {"type": "websocket.disconnect", "code": NORMAL_CLOSURE_CODE},
             ],
@@ -125,7 +137,7 @@ class TestConversationHandlerHoldConversation:
 
     async def test_HoldConversation_WhenTheDomainYieldsEveryKindOfEvent_ThenTheBrowserGetsEachAsItsWireFrameInOrderAndThenTheClose(self) -> None:
         scripted_conversation_events: list[ConversationEvent] = [
-            ConversationStarted(audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+            ConversationStarted(conversation_audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
             AgentSpeechChunk(pcm_audio=AGENT_SPEECH),
             GuestStartedSpeaking(),
             AgentTurnFinished(),
@@ -157,7 +169,7 @@ class TestConversationHandlerHoldConversation:
 
     async def test_HoldConversation_WhenTheBrowserHangsUpBeforeTheFirstFrame_ThenNothingMoreIsSentAndTheCallEndsWithoutAFailure(self) -> None:
         scripted_conversation_events: list[ConversationEvent] = [
-            ConversationStarted(audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+            ConversationStarted(conversation_audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
             AgentSpeechChunk(pcm_audio=AGENT_SPEECH),
             AgentTurnFinished(),
         ]
@@ -177,7 +189,7 @@ class TestConversationHandlerHoldConversation:
     async def test_HoldConversation_WhenAFrameCannotBeSent_ThenTheFailurePassesUntouchedToTheMiddleware(self) -> None:
         # The connection is gone but no disconnect has been read, so the handler still believes the browser is there.
         scripted_conversation_events: list[ConversationEvent] = [
-            ConversationStarted(audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION)
+            ConversationStarted(conversation_audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION)
         ]
         scripted_browser: ScriptedBrowser = ScriptedBrowser(query_string=b"voice=openai-cedar", connection_is_lost=True)
         conversation_handler_for_test: ConversationHandlerForTest = ConversationHandlerForTest(
@@ -198,7 +210,7 @@ class TestConversationHandlerHoldConversation:
         )
         scripted_browser: ScriptedBrowser = ScriptedBrowser(query_string=b"voice=openai-cedar")
         conversation_handler_for_test: ConversationHandlerForTest = ConversationHandlerForTest(
-            scripted_conversation_events=[ConversationStarted(audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION)],
+            scripted_conversation_events=[ConversationStarted(conversation_audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION)],
             scripted_conversation_failure=scripted_realtime_voice_provider_unavailable_exception,
         )
         expected_contextual_data_by_name: dict[str, str | int | float | bool] = dict(

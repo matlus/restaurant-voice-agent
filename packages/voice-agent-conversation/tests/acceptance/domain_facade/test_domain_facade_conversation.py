@@ -15,6 +15,7 @@ from typing import Final
 import pytest
 from conversation_acceptance_support.asserters.asserter_conversation import AsserterConversation
 from conversation_acceptance_support.asserters.asserter_exception import AsserterException, ExpectedExceptionContent, ExpectedExceptionMetadata
+from conversation_acceptance_support.bundled_voice_catalog import read_catalog_voice_option, read_catalog_voice_options
 from conversation_acceptance_support.guest_microphone import GuestMicrophone, GuestMicrophoneBreakdownException
 from conversation_acceptance_support.realtime_voice_service_scripted import (
     SCRIPTED_GREETING_AUDIO,
@@ -25,6 +26,7 @@ from conversation_acceptance_support.realtime_voice_service_scripted import (
     create_agent_speech_event,
     create_error_event,
     create_failed_response_event,
+    create_malformed_agent_speech_event,
     create_speech_started_event,
 )
 from conversation_acceptance_support.service_locator_testing import (
@@ -52,19 +54,12 @@ from voice_agent_conversation import (
     RealtimeVoiceProviderErrorException,
     RealtimeVoiceProviderUnavailableException,
     Severity,
-    SpeechProvider,
     VoiceAgentConversationBaseException,
     VoiceNotOfferedException,
     VoiceOption,
 )
 
-CATALOG_VOICE_OPTIONS: Final[list[VoiceOption]] = [
-    VoiceOption("openai-marin", SpeechProvider.OPENAI, "marin", PresentedGender.FEMALE, "Warm and natural, with a relaxed pace."),
-    VoiceOption("openai-coral", SpeechProvider.OPENAI, "coral", PresentedGender.FEMALE, "Bright and friendly."),
-    VoiceOption("openai-cedar", SpeechProvider.OPENAI, "cedar", PresentedGender.MALE, "Calm and grounded, with a low register."),
-    VoiceOption("openai-ash", SpeechProvider.OPENAI, "ash", PresentedGender.MALE, "Clear and upbeat."),
-]
-CEDAR_VOICE_OPTION: Final[VoiceOption] = CATALOG_VOICE_OPTIONS[2]
+CEDAR_VOICE_OPTION: Final[VoiceOption] = read_catalog_voice_option("openai-cedar")
 PROVIDER_AUDIO_FORMAT: Final[ConversationAudioFormat] = ConversationAudioFormat(guest_audio_sample_rate_hz=24_000, agent_audio_sample_rate_hz=24_000)
 GUEST_AUDIO_CHUNKS: Final[list[bytes]] = [b"guest audio chunk one", b"guest audio chunk two"]
 # One second of the agent's reply: mono 16-bit PCM at the provider's rate.
@@ -110,7 +105,7 @@ class TestConversation:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         conversation_request: ConversationRequest = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
         expected_conversation_events: list[ConversationEvent] = [
-            ConversationStarted(audio_format=PROVIDER_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+            ConversationStarted(conversation_audio_format=PROVIDER_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
             AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
             AgentTurnFinished(),
         ]
@@ -161,7 +156,7 @@ class TestConversation:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         conversation_request: ConversationRequest = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
         expected_conversation_events: list[ConversationEvent] = [
-            ConversationStarted(audio_format=PROVIDER_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+            ConversationStarted(conversation_audio_format=PROVIDER_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
             AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
             AgentTurnFinished(),
             GuestStartedSpeaking(),
@@ -248,7 +243,7 @@ class TestConversation:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         conversation_request: ConversationRequest = ConversationRequest(voice_key="  OpenAI-Marin ")
         expected_conversation_started: ConversationStarted = ConversationStarted(
-            audio_format=PROVIDER_AUDIO_FORMAT, voice_option=CATALOG_VOICE_OPTIONS[0]
+            conversation_audio_format=PROVIDER_AUDIO_FORMAT, voice_option=read_catalog_voice_option("openai-marin")
         )
 
         async with (
@@ -267,7 +262,7 @@ class TestConversation:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         refused_voice_key: str = "openai-nova"
         conversation_request: ConversationRequest = ConversationRequest(voice_key=refused_voice_key)
-        expected_offered_voice_keys: list[str] = [voice_option.voice_key for voice_option in CATALOG_VOICE_OPTIONS]
+        expected_offered_voice_keys: list[str] = [voice_option.voice_key for voice_option in read_catalog_voice_options()]
         expected_exception_content: ExpectedExceptionContent = ExpectedExceptionContent(
             message_phrases=[refused_voice_key, *expected_offered_voice_keys],
             expected_exception_metadata=ExpectedExceptionMetadata(
@@ -576,6 +571,25 @@ class TestConversationProviderFailures:
                 ),
                 id="failed-response-out-of-quota",
             ),
+            pytest.param(
+                ProviderFailureScenario(
+                    scripted_server_event_message=create_malformed_agent_speech_event(),
+                    expected_exception_type=RealtimeVoiceProviderErrorException,
+                    expected_exception_content=ExpectedExceptionContent(
+                        message_phrases=["reported an error while conversing", "not valid base64 audio"],
+                        expected_exception_metadata=ExpectedExceptionMetadata(
+                            http_status_code=PROVIDER_ERROR_HTTP_STATUS_CODE,
+                            exception_action=ExceptionAction.DEVELOPER_ACTION_REQUIRED,
+                            reason="The voice service reported an error",
+                            severity=Severity.ERROR,
+                            log_event=LogEventRealtimeVoice.EVENT_RECEIPT,
+                        ),
+                        contextual_data_by_name={OPERATION_CONTEXT_NAME: "conversing", PROVIDER_ERROR_TYPE_CONTEXT_NAME: "malformed_audio"},
+                        absent_contextual_data_names=[PROVIDER_ERROR_CODE_CONTEXT_NAME],
+                    ),
+                ),
+                id="malformed-agent-speech",
+            ),
         ],
     )
     async def test_Converse_WhenTheProviderReportsAFailureMidConversation_ThenTheFailureIsClassifiedAndTheProviderSessionIsClosed(
@@ -611,13 +625,18 @@ class TestVoiceOptions:
     async def test_GetVoiceOptions_WhenAsked_ThenEveryCatalogVoiceIsListedWithFemaleAndMaleChoicesInCatalogOrder(
         self, restaurant_database_path: Path
     ) -> None:
+        expected_voice_options: list[VoiceOption] = read_catalog_voice_options()
+        assert {voice_option.presented_gender for voice_option in expected_voice_options} == set(PresentedGender), (
+            "The bundled catalog must offer both female and male voices for this scenario"
+        )
+
         async with (
             RealtimeVoiceServiceScripted() as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
         ):
             actual_voice_options: list[VoiceOption] = await domain_facade.get_voice_options()
 
-        assert actual_voice_options == CATALOG_VOICE_OPTIONS
+        assert actual_voice_options == expected_voice_options
 
 
 class TestClose:

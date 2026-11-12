@@ -15,6 +15,7 @@ from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request, Response
 
 SCRIPTED_GREETING_AUDIO: Final[bytes] = b"scripted greeting audio"
+SCRIPTED_GREETING_RESPONSE_ID: Final[str] = "response_greeting"
 SERVICE_HOST: Final[str] = "127.0.0.1"
 SERVICE_START_TIMEOUT_SECONDS: Final[float] = 10.0
 SERVICE_STOP_TIMEOUT_SECONDS: Final[float] = 10.0
@@ -162,6 +163,13 @@ def create_agent_speech_event(item_id: str, pcm_audio: bytes) -> OutputAudioDelt
         "content_index": 0,
         "delta": base64.b64encode(pcm_audio).decode("ascii"),
     }
+
+
+def create_malformed_agent_speech_event() -> OutputAudioDeltaEventMessage:
+    """A piece of agent speech whose audio is not valid base64, as a corrupted provider frame would carry."""
+    malformed_agent_speech_event: OutputAudioDeltaEventMessage = create_agent_speech_event("item_malformed", b"")
+    malformed_agent_speech_event["delta"] = "not base64 audio!"
+    return malformed_agent_speech_event
 
 
 def create_error_event(error_type: str, error_code: str | None, error_message: str) -> ErrorEventMessage:
@@ -422,7 +430,7 @@ class RealtimeVoiceServiceScripted:
             {
                 "type": "response.output_audio.delta",
                 "event_id": "event_greeting_audio",
-                "response_id": "response_greeting",
+                "response_id": SCRIPTED_GREETING_RESPONSE_ID,
                 "item_id": "item_greeting",
                 "output_index": 0,
                 "content_index": 0,
@@ -434,7 +442,7 @@ class RealtimeVoiceServiceScripted:
             {
                 "type": "response.done",
                 "event_id": "event_greeting_done",
-                "response": {"id": "response_greeting", "object": "realtime.response", "status": "completed", "status_details": None},
+                "response": {"id": SCRIPTED_GREETING_RESPONSE_ID, "object": "realtime.response", "status": "completed", "status_details": None},
             },
         )
 

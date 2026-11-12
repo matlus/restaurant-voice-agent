@@ -1,13 +1,12 @@
 import asyncio
 import base64
-import dataclasses
+import binascii
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
 from typing import Final, NoReturn, final, override
 
 from openai import AsyncOpenAI, OpenAIError
 from openai.resources.realtime.realtime import AsyncRealtimeConnection
-from openai.types.realtime import RealtimeResponseStatus, RealtimeServerEvent, ResponseAudioDeltaEvent
+from openai.types.realtime import RealtimeResponseStatus, RealtimeServerEvent
 from openai.types.realtime.realtime_function_tool_param import RealtimeFunctionToolParam
 from openai.types.realtime.realtime_response_status import Error as RealtimeResponseStatusError
 from openai.types.realtime.realtime_session_create_request_param import RealtimeSessionCreateRequestParam
@@ -21,7 +20,8 @@ from voice_agent_conversation.managers.gateways.exception_translators.translator
 )
 from voice_agent_conversation.managers.gateways.realtime_voice_gateway_base import RealtimeVoiceGatewayBase, RealtimeVoiceSessionBase
 from voice_agent_conversation.managers.models.conversation_models import (
-    AgentSpeechChunk,
+    AgentSpeechPart,
+    AgentSpeechReceived,
     AgentToolCallRequested,
     AgentToolDefinition,
     AgentTurnFinished,
@@ -60,9 +60,9 @@ class RealtimeVoiceGatewayOpenAI(RealtimeVoiceGatewayBase):
             raise TranslatorOpenAIRealtimeExceptions.translate_connection_failure(
                 provider_error, self._describe_connect_operation(), LogEventRealtimeVoice.SESSION_OPEN
             ) from provider_error
-        realtime_voice_session_openai: _RealtimeVoiceSessionOpenAI = _RealtimeVoiceSessionOpenAI(connection)
+        realtime_voice_session_openai: _RealtimeVoiceSessionOpenAI = _RealtimeVoiceSessionOpenAI(connection, voice_session_settings)
         try:
-            await realtime_voice_session_openai.configure(voice_session_settings)
+            await realtime_voice_session_openai.configure()
         except BaseException:
             await realtime_voice_session_openai.close()
             raise
@@ -93,15 +93,6 @@ class RealtimeVoiceGatewayOpenAI(RealtimeVoiceGatewayBase):
         return self.CONNECT_OPERATION_DESCRIPTION_TEMPLATE.format(model=self._model)
 
 
-@dataclass(frozen=True)
-class _SentAgentSpeech:
-    """How much of the agent's latest speech the session has passed on to the host: one audio part of one reply item."""
-
-    item_id: str
-    content_index: int
-    sent_byte_count: int
-
-
 @final
 class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
     """One OpenAI Realtime conversation over a WebSocket the gateway has already connected. Only the gateway above
@@ -110,18 +101,12 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
     The provider emits many more event types than a voice-only conversation needs, such as transcripts
     and item bookkeeping. Those are ignored by design, not by omission.
 
-    A reply in which the model calls tools ends without speech; the model speaks once it has the answers. So when that
-    reply ends with every call answered, the session asks for the next reply itself instead of reporting the turn as finished.
-
-    The provider sends speech faster than it is played. The session counts what it passed on of the latest speech, so
-    when the host reports how much it dropped unheard, the provider can be told where the guest stopped hearing it.
+    It keeps no record of the conversation beyond its connection: whoever drives it decides when to ask for the next
+    reply and how much of the agent's speech the guest heard.
     """
 
     # The provider accepts only 24 kHz PCM, so the constant keeps its literal type for the SDK's typed session.
     SAMPLE_RATE_HZ: Final = 24_000
-    # Mono 16-bit PCM in both directions.
-    BYTES_PER_SAMPLE: Final[int] = 2
-    MILLISECONDS_PER_SECOND: Final[int] = 1_000
     # The guest's turn ends after this much silence. Semantic turn detection waited 4 to 7 seconds after a guest stopped
     # before the agent spoke, measured live; silence detection at half a second answers in about 1 to 2.
     TURN_END_SILENCE_MILLISECONDS: Final[int] = 500
@@ -129,23 +114,20 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
     CONFIGURE_OPERATION_DESCRIPTION: Final[str] = "configuring the session"
     CONVERSE_OPERATION_DESCRIPTION: Final[str] = "conversing"
 
-    def __init__(self, connection: AsyncRealtimeConnection) -> None:
+    def __init__(self, connection: AsyncRealtimeConnection, voice_session_settings: VoiceSessionSettings) -> None:
         self._connection: AsyncRealtimeConnection | None = connection
-        self._has_answered_tool_calls: bool = False
-        self._agent_instructions: str = ""
-        self._sent_agent_speech: _SentAgentSpeech | None = None
+        self._voice_session_settings: VoiceSessionSettings = voice_session_settings
 
     @property
     @override
-    def audio_format(self) -> ConversationAudioFormat:
+    def conversation_audio_format(self) -> ConversationAudioFormat:
         return ConversationAudioFormat(guest_audio_sample_rate_hz=self.SAMPLE_RATE_HZ, agent_audio_sample_rate_hz=self.SAMPLE_RATE_HZ)
 
-    async def configure(self, voice_session_settings: VoiceSessionSettings) -> None:
+    async def configure(self) -> None:
         """Sends the session settings and returns once the provider has accepted them; a rejected setting raises here."""
         connection: AsyncRealtimeConnection = self._get_open_connection()
-        self._agent_instructions = voice_session_settings.agent_instructions
         try:
-            await connection.session.update(session=self._build_session_configuration(voice_session_settings))
+            await connection.session.update(session=self._build_session_configuration(self._voice_session_settings))
             async with asyncio.timeout(self.SESSION_CONFIRMATION_TIMEOUT_SECONDS):
                 await self._wait_for_session_confirmation(connection)
         except TimeoutError as timeout_error:
@@ -168,11 +150,14 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
         # Instructions given with one reply replace the session's for that reply, so the standing ones go with them.
         connection: AsyncRealtimeConnection = self._get_open_connection()
         try:
-            await connection.response.create(response={"instructions": f"{self._agent_instructions}\n\n{greeting_instructions}"})
+            await connection.response.create(
+                response={"instructions": f"{self._voice_session_settings.agent_instructions}\n\n{greeting_instructions}"}
+            )
         except (OpenAIError, WebSocketException, OSError) as provider_error:
             self._raise_connection_failure(provider_error, "requesting the greeting", LogEventRealtimeVoice.AGENT_RESPONSE_REQUEST)
 
-    async def _request_next_reply(self) -> None:
+    @override
+    async def request_next_reply(self) -> None:
         connection: AsyncRealtimeConnection = self._get_open_connection()
         try:
             await connection.response.create()
@@ -180,17 +165,11 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
             self._raise_connection_failure(provider_error, "requesting an agent response", LogEventRealtimeVoice.AGENT_RESPONSE_REQUEST)
 
     @override
-    async def cut_off_agent_speech(self, unplayed_milliseconds: int) -> None:
-        sent_agent_speech: _SentAgentSpeech | None = self._sent_agent_speech
-        if sent_agent_speech is None or unplayed_milliseconds <= 0:
-            return
+    async def cut_off_agent_speech(self, agent_speech_part: AgentSpeechPart, heard_milliseconds: int) -> None:
         connection: AsyncRealtimeConnection = self._get_open_connection()
-        # Forgotten first: the provider is told once, and a later report belongs to later speech.
-        self._sent_agent_speech = None
-        heard_milliseconds: int = max(0, self._to_milliseconds(sent_agent_speech.sent_byte_count) - unplayed_milliseconds)
         try:
             await connection.conversation.item.truncate(
-                item_id=sent_agent_speech.item_id, content_index=sent_agent_speech.content_index, audio_end_ms=heard_milliseconds
+                item_id=agent_speech_part.reply_item_id, content_index=agent_speech_part.content_index, audio_end_ms=heard_milliseconds
             )
         except (OpenAIError, WebSocketException, OSError) as provider_error:
             self._raise_connection_failure(
@@ -204,7 +183,6 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
             await connection.conversation.item.create(item={"type": "function_call_output", "call_id": call_id, "output": tool_output})
         except (OpenAIError, WebSocketException, OSError) as provider_error:
             self._raise_connection_failure(provider_error, "answering a tool call", LogEventRealtimeVoice.TOOL_RESULT_SEND)
-        self._has_answered_tool_calls = True
 
     @override
     async def receive_events(self) -> AsyncIterator[VoiceSessionEvent]:
@@ -213,12 +191,7 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
         try:
             async for server_event in connection:
                 voice_session_event: VoiceSessionEvent | None = self._to_voice_session_event(server_event)
-                if server_event.type == "response.output_audio.delta" and isinstance(voice_session_event, AgentSpeechChunk):
-                    self._sent_agent_speech = self._count_sent_agent_speech(self._sent_agent_speech, server_event, len(voice_session_event.pcm_audio))
-                if isinstance(voice_session_event, AgentTurnFinished) and self._has_answered_tool_calls:
-                    self._has_answered_tool_calls = False
-                    await self._request_next_reply()
-                elif voice_session_event is not None:
+                if voice_session_event is not None:
                     yield voice_session_event
         except (OpenAIError, WebSocketException, OSError) as provider_error:
             # close() makes the SDK raise out of this iteration. After close() that failure is the shutdown we asked for, not a fault.
@@ -236,27 +209,6 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
             await connection.close()
         except (OpenAIError, WebSocketException, OSError) as provider_error:
             self._raise_connection_failure(provider_error, "closing the session", LogEventRealtimeVoice.SESSION_CLOSE)
-
-    @staticmethod
-    def _count_sent_agent_speech(
-        sent_agent_speech: _SentAgentSpeech | None, response_audio_delta_event: ResponseAudioDeltaEvent, pcm_byte_count: int
-    ) -> _SentAgentSpeech:
-        """Adds a piece of speech to the count of the part it belongs to; a piece of a new part starts a new count."""
-        if (
-            sent_agent_speech is None
-            or sent_agent_speech.item_id != response_audio_delta_event.item_id
-            or sent_agent_speech.content_index != response_audio_delta_event.content_index
-        ):
-            return _SentAgentSpeech(
-                item_id=response_audio_delta_event.item_id,
-                content_index=response_audio_delta_event.content_index,
-                sent_byte_count=pcm_byte_count,
-            )
-        return dataclasses.replace(sent_agent_speech, sent_byte_count=sent_agent_speech.sent_byte_count + pcm_byte_count)
-
-    @classmethod
-    def _to_milliseconds(cls, pcm_byte_count: int) -> int:
-        return pcm_byte_count * cls.MILLISECONDS_PER_SECOND // (cls.BYTES_PER_SAMPLE * cls.SAMPLE_RATE_HZ)
 
     def _get_open_connection(self) -> AsyncRealtimeConnection:
         if self._connection is None:
@@ -320,7 +272,10 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
     def _to_voice_session_event(cls, server_event: RealtimeServerEvent) -> VoiceSessionEvent | None:
         match server_event.type:
             case "response.output_audio.delta":
-                return AgentSpeechChunk(pcm_audio=base64.b64decode(server_event.delta))
+                return AgentSpeechReceived(
+                    pcm_audio=cls._decode_agent_speech(server_event.delta),
+                    agent_speech_part=AgentSpeechPart(reply_item_id=server_event.item_id, content_index=server_event.content_index),
+                )
             case "input_audio_buffer.speech_started":
                 return GuestStartedSpeaking()
             case "response.function_call_arguments.done":
@@ -347,6 +302,19 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
                 )
             case _:
                 return None
+
+    @classmethod
+    def _decode_agent_speech(cls, base64_audio: str) -> bytes:
+        try:
+            return base64.b64decode(base64_audio, validate=True)
+        except binascii.Error as decode_error:
+            raise TranslatorOpenAIRealtimeExceptions.translate_reported_error(
+                error_type="malformed_audio",
+                error_code=None,
+                error_message="The provider sent agent speech that is not valid base64 audio.",
+                operation_description=cls.CONVERSE_OPERATION_DESCRIPTION,
+                log_event=LogEventRealtimeVoice.EVENT_RECEIPT,
+            ) from decode_error
 
     @staticmethod
     def _raise_connection_failure(provider_error: _ProviderFailure, operation_description: str, log_event: LogEventBase) -> NoReturn:

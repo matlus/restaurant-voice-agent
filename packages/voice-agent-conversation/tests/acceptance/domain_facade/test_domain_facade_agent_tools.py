@@ -54,6 +54,8 @@ from voice_agent_restaurant import (
     Weekday,
 )
 
+# The booking answer field the stored code travels in; the tests check it against the store, not a copy.
+CONFIRMATION_CODE_FIELD_NAME: Final[str] = "confirmation_code"
 CEDAR_VOICE_OPTION: Final[VoiceOption] = read_catalog_voice_option("openai-cedar")
 CONVERSATION_REQUEST: Final[ConversationRequest] = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
 PROVIDER_AUDIO_FORMAT: Final[ConversationAudioFormat] = ConversationAudioFormat(guest_audio_sample_rate_hz=24_000, agent_audio_sample_rate_hz=24_000)
@@ -66,7 +68,7 @@ KETO_SEARCH_ARGUMENTS_JSON: Final[str] = '{"diet_labels": ["keto"]}'
 WRONG_CALLS_ALLOWED_IN_A_ROW: Final[int] = 3
 TECHNICAL_FAILURE_HTTP_STATUS_CODE: Final[int] = 500
 GREETING_EVENTS: Final[list[ConversationEvent]] = [
-    ConversationStarted(audio_format=PROVIDER_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+    ConversationStarted(conversation_audio_format=PROVIDER_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
     AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
     AgentTurnFinished(),
 ]
@@ -390,10 +392,10 @@ class TestAgentTools:
         ]
         actual_outcome: tuple[list[BookingConfirmationDetails], bool] = (
             [
-                BookingConfirmationDetails(**{name: value for name, value in booking_answer.items() if name != "confirmation_code"})
+                BookingConfirmationDetails(**{name: value for name, value in booking_answer.items() if name != CONFIRMATION_CODE_FIELD_NAME})
                 for booking_answer in booking_answers
             ],
-            [booking_answer["confirmation_code"] for booking_answer in booking_answers]
+            [booking_answer[CONFIRMATION_CODE_FIELD_NAME] for booking_answer in booking_answers]
             == [stored_reservation.confirmation_code for stored_reservation in stored_reservations],
         )
         assert actual_outcome == expected_outcome

@@ -1,6 +1,6 @@
 import asyncio
 import contextlib
-from collections.abc import AsyncGenerator, AsyncIterable
+from collections.abc import AsyncGenerator, AsyncIterable, Callable
 from datetime import datetime
 from types import TracebackType
 from typing import Self
@@ -12,18 +12,24 @@ from voice_agent_conversation.managers.gateways.realtime_voice_gateway_base impo
 from voice_agent_conversation.managers.gateways.realtime_voice_gateway_openai import RealtimeVoiceGatewayOpenAI
 from voice_agent_conversation.managers.models.conversation_models import (
     AgentSessionEvent,
+    AgentSpeechChunk,
     AgentSpeechCutOff,
+    AgentSpeechPart,
+    AgentSpeechReceived,
     AgentToolCallRequested,
+    AgentTurnFinished,
     ConversationEvent,
     ConversationRequest,
     ConversationStarted,
     GuestSideEvent,
     GuestSpeechChunk,
+    SentAgentSpeech,
     VoiceOption,
     VoiceSessionEvent,
     VoiceSessionSettings,
 )
 from voice_agent_conversation.managers.rules.agent_instructions import AgentInstructions
+from voice_agent_conversation.managers.rules.agent_speech_playback import AgentSpeechPlayback
 from voice_agent_conversation.managers.service_locators.service_locator_base import ServiceLocatorBase
 from voice_agent_conversation.managers.validators.validator_conversation_requests import ValidatorConversationRequests
 from voice_agent_restaurant import DomainFacade as RestaurantDomainFacade, RestaurantProfile
@@ -65,7 +71,7 @@ class ManagerConversation:
             agent_tool_definitions=self._agent_toolbox.get_tool_definitions(),
         )
         async with await self._realtime_voice_gateway.open_session(voice_session_settings) as realtime_voice_session:
-            yield ConversationStarted(audio_format=realtime_voice_session.audio_format, voice_option=voice_option)
+            yield ConversationStarted(conversation_audio_format=realtime_voice_session.conversation_audio_format, voice_option=voice_option)
             await realtime_voice_session.request_greeting(AgentInstructions.compose_greeting(restaurant_profile.name))
             # Closing the relay here, in this task, settles guest side forwarding before the session closes.
             async with contextlib.aclosing(
@@ -95,22 +101,38 @@ class ManagerConversation:
         realtime_voice_session: RealtimeVoiceSessionBase, guest_side_events: AsyncIterable[GuestSideEvent], agent_toolbox: AgentToolbox
     ) -> AsyncGenerator[AgentSessionEvent]:
         """Sends the guest side on while yielding the agent's events and answering its tool calls. Ends when either side does;
-        a failure on either side escapes."""
+        a failure on either side escapes.
+
+        A reply in which the agent calls tools ends without speech; it speaks once it has the answers. So when such a reply
+        ends, the next reply is asked for instead of reporting the turn as finished. The agent's speech is counted as it is
+        passed on, so a cut-off report from the guest's side can tell the provider where the guest stopped hearing it.
+        """
         guest_audio_ended: asyncio.Event = asyncio.Event()
+        # Rebound as speech is passed on; the guest side forwarding reads the latest count through this frame.
+        sent_agent_speech: SentAgentSpeech | None = None
         guest_audio_forwarding: asyncio.Task[None] = asyncio.create_task(
-            ManagerConversation._forward_guest_side_events(guest_side_events, realtime_voice_session, guest_audio_ended)
+            ManagerConversation._forward_guest_side_events(guest_side_events, realtime_voice_session, guest_audio_ended, lambda: sent_agent_speech)
         )
         # Wrong tool calls are counted per conversation; the toolbox ends the call when too many come in a row.
         consecutive_call_repair_count: int = 0
+        has_answered_tool_calls: bool = False
         try:
             voice_session_event: VoiceSessionEvent
             async for voice_session_event in realtime_voice_session.receive_events():
-                if isinstance(voice_session_event, AgentToolCallRequested):
-                    consecutive_call_repair_count = await ManagerConversation._answer_tool_call(
-                        realtime_voice_session, agent_toolbox, voice_session_event, consecutive_call_repair_count, guest_audio_ended
-                    )
-                else:
-                    yield voice_session_event
+                match voice_session_event:
+                    case AgentToolCallRequested():
+                        consecutive_call_repair_count = await ManagerConversation._answer_tool_call(
+                            realtime_voice_session, agent_toolbox, voice_session_event, consecutive_call_repair_count, guest_audio_ended
+                        )
+                        has_answered_tool_calls = True
+                    case AgentSpeechReceived(pcm_audio=pcm_audio):
+                        sent_agent_speech = AgentSpeechPlayback.count_sent_agent_speech(sent_agent_speech, voice_session_event)
+                        yield AgentSpeechChunk(pcm_audio=pcm_audio)
+                    case AgentTurnFinished() if has_answered_tool_calls:
+                        has_answered_tool_calls = False
+                        await ManagerConversation._request_next_reply(realtime_voice_session, guest_audio_ended)
+                    case _:
+                        yield voice_session_event
         finally:
             await ManagerConversation._settle_guest_audio_forwarding(guest_audio_forwarding, guest_audio_ended)
 
@@ -128,6 +150,12 @@ class ManagerConversation:
         if not guest_audio_ended.is_set():
             await realtime_voice_session.send_tool_result(agent_tool_call_requested.call_id, agent_tool_call_answer.tool_output_json)
         return agent_tool_call_answer.consecutive_call_repair_count
+
+    @staticmethod
+    async def _request_next_reply(realtime_voice_session: RealtimeVoiceSessionBase, guest_audio_ended: asyncio.Event) -> None:
+        # A guest who hung up gets no next reply: the session is already closing.
+        if not guest_audio_ended.is_set():
+            await realtime_voice_session.request_next_reply()
 
     @staticmethod
     async def _settle_guest_audio_forwarding(guest_audio_forwarding: asyncio.Task[None], guest_audio_ended: asyncio.Event) -> None:
@@ -149,17 +177,44 @@ class ManagerConversation:
 
     @staticmethod
     async def _forward_guest_side_events(
-        guest_side_events: AsyncIterable[GuestSideEvent], realtime_voice_session: RealtimeVoiceSessionBase, guest_audio_ended: asyncio.Event
+        guest_side_events: AsyncIterable[GuestSideEvent],
+        realtime_voice_session: RealtimeVoiceSessionBase,
+        guest_audio_ended: asyncio.Event,
+        read_sent_agent_speech: Callable[[], SentAgentSpeech | None],
     ) -> None:
+        # The part already cut off is remembered, so one part is cut off once however many reports follow.
+        cut_off_agent_speech_part: AgentSpeechPart | None = None
         try:
             guest_side_event: GuestSideEvent
             async for guest_side_event in guest_side_events:
                 match guest_side_event:
                     case GuestSpeechChunk(pcm_audio=pcm_audio):
                         await realtime_voice_session.send_guest_audio(pcm_audio)
-                    case AgentSpeechCutOff(unplayed_milliseconds=unplayed_milliseconds):
-                        await realtime_voice_session.cut_off_agent_speech(unplayed_milliseconds)
+                    case AgentSpeechCutOff():
+                        cut_off_agent_speech_part = await ManagerConversation._cut_off_agent_speech(
+                            realtime_voice_session, guest_side_event, read_sent_agent_speech(), cut_off_agent_speech_part
+                        )
         finally:
             # The guest hung up or forwarding failed. Closing the session ends the event relay.
             guest_audio_ended.set()
             await realtime_voice_session.close()
+
+    @staticmethod
+    async def _cut_off_agent_speech(
+        realtime_voice_session: RealtimeVoiceSessionBase,
+        agent_speech_cut_off: AgentSpeechCutOff,
+        sent_agent_speech: SentAgentSpeech | None,
+        cut_off_agent_speech_part: AgentSpeechPart | None,
+    ) -> AgentSpeechPart | None:
+        """Tells the provider where the guest stopped hearing the agent's latest speech, and returns the part now cut off."""
+        if sent_agent_speech is None or not AgentSpeechPlayback.drops_unheard_speech(
+            sent_agent_speech, agent_speech_cut_off, cut_off_agent_speech_part
+        ):
+            return cut_off_agent_speech_part
+        heard_milliseconds: int = AgentSpeechPlayback.to_heard_milliseconds(
+            sent_agent_speech,
+            agent_speech_cut_off.unplayed_milliseconds,
+            realtime_voice_session.conversation_audio_format.agent_audio_sample_rate_hz,
+        )
+        await realtime_voice_session.cut_off_agent_speech(sent_agent_speech.agent_speech_part, heard_milliseconds)
+        return sent_agent_speech.agent_speech_part
