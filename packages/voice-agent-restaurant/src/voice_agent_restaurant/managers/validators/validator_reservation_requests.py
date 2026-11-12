@@ -22,6 +22,7 @@ from voice_agent_restaurant.managers.models.reservation_models import (
     ReservationRequest,
     ReservationSearchRequest,
     SeatingChange,
+    ValidatedAvailabilityRequest,
     ValidatedReservationChange,
     ValidatedReservationRequest,
 )
@@ -48,21 +49,30 @@ class ValidatorReservationRequests:
     RESERVATION_TIME_FIELD_NAME: Final[str] = "reservation_time"
     BOOKED_DATE_FIELD_NAME: Final[str] = "booked_date"
     BOOKED_TIME_FIELD_NAME: Final[str] = "booked_time"
+    PARTY_SIZE_FIELD_NAME: Final[str] = "party_size"
+    GUEST_NAME_FIELD_NAME: Final[str] = "guest_name"
+    PHONE_NUMBER_FIELD_NAME: Final[str] = "phone_number"
+    CONFIRMATION_CODE_FIELD_NAME: Final[str] = "confirmation_code"
+    NOTES_FIELD_NAME: Final[str] = "notes"
     REQUIRED_FIELD_PROBLEM_TEMPLATE: Final[str] = "'{field_name}' is required but was not provided"
 
     @classmethod
-    def validate_availability_request(cls, availability_request: AvailabilityRequest) -> RequestedSeating:
+    def validate_availability_request(cls, availability_request: AvailabilityRequest) -> ValidatedAvailabilityRequest:
         reservation_date_text: str | None = ReservationValueParsing.as_provided(availability_request.reservation_date)
         reservation_time_text: str | None = ReservationValueParsing.as_provided(availability_request.reservation_time)
+        own_confirmation_code: str | None = cls._as_confirmation_code(availability_request.confirmation_code)
         validation_problems: list[str] = cls._collect_required_seating_problems(
             reservation_date_text, reservation_time_text, availability_request.party_size
         )
+        # The code is optional here, so only a code that is given and malformed is a problem.
+        if own_confirmation_code is not None:
+            validation_problems.extend(cls._collect_confirmation_code_problems(own_confirmation_code))
         requested_seating: RequestedSeating | None = cls._to_requested_seating(
             reservation_date_text, reservation_time_text, availability_request.party_size
         )
         if requested_seating is None or validation_problems:
             raise cls._create_validation_exception(validation_problems)
-        return requested_seating
+        return ValidatedAvailabilityRequest(requested_seating=requested_seating, own_confirmation_code=own_confirmation_code)
 
     @classmethod
     def validate_reservation_request(cls, reservation_request: ReservationRequest) -> ValidatedReservationRequest:
@@ -280,6 +290,8 @@ class ValidatorReservationRequests:
         minutes_past_slot: int = starts_at.minute % slot_interval_minutes
         if minutes_past_slot == 0:
             return []
+        # A time of day cannot be shifted by minutes on its own, so it rides on an arbitrary date; only its hour and minute
+        # are read back.
         earlier_slot: datetime = datetime.combine(date.min, starts_at.replace(second=0, microsecond=0)) - timedelta(minutes=minutes_past_slot)
         later_slot: datetime = earlier_slot + timedelta(minutes=slot_interval_minutes)
         return [
@@ -292,17 +304,18 @@ class ValidatorReservationRequests:
     @classmethod
     def _collect_required_party_size_problems(cls, party_size: int | None) -> list[str]:
         if party_size is None:
-            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name="party_size")]
+            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name=cls.PARTY_SIZE_FIELD_NAME)]
         return []
 
-    @staticmethod
-    def _collect_party_size_problems(party_size: int, reservation_policy: ReservationPolicy) -> list[str]:
+    @classmethod
+    def _collect_party_size_problems(cls, party_size: int, reservation_policy: ReservationPolicy) -> list[str]:
         if party_size < reservation_policy.minimum_party_size:
-            return [f"'party_size' must be at least {reservation_policy.minimum_party_size} but was {party_size}"]
+            return [f"'{cls.PARTY_SIZE_FIELD_NAME}' must be at least {reservation_policy.minimum_party_size} but was {party_size}"]
         if party_size > reservation_policy.maximum_party_size:
             return [
                 (
-                    f"'party_size' of {party_size} is larger than the {reservation_policy.maximum_party_size} guests that can be booked by phone. "
+                    f"'{cls.PARTY_SIZE_FIELD_NAME}' of {party_size} is larger than the {reservation_policy.maximum_party_size} guests "
+                    "that can be booked by phone. "
                     f"{reservation_policy.large_party_guidance}"
                 )
             ]
@@ -324,20 +337,25 @@ class ValidatorReservationRequests:
             ]
         return []
 
-    @staticmethod
+    @classmethod
     def _collect_requested_change_problems(
-        reservation_date_text: str | None, reservation_time_text: str | None, party_size: int | None, notes: str | None
+        cls, reservation_date_text: str | None, reservation_time_text: str | None, party_size: int | None, notes: str | None
     ) -> list[str]:
         if reservation_date_text is None and reservation_time_text is None and party_size is None and notes is None:
-            return ["at least one of 'reservation_date', 'reservation_time', 'party_size' or 'notes' must be provided to change"]
+            return [
+                (
+                    f"at least one of '{cls.RESERVATION_DATE_FIELD_NAME}', '{cls.RESERVATION_TIME_FIELD_NAME}', "
+                    f"'{cls.PARTY_SIZE_FIELD_NAME}' or '{cls.NOTES_FIELD_NAME}' must be provided to change"
+                )
+            ]
         return []
 
     @classmethod
     def _collect_guest_name_problems(cls, guest_name: str | None) -> list[str]:
         if guest_name is None:
-            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name="guest_name")]
+            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name=cls.GUEST_NAME_FIELD_NAME)]
         if len(guest_name) > cls.MAXIMUM_GUEST_NAME_LENGTH:
-            return [f"'guest_name' must contain at most {cls.MAXIMUM_GUEST_NAME_LENGTH} characters"]
+            return [f"'{cls.GUEST_NAME_FIELD_NAME}' must contain at most {cls.MAXIMUM_GUEST_NAME_LENGTH} characters"]
         return []
 
     @classmethod
@@ -347,23 +365,25 @@ class ValidatorReservationRequests:
     @classmethod
     def _collect_phone_number_problems(cls, phone_number: str | None) -> list[str]:
         if phone_number is None:
-            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name="phone_number")]
+            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name=cls.PHONE_NUMBER_FIELD_NAME)]
         if not ReservationValueParsing.is_phone_number(phone_number):
-            return [f"'phone_number' value '{phone_number}' must be a 10-digit phone number"]
+            return [f"'{cls.PHONE_NUMBER_FIELD_NAME}' value '{phone_number}' must be a 10-digit phone number"]
         return []
 
     @classmethod
     def _collect_confirmation_code_problems(cls, confirmation_code: str | None) -> list[str]:
         if confirmation_code is None:
-            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name="confirmation_code")]
+            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name=cls.CONFIRMATION_CODE_FIELD_NAME)]
         if not ReservationValueParsing.is_confirmation_code(confirmation_code):
-            return [f"'confirmation_code' value '{confirmation_code}' is not a {CONFIRMATION_CODE_LENGTH}-character confirmation code"]
+            return [
+                f"'{cls.CONFIRMATION_CODE_FIELD_NAME}' value '{confirmation_code}' is not a {CONFIRMATION_CODE_LENGTH}-character confirmation code"
+            ]
         return []
 
     @classmethod
     def _collect_notes_problems(cls, notes: str | None) -> list[str]:
         if notes is not None and len(notes) > cls.MAXIMUM_NOTES_LENGTH:
-            return [f"'notes' must contain at most {cls.MAXIMUM_NOTES_LENGTH} characters"]
+            return [f"'{cls.NOTES_FIELD_NAME}' must contain at most {cls.MAXIMUM_NOTES_LENGTH} characters"]
         return []
 
     @staticmethod

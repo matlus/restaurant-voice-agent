@@ -36,6 +36,7 @@ from voice_agent_restaurant.managers.models.reservation_models import (
     ReservationReschedule,
     ReservationSearchRequest,
     Seating,
+    ValidatedAvailabilityRequest,
     ValidatedReservationChange,
     ValidatedReservationRequest,
 )
@@ -97,25 +98,34 @@ class ManagerReservations:
         )
 
     async def check_availability(self, availability_request: AvailabilityRequest) -> AvailabilityResult:
-        stated_requested_seating: RequestedSeating = ValidatorReservationRequests.validate_availability_request(availability_request)
+        validated_availability_request: ValidatedAvailabilityRequest = ValidatorReservationRequests.validate_availability_request(
+            availability_request
+        )
         booking_context: _BookingContext = await self._load_booking_context()
-        seatable_requested_seating: RequestedSeating = await self._read_as_seatable(stated_requested_seating, booking_context)
+        seatable_requested_seating: RequestedSeating = await self._read_as_seatable(validated_availability_request.requested_seating, booking_context)
         ValidatorReservationRequests.validate_requested_seating(
             seatable_requested_seating, booking_context.reservation_policy, booking_context.booking_window
         )
         seating_plan: _SeatingPlan = await self._plan_seating(
             seatable_requested_seating, booking_context.seating_rhythm, booking_context.booking_window.restaurant_now
         )
-        seatings: list[Seating] = await self._data_manager_reservations.find_seatings_on(seatable_requested_seating.reservation_date)
+        day_seatings: list[Seating] = await self._data_manager_reservations.find_seatings_on(seatable_requested_seating.reservation_date)
+        # The caller's own booking does not hold its table against a move, and its time is not offered back, as for a change.
+        own_reservation: Reservation | None = await self._find_own_reservation_among(
+            day_seatings, validated_availability_request.own_confirmation_code
+        )
+        other_seatings: list[Seating] = self._leave_out_booking(day_seatings, validated_availability_request.own_confirmation_code)
         table_is_free: bool = SeatingRules.has_free_table(
-            seating_plan.fitting_tables, seatings, seatable_requested_seating.starts_at, seating_plan.ends_at
+            seating_plan.fitting_tables, other_seatings, seatable_requested_seating.starts_at, seating_plan.ends_at
         )
         return AvailabilityResult(
             reservation_date=seatable_requested_seating.reservation_date,
             requested_time=seatable_requested_seating.starts_at,
             party_size=seatable_requested_seating.party_size,
             is_available=table_is_free,
-            alternative_times=[] if table_is_free else self._find_alternative_times(seating_plan, seatings),
+            alternative_times=[]
+            if table_is_free
+            else self._find_alternative_times(seating_plan, other_seatings, self._find_kept_time(seatable_requested_seating, own_reservation)),
         )
 
     async def create_reservation(self, reservation_request: ReservationRequest) -> Reservation:
@@ -136,7 +146,7 @@ class ManagerReservations:
         new_reservation: NewReservation = self._to_new_reservation(seatable_validated_reservation_request, seating_plan.ends_at)
         try:
             reservation: Reservation = await self._data_manager_reservations.record_reservation(
-                new_reservation, [fitting_table.table_id for fitting_table in seating_plan.fitting_tables], self._clock.now_utc()
+                new_reservation, SeatingRules.get_candidate_table_ids(seating_plan.fitting_tables), self._clock.now_utc()
             )
         except CandidateTablesTakenException as candidate_tables_taken_exception:
             raise await self._create_no_table_exception(seating_plan, None) from candidate_tables_taken_exception
@@ -185,7 +195,7 @@ class ManagerReservations:
                 reservation_reschedule, candidate_table_ids, self._clock.now_utc()
             )
         except CandidateTablesTakenException as candidate_tables_taken_exception:
-            raise await self._create_no_table_exception(seating_plan, current_reservation.confirmation_code) from candidate_tables_taken_exception
+            raise await self._create_no_table_exception(seating_plan, current_reservation) from candidate_tables_taken_exception
         return changed_reservation
 
     async def cancel_reservation(self, reservation_cancellation_request: ReservationCancellationRequest) -> Reservation:
@@ -314,31 +324,58 @@ class ManagerReservations:
             )
         return seating_window
 
-    async def _create_no_table_exception(self, seating_plan: _SeatingPlan, excluded_confirmation_code: str | None) -> NoTableAvailableException:
-        # A booking being changed never blocks its own alternatives.
-        seatings: list[Seating] = [
-            seating
-            for seating in await self._data_manager_reservations.find_seatings_on(seating_plan.requested_seating.reservation_date)
-            if seating.confirmation_code != excluded_confirmation_code
-        ]
+    async def _create_no_table_exception(self, seating_plan: _SeatingPlan, current_reservation: Reservation | None) -> NoTableAvailableException:
+        # A booking being changed never blocks its own alternatives, and the time it already holds is not offered as one.
+        seatings: list[Seating] = self._leave_out_booking(
+            await self._data_manager_reservations.find_seatings_on(seating_plan.requested_seating.reservation_date),
+            None if current_reservation is None else current_reservation.confirmation_code,
+        )
         return NoTableAvailableException(
             requested_date=seating_plan.requested_seating.reservation_date,
             requested_time=seating_plan.requested_seating.starts_at,
             party_size=seating_plan.requested_seating.party_size,
-            alternative_times=self._find_alternative_times(seating_plan, seatings),
+            alternative_times=self._find_alternative_times(
+                seating_plan, seatings, self._find_kept_time(seating_plan.requested_seating, current_reservation)
+            ),
             contextual_data_by_name={
                 self.RESERVATION_DATE_CONTEXT_KEY: seating_plan.requested_seating.reservation_date.isoformat(),
                 "Reservation.PartySize": seating_plan.requested_seating.party_size,
             },
         )
 
+    async def _find_own_reservation_among(self, day_seatings: Iterable[Seating], own_confirmation_code: str | None) -> Reservation | None:
+        """The caller's own booking, when it holds a table that day. A code for no booking that day changes nothing, so it is
+        not looked up and does not reveal whether such a booking exists."""
+        if own_confirmation_code is None or all(seating.confirmation_code != own_confirmation_code for seating in day_seatings):
+            return None
+        return await self._data_manager_reservations.retrieve_booked_reservation(
+            ReservationIdentity(confirmation_code=own_confirmation_code, phone_number=None)
+        )
+
     @staticmethod
-    def _find_alternative_times(seating_plan: _SeatingPlan, seatings: list[Seating]) -> list[time]:
+    def _leave_out_booking(seatings: Iterable[Seating], left_out_confirmation_code: str | None) -> list[Seating]:
+        return [seating for seating in seatings if seating.confirmation_code != left_out_confirmation_code]
+
+    @staticmethod
+    def _find_kept_time(requested_seating: RequestedSeating, current_reservation: Reservation | None) -> time | None:
+        """The time the booking being moved already holds, when the move asks for the same party on the same day. For a
+        different day or party size that time is a real alternative, so it is not held back."""
+        if current_reservation is None:
+            return None
+        requested_seating_keeps_party_and_day: bool = (
+            requested_seating.reservation_date == current_reservation.reservation_date
+            and requested_seating.party_size == current_reservation.party_size
+        )
+        return current_reservation.starts_at if requested_seating_keeps_party_and_day else None
+
+    @staticmethod
+    def _find_alternative_times(seating_plan: _SeatingPlan, seatings: list[Seating], kept_time: time | None) -> list[time]:
         seating_day: SeatingDay = SeatingDay(
             reservation_date=seating_plan.requested_seating.reservation_date,
             seating_window=seating_plan.seating_window,
             fitting_tables=seating_plan.fitting_tables,
             seatings=seatings,
+            kept_time=kept_time,
         )
         return SeatingRules.get_alternative_times(
             seating_day, seating_plan.requested_seating.starts_at, seating_plan.seating_rhythm, seating_plan.restaurant_now

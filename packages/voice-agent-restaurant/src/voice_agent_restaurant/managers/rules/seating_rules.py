@@ -28,12 +28,15 @@ class SeatingRhythm:
 
 @dataclass(frozen=True)
 class SeatingDay:
-    """What decides the open times on one date for one party: when seating is possible, which tables fit, and who holds them."""
+    """What decides the open times on one date for one party: when seating is possible, which tables fit, and who holds them.
+    kept_time is the time a guest moving their booking already holds for the same party that day; it is not offered,
+    because taking it would be no move at all."""
 
     reservation_date: date
     seating_window: SeatingWindow
     fitting_tables: list[DiningTable]
     seatings: list[Seating]
+    kept_time: time | None
 
 
 class SeatingRules:
@@ -111,6 +114,11 @@ class SeatingRules:
         )
 
     @staticmethod
+    def get_candidate_table_ids(fitting_tables: Iterable[DiningTable]) -> list[str]:
+        """The fitting tables in their usual order, smallest first, as the store tries them."""
+        return [fitting_table.table_id for fitting_table in fitting_tables]
+
+    @staticmethod
     def get_candidate_table_ids_keeping_current(fitting_tables: Iterable[DiningTable], current_table_id: str) -> list[str]:
         """The fitting tables in their usual order, except that the guest's current table comes first when it still fits,
         so a change never moves a guest for no reason."""
@@ -129,8 +137,13 @@ class SeatingRules:
     def get_alternative_times(
         cls, seating_day: SeatingDay, requested_time: time, seating_rhythm: SeatingRhythm, restaurant_now: datetime
     ) -> list[time]:
-        """Up to MAXIMUM_ALTERNATIVE_TIMES other bookable times with a free fitting table, nearest to the requested time, in time order."""
-        open_slot_times: list[time] = cls._get_open_slot_times(seating_day, requested_time, seating_rhythm, restaurant_now)
+        """Up to MAXIMUM_ALTERNATIVE_TIMES other bookable times with a free fitting table, nearest to the requested time, in time
+        order. The seating day's kept time is never among them."""
+        open_slot_times: list[time] = [
+            open_slot_time
+            for open_slot_time in cls._get_open_slot_times(seating_day, requested_time, seating_rhythm, restaurant_now)
+            if open_slot_time != seating_day.kept_time
+        ]
         return sorted(cls._get_nearest_slot_times(open_slot_times, requested_time))
 
     @classmethod
