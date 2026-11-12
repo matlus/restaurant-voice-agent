@@ -31,9 +31,11 @@ class AgentInstructions:
         return "\n".join(
             [
                 AgentInstructions.CURRENT_SITUATION_HEADING,
-                f"The call has just connected. Greet the caller with a short, warm hello that names {restaurant_name} and",
-                f"offers the two main things you help with, in the spirit of 'Hi, thanks for calling {restaurant_name}.",
-                "Can I help with a booking, or would you like to hear about the menu?' Keep it to those two.",
+                "The call has just connected. Greet the caller like someone who's glad the phone rang: bright, upbeat and",
+                "smiling, with a lift in your voice on the hello, never flat or matter-of-fact.",
+                f"Keep it short, name {restaurant_name} and offer the two main things you help with, in the spirit of",
+                f"'Hi there, thanks for calling {restaurant_name}! Looking to book a table, or want to hear about the menu?'",
+                "Keep it to those two.",
             ]
         )
 
