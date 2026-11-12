@@ -84,6 +84,7 @@ OPERATION_CONTEXT_NAME: Final[str] = "RealtimeVoice.Operation"
 PROVIDER_ERROR_TYPE_CONTEXT_NAME: Final[str] = "RealtimeVoice.ProviderErrorType"
 PROVIDER_ERROR_CODE_CONTEXT_NAME: Final[str] = "RealtimeVoice.ProviderErrorCode"
 PROVIDER_ERROR_MESSAGE_CONTEXT_NAME: Final[str] = "RealtimeVoice.ProviderErrorMessage"
+CONNECTION_ERROR_TYPE_CONTEXT_NAME: Final[str] = "RealtimeVoice.ErrorType"
 CONVERSATION_ID_CONTEXT_NAME: Final[str] = "Conversation.Id"
 # The guest never hangs up; the call ends by itself first.
 CONVERSATION_EVENTS_NEVER_HUNG_UP_ON: Final[int] = 99
@@ -98,7 +99,6 @@ class ProviderFailureScenario:
 
 
 def describe_spoken_local_now(restaurant_local_now: datetime) -> str:
-    # How a host would say the restaurant's date and time aloud, without zero padding.
     spoken_hour: int = restaurant_local_now.hour % 12 or 12
     return (
         f"{restaurant_local_now:%A, %B} {restaurant_local_now.day}, {restaurant_local_now.year}, "
@@ -136,6 +136,62 @@ class TestConversation:
             expected_agent_response_request_count=expected_agent_response_request_count,
             actual_conversation_events=actual_conversation_events,
             actual_captured_realtime_sessions=realtime_voice_service_scripted.captured_realtime_sessions,
+        )
+
+    async def test_Converse_WhenTwoGuestsCallAtOnceThroughOneFacade_ThenEachCallHasItsOwnSessionIdAndAudio(
+        self, restaurant_database_path: Path
+    ) -> None:
+        first_guest_microphone: GuestMicrophone = GuestMicrophone()
+        second_guest_microphone: GuestMicrophone = GuestMicrophone()
+        conversation_request: ConversationRequest = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
+        first_guest_audio_chunks: list[bytes] = create_generated_guest_audio_chunks()
+        second_guest_audio_chunks: list[bytes] = create_generated_guest_audio_chunks()
+        expected_conversation_events: list[ConversationEvent] = [
+            ConversationStarted(
+                conversation_id=ANY_CONVERSATION_ID, conversation_audio_format=PROVIDER_CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION
+            ),
+            AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
+            AgentTurnFinished(),
+        ]
+        # The sessions may reach the provider in either order, so each call's audio is matched as a set of sessions.
+        expected_guest_audio_by_session: list[list[bytes]] = sorted([first_guest_audio_chunks, second_guest_audio_chunks])
+        expected_distinct_conversation_id_count: int = 2
+
+        async with (
+            RealtimeVoiceServiceScripted() as realtime_voice_service_scripted,
+            create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(conversation_request, first_guest_microphone.stream_guest_side_events())) as first_conversation,
+            aclosing(domain_facade.converse(conversation_request, second_guest_microphone.stream_guest_side_events())) as second_conversation,
+            # Entered last, so it ends both calls before their conversations are closed, even when one of them fails.
+            asyncio.TaskGroup() as task_group,
+        ):
+            first_call: asyncio.Task[list[ConversationEvent]] = task_group.create_task(
+                first_guest_microphone.take_part(first_conversation, first_guest_audio_chunks)
+            )
+            second_call: asyncio.Task[list[ConversationEvent]] = task_group.create_task(
+                second_guest_microphone.take_part(second_conversation, second_guest_audio_chunks)
+            )
+        actual_conversation_events_by_call: list[list[ConversationEvent]] = [first_call.result(), second_call.result()]
+
+        AsserterConversation.assert_conversation_events_are_as_expected(
+            expected_conversation_events=[*expected_conversation_events, *expected_conversation_events],
+            actual_conversation_events=[*actual_conversation_events_by_call[0], *actual_conversation_events_by_call[1]],
+        )
+        actual_guest_audio_by_session: list[list[bytes]] = sorted(
+            captured_realtime_session.guest_audio for captured_realtime_session in realtime_voice_service_scripted.captured_realtime_sessions
+        )
+        actual_distinct_conversation_id_count: int = len(
+            {
+                conversation_event.conversation_id
+                for actual_conversation_events in actual_conversation_events_by_call
+                for conversation_event in actual_conversation_events
+                if isinstance(conversation_event, ConversationStarted)
+            }
+        )
+        assert (actual_guest_audio_by_session, actual_distinct_conversation_id_count) == (
+            expected_guest_audio_by_session,
+            expected_distinct_conversation_id_count,
         )
 
     async def test_Converse_WhenAConversationStarts_ThenTheAgentIsBriefedWithTheRestaurantAndItsLocalDateAndTimeInTheChosenVoice(
@@ -338,6 +394,7 @@ class TestConversation:
         async with (
             RealtimeVoiceServiceScripted() as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
             aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             with pytest.raises(VoiceNotOfferedException) as raised:
@@ -381,6 +438,7 @@ class TestConversation:
         async with (
             RealtimeVoiceServiceScripted() as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
             aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             with pytest.raises(ConversationRequestValidationException) as raised:
@@ -396,7 +454,7 @@ class TestConversation:
 
     async def test_Converse_WhenTheHostStopsReadingEarly_ThenTheProviderSessionIsClosed(self, restaurant_database_path: Path) -> None:
         guest_microphone: GuestMicrophone = GuestMicrophone()
-        conversation_request: ConversationRequest = ConversationRequest(voice_key="openai-ash")
+        conversation_request: ConversationRequest = ConversationRequest(voice_key=read_catalog_voice_option("openai-ash").voice_key)
         expected_provider_session_count: int = 1
 
         async with (
@@ -480,7 +538,12 @@ class TestConversationProviderFailures:
                 severity=Severity.ERROR,
                 log_event=LogEventRealtimeVoice.SESSION_OPEN,
             ),
-            contextual_data_by_name={OPERATION_CONTEXT_NAME: CONNECT_OPERATION, "RealtimeVoice.HttpStatusCode": refusal_status.value},
+            # The handshake refusal is the websockets library's InvalidStatus; its text is the library's own, so only its type is pinned.
+            contextual_data_by_name={
+                OPERATION_CONTEXT_NAME: CONNECT_OPERATION,
+                CONNECTION_ERROR_TYPE_CONTEXT_NAME: "InvalidStatus",
+                "RealtimeVoice.HttpStatusCode": refusal_status.value,
+            },
             absent_phrases=[SCRIPTED_SERVICE_API_KEY],
         )
         expected_provider_session_count: int = 0
@@ -766,6 +829,7 @@ class TestVoiceOptions:
         async with (
             RealtimeVoiceServiceScripted() as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
         ):
             actual_voice_options: list[VoiceOption] = await domain_facade.get_voice_options()
 

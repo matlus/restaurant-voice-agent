@@ -235,12 +235,16 @@ Run these from the repository root before committing:
 uv run --all-packages --all-groups ruff check .
 uv run --all-packages --all-groups ruff format --check .
 uv run --all-packages --all-groups pyright
-uv run --all-packages --all-groups pytest -q
+uv run --all-packages --all-groups pytest -q --cov
 ```
+
+The `--cov` run fails if line coverage drops below the floor set in `pyproject.toml`. CI (`.github/workflows/ci.yml`)
+runs the same four checks, plus a `docker build`, on every pull request and every push to `main`. Dependabot proposes
+updates to the lock file, the base images (pinned by digest in the `Dockerfile`) and the workflow actions.
 
 ### Tests
 
-There are 122 tests, and they never call OpenAI. Most are acceptance tests: they drive each package through its
+There are over 200 tests, and they never call OpenAI. Most are acceptance tests: they drive each package through its
 public `DomainFacade` the way a real caller would, against a real SQLite store seeded from the bundled data. For voice,
 the real OpenAI gateway connects over a real WebSocket to a scripted Realtime service that the tests run on the local
 machine. That service plays back the events a real session would send, including tool calls, and records what the
