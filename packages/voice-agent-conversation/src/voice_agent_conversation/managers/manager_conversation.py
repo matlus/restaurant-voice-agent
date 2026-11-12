@@ -19,8 +19,6 @@ from voice_agent_conversation.managers.models.conversation_models import (
     AgentReplyProgress,
     AgentSessionEvent,
     AgentSpeechChunk,
-    AgentSpeechCutOff,
-    AgentSpeechPart,
     AgentSpeechReceived,
     AgentToolCallAnswered,
     AgentToolCallRequested,
@@ -31,10 +29,8 @@ from voice_agent_conversation.managers.models.conversation_models import (
     ConversationEvent,
     ConversationRequest,
     ConversationStarted,
-    GuestAudioAllowance,
     GuestSideEvent,
     GuestSpeechActivity,
-    GuestSpeechChunk,
     GuestStartedSpeaking,
     GuestStoppedSpeaking,
     SentAgentSpeech,
@@ -43,10 +39,10 @@ from voice_agent_conversation.managers.models.conversation_models import (
     VoiceSessionEvent,
     VoiceSessionSettings,
 )
+from voice_agent_conversation.managers.processors.processor_call_limit_enforcement import ProcessorCallLimitEnforcement
+from voice_agent_conversation.managers.processors.processor_guest_side_forwarding import ProcessorGuestSideForwarding
 from voice_agent_conversation.managers.rules.agent_instructions import AgentInstructions
 from voice_agent_conversation.managers.rules.agent_speech_playback import AgentSpeechPlayback
-from voice_agent_conversation.managers.rules.call_limits import CallLimits
-from voice_agent_conversation.managers.rules.guest_audio_pacing import GuestAudioPacing
 from voice_agent_conversation.managers.service_locators.service_locator_base import ServiceLocatorBase
 from voice_agent_conversation.managers.validators.validator_conversation_requests import ValidatorConversationRequests
 from voice_agent_restaurant import DomainFacade as RestaurantDomainFacade, RestaurantProfile, VoiceAgentRestaurantBaseException
@@ -236,9 +232,10 @@ class ManagerConversation:
         call_end_signals: CallEndSignals,
         read_sent_agent_speech: Callable[[], SentAgentSpeech | None],
     ) -> asyncio.Task[None]:
-        return asyncio.create_task(
-            ManagerConversation._forward_guest_side_events(guest_side_events, realtime_voice_session, call_end_signals, read_sent_agent_speech)
+        processor_guest_side_forwarding: ProcessorGuestSideForwarding = ProcessorGuestSideForwarding(
+            realtime_voice_session, call_end_signals, read_sent_agent_speech
         )
+        return asyncio.create_task(processor_guest_side_forwarding.forward_guest_side_events(guest_side_events))
 
     @staticmethod
     def _start_call_limit_enforcement(
@@ -247,9 +244,14 @@ class ManagerConversation:
         call_end_signals: CallEndSignals,
         read_guest_speech_activity: Callable[[], GuestSpeechActivity],
     ) -> asyncio.Task[None]:
-        return asyncio.create_task(
-            ManagerConversation._enforce_call_limits(realtime_voice_session, call_limit_settings, call_end_signals, read_guest_speech_activity)
+        processor_call_limit_enforcement: ProcessorCallLimitEnforcement = ProcessorCallLimitEnforcement(
+            realtime_voice_session,
+            call_limit_settings,
+            call_end_signals,
+            read_guest_speech_activity,
+            lambda call_limit: ManagerConversation._request_farewell(realtime_voice_session, call_limit, call_end_signals),
         )
+        return asyncio.create_task(processor_call_limit_enforcement.enforce_call_limits())
 
     @staticmethod
     async def _answer_tool_call(
@@ -309,46 +311,9 @@ class ManagerConversation:
             await realtime_voice_session.request_next_reply()
 
     @staticmethod
-    async def _enforce_call_limits(
-        realtime_voice_session: RealtimeVoiceSessionBase,
-        call_limit_settings: CallLimitSettings,
-        call_end_signals: CallEndSignals,
-        read_guest_speech_activity: Callable[[], GuestSpeechActivity],
-    ) -> None:
-        """Waits for a call limit, asks for the farewell and reports the limit. A farewell that never finishes would hold
-        the paid session open, so the session is closed after a grace period and the call still ends."""
-        call_limit: CallLimit = await ManagerConversation._wait_for_call_limit(call_limit_settings, read_guest_speech_activity)
-        if not ManagerConversation._session_still_reaches_guest(call_end_signals):
-            return
-        await ManagerConversation._request_farewell(realtime_voice_session, call_limit, call_end_signals)
-        call_end_signals.reached_call_limit.set_result(call_limit)
-        await asyncio.sleep(CallLimits.FAREWELL_GRACE_SECONDS)
-        # Told first, so the relay sends nothing to the session being closed under it.
-        call_end_signals.farewell_grace_ran_out.set()
-        await realtime_voice_session.close()
-
-    @staticmethod
     async def _request_farewell(realtime_voice_session: RealtimeVoiceSessionBase, call_limit: CallLimit, call_end_signals: CallEndSignals) -> None:
         if ManagerConversation._session_still_reaches_guest(call_end_signals):
             await realtime_voice_session.request_farewell(AgentInstructions.compose_farewell(call_limit))
-
-    @staticmethod
-    async def _wait_for_call_limit(
-        call_limit_settings: CallLimitSettings, read_guest_speech_activity: Callable[[], GuestSpeechActivity]
-    ) -> CallLimit:
-        event_loop: asyncio.AbstractEventLoop = asyncio.get_running_loop()
-        call_started_at: float = event_loop.time()
-        # The wait is recomputed after every sleep: the guest may have spoken meanwhile, which moves the silence limit.
-        call_limit: CallLimit | None
-        while True:
-            call_limit = CallLimits.find_reached_call_limit(call_limit_settings, call_started_at, read_guest_speech_activity(), event_loop.time())
-            if call_limit is not None:
-                return call_limit
-            await asyncio.sleep(
-                CallLimits.count_seconds_until_a_limit_could_be_reached(
-                    call_limit_settings, call_started_at, read_guest_speech_activity(), event_loop.time()
-                )
-            )
 
     @staticmethod
     async def _settle_call_limit_enforcement(call_limit_enforcement: asyncio.Task[None]) -> None:
@@ -379,71 +344,3 @@ class ManagerConversation:
     def _is_current_task_being_cancelled() -> bool:
         current_task: asyncio.Task[object] | None = asyncio.current_task()
         return current_task is not None and current_task.cancelling() > 0
-
-    @staticmethod
-    async def _forward_guest_side_events(
-        guest_side_events: AsyncIterable[GuestSideEvent],
-        realtime_voice_session: RealtimeVoiceSessionBase,
-        call_end_signals: CallEndSignals,
-        read_sent_agent_speech: Callable[[], SentAgentSpeech | None],
-    ) -> None:
-        # The part already cut off is remembered, so one part is cut off once however many reports follow.
-        cut_off_agent_speech_part: AgentSpeechPart | None = None
-        guest_audio_allowance: GuestAudioAllowance = GuestAudioPacing.start_allowance(
-            realtime_voice_session.conversation_audio_format.guest_audio_sample_rate_hz, asyncio.get_running_loop().time()
-        )
-        try:
-            guest_side_event: GuestSideEvent
-            async for guest_side_event in guest_side_events:
-                # Once a limit is reached the guest hears the farewell; nothing more reaches a session that is about to
-                # close, so nothing is sent to one already closed.
-                if call_end_signals.reached_call_limit.done():
-                    continue
-                match guest_side_event:
-                    case GuestSpeechChunk(pcm_audio=pcm_audio):
-                        guest_audio_allowance = await ManagerConversation._forward_guest_speech(
-                            realtime_voice_session, pcm_audio, guest_audio_allowance
-                        )
-                    case AgentSpeechCutOff():
-                        cut_off_agent_speech_part = await ManagerConversation._cut_off_agent_speech(
-                            realtime_voice_session, guest_side_event, read_sent_agent_speech(), cut_off_agent_speech_part
-                        )
-        finally:
-            # The guest hung up or forwarding failed. Closing the session ends the event relay.
-            call_end_signals.guest_audio_ended.set()
-            await realtime_voice_session.close()
-
-    @staticmethod
-    async def _forward_guest_speech(
-        realtime_voice_session: RealtimeVoiceSessionBase, pcm_audio: bytes, guest_audio_allowance: GuestAudioAllowance
-    ) -> GuestAudioAllowance:
-        """Sends a piece of guest speech the pacing admits and returns the allowance left; a piece it does not admit is dropped."""
-        guest_audio_sample_rate_hz: int = realtime_voice_session.conversation_audio_format.guest_audio_sample_rate_hz
-        refilled_guest_audio_allowance: GuestAudioAllowance = GuestAudioPacing.refill_allowance(
-            guest_audio_allowance, guest_audio_sample_rate_hz, asyncio.get_running_loop().time()
-        )
-        if not GuestAudioPacing.admits_guest_speech(refilled_guest_audio_allowance, len(pcm_audio), guest_audio_sample_rate_hz):
-            return refilled_guest_audio_allowance
-        await realtime_voice_session.send_guest_audio(pcm_audio)
-        return GuestAudioPacing.spend_allowance(refilled_guest_audio_allowance, len(pcm_audio))
-
-    @staticmethod
-    async def _cut_off_agent_speech(
-        realtime_voice_session: RealtimeVoiceSessionBase,
-        agent_speech_cut_off: AgentSpeechCutOff,
-        sent_agent_speech: SentAgentSpeech | None,
-        cut_off_agent_speech_part: AgentSpeechPart | None,
-    ) -> AgentSpeechPart | None:
-        """Returns the part cut off so far, which the caller hands back with the next report: a report that removes nothing
-        the guest did not hear, or names a part already cut off, changes nothing."""
-        if sent_agent_speech is None or not AgentSpeechPlayback.drops_unheard_speech(
-            sent_agent_speech, agent_speech_cut_off, cut_off_agent_speech_part
-        ):
-            return cut_off_agent_speech_part
-        heard_milliseconds: int = AgentSpeechPlayback.to_heard_milliseconds(
-            sent_agent_speech,
-            agent_speech_cut_off.unplayed_milliseconds,
-            realtime_voice_session.conversation_audio_format.agent_audio_sample_rate_hz,
-        )
-        await realtime_voice_session.cut_off_agent_speech(sent_agent_speech.agent_speech_part, heard_milliseconds)
-        return sent_agent_speech.agent_speech_part

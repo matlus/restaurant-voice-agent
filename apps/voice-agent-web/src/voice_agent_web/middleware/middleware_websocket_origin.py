@@ -4,7 +4,7 @@ from typing import Final
 from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from voice_agent_web.middleware.origin_normalization import OriginNormalization
+from voice_agent_web.origins.origin_normalization import OriginNormalization
 
 
 class MiddlewareWebSocketOrigin:
