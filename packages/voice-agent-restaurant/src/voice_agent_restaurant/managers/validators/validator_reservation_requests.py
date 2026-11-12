@@ -53,6 +53,7 @@ class ValidatorReservationRequests:
     GUEST_NAME_FIELD_NAME: Final[str] = "guest_name"
     PHONE_NUMBER_FIELD_NAME: Final[str] = "phone_number"
     CONFIRMATION_CODE_FIELD_NAME: Final[str] = "confirmation_code"
+    NOTES_FIELD_NAME: Final[str] = "notes"
     REQUIRED_FIELD_PROBLEM_TEMPLATE: Final[str] = "'{field_name}' is required but was not provided"
 
     @classmethod
@@ -289,6 +290,8 @@ class ValidatorReservationRequests:
         minutes_past_slot: int = starts_at.minute % slot_interval_minutes
         if minutes_past_slot == 0:
             return []
+        # A time of day cannot be shifted by minutes on its own, so it rides on an arbitrary date; only its hour and minute
+        # are read back.
         earlier_slot: datetime = datetime.combine(date.min, starts_at.replace(second=0, microsecond=0)) - timedelta(minutes=minutes_past_slot)
         later_slot: datetime = earlier_slot + timedelta(minutes=slot_interval_minutes)
         return [
@@ -334,12 +337,17 @@ class ValidatorReservationRequests:
             ]
         return []
 
-    @staticmethod
+    @classmethod
     def _collect_requested_change_problems(
-        reservation_date_text: str | None, reservation_time_text: str | None, party_size: int | None, notes: str | None
+        cls, reservation_date_text: str | None, reservation_time_text: str | None, party_size: int | None, notes: str | None
     ) -> list[str]:
         if reservation_date_text is None and reservation_time_text is None and party_size is None and notes is None:
-            return ["at least one of 'reservation_date', 'reservation_time', 'party_size' or 'notes' must be provided to change"]
+            return [
+                (
+                    f"at least one of '{cls.RESERVATION_DATE_FIELD_NAME}', '{cls.RESERVATION_TIME_FIELD_NAME}', "
+                    f"'{cls.PARTY_SIZE_FIELD_NAME}' or '{cls.NOTES_FIELD_NAME}' must be provided to change"
+                )
+            ]
         return []
 
     @classmethod
@@ -375,7 +383,7 @@ class ValidatorReservationRequests:
     @classmethod
     def _collect_notes_problems(cls, notes: str | None) -> list[str]:
         if notes is not None and len(notes) > cls.MAXIMUM_NOTES_LENGTH:
-            return [f"'notes' must contain at most {cls.MAXIMUM_NOTES_LENGTH} characters"]
+            return [f"'{cls.NOTES_FIELD_NAME}' must contain at most {cls.MAXIMUM_NOTES_LENGTH} characters"]
         return []
 
     @staticmethod

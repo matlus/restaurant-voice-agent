@@ -742,7 +742,7 @@ class TestCreateReservation:
     ) -> None:
         party_size: int = 8
         requested_time: str = "19:00"
-        racing_guests: list[GeneratedGuest] = [create_generated_guest(), create_generated_guest()]
+        racing_generated_guests: list[GeneratedGuest] = [create_generated_guest(), create_generated_guest()]
         fitting_table_ids: list[str] = [seeded_table.table_id for seeded_table in read_seeded_tables() if seeded_table.seats >= party_size]
         assert len(fitting_table_ids) == 1, (
             f"The race needs exactly one table to seat {party_size}; the seeded tables offer {fitting_table_ids!r}, so the seeded data "
@@ -760,8 +760,10 @@ class TestCreateReservation:
             )
             racing_results: list[Reservation | BaseException] = await asyncio.gather(
                 *(
-                    domain_facade.create_reservation(create_reservation_request(racing_guest, reservation_time=requested_time, party_size=party_size))
-                    for racing_guest in racing_guests
+                    domain_facade.create_reservation(
+                        create_reservation_request(racing_generated_guest, reservation_time=requested_time, party_size=party_size)
+                    )
+                    for racing_generated_guest in racing_generated_guests
                 ),
                 return_exceptions=True,
             )

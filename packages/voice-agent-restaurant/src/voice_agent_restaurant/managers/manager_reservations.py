@@ -111,12 +111,12 @@ class ManagerReservations:
         )
         day_seatings: list[Seating] = await self._data_manager_reservations.find_seatings_on(seatable_requested_seating.reservation_date)
         # The caller's own booking does not hold its table against a move, and its time is not offered back, as for a change.
-        own_reservation: Reservation | None = await self._retrieve_own_reservation_among(
+        own_reservation: Reservation | None = await self._find_own_reservation_among(
             day_seatings, validated_availability_request.own_confirmation_code
         )
-        seatings: list[Seating] = self._leave_out_booking(day_seatings, validated_availability_request.own_confirmation_code)
+        other_seatings: list[Seating] = self._leave_out_booking(day_seatings, validated_availability_request.own_confirmation_code)
         table_is_free: bool = SeatingRules.has_free_table(
-            seating_plan.fitting_tables, seatings, seatable_requested_seating.starts_at, seating_plan.ends_at
+            seating_plan.fitting_tables, other_seatings, seatable_requested_seating.starts_at, seating_plan.ends_at
         )
         return AvailabilityResult(
             reservation_date=seatable_requested_seating.reservation_date,
@@ -125,7 +125,7 @@ class ManagerReservations:
             is_available=table_is_free,
             alternative_times=[]
             if table_is_free
-            else self._find_alternative_times(seating_plan, seatings, self._find_kept_time(seatable_requested_seating, own_reservation)),
+            else self._find_alternative_times(seating_plan, other_seatings, self._find_kept_time(seatable_requested_seating, own_reservation)),
         )
 
     async def create_reservation(self, reservation_request: ReservationRequest) -> Reservation:
@@ -343,7 +343,7 @@ class ManagerReservations:
             },
         )
 
-    async def _retrieve_own_reservation_among(self, day_seatings: Iterable[Seating], own_confirmation_code: str | None) -> Reservation | None:
+    async def _find_own_reservation_among(self, day_seatings: Iterable[Seating], own_confirmation_code: str | None) -> Reservation | None:
         """The caller's own booking, when it holds a table that day. A code for no booking that day changes nothing, so it is
         not looked up and does not reveal whether such a booking exists."""
         if own_confirmation_code is None or all(seating.confirmation_code != own_confirmation_code for seating in day_seatings):
