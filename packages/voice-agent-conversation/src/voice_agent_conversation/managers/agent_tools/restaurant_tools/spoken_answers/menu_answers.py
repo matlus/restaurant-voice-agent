@@ -19,11 +19,10 @@ class MenuDishListing:
 @final
 @dataclass(frozen=True)
 class MenuSearchAnswer:
-    """What the agent reads for a menu search that is not about allergies. more_available counts the matching dishes
-    left out, so the agent can offer more or narrow the search."""
+    """What the agent reads for a menu search that is not about allergies, so it can offer more dishes or narrow the search."""
 
     dishes: list[MenuDishListing]
-    more_available: int
+    unlisted_matching_dish_count: int
 
 
 @final
@@ -33,7 +32,7 @@ class AllergenMenuSearchAnswer:
     the agent passes on because a dish free of an allergen by recipe can still carry traces of it."""
 
     dishes: list[MenuDishListing]
-    more_available: int
+    unlisted_matching_dish_count: int
     allergen_notice: str
 
 
@@ -70,12 +69,12 @@ class MenuAnswerMapping:
 
     @classmethod
     def to_menu_search_answer(cls, dishes: list[Dish]) -> MenuSearchAnswer:
-        return MenuSearchAnswer(dishes=cls._list_dishes(dishes), more_available=cls._count_unlisted_dishes(dishes))
+        return MenuSearchAnswer(dishes=cls._list_dishes(dishes), unlisted_matching_dish_count=cls._count_unlisted_dishes(dishes))
 
     @classmethod
     def to_allergen_menu_search_answer(cls, dishes: list[Dish], allergen_notice: str) -> AllergenMenuSearchAnswer:
         return AllergenMenuSearchAnswer(
-            dishes=cls._list_dishes(dishes), more_available=cls._count_unlisted_dishes(dishes), allergen_notice=allergen_notice
+            dishes=cls._list_dishes(dishes), unlisted_matching_dish_count=cls._count_unlisted_dishes(dishes), allergen_notice=allergen_notice
         )
 
     @staticmethod

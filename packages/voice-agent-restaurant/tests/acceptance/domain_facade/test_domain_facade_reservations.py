@@ -1427,14 +1427,20 @@ class TestCancelReservation:
                 f"Cancelling to free a table needs booking {current_reservation.confirmation_code} to hold a party of {freed_party_size} at "
                 f"{freed_seating_time:%H:%M} on {BUSY_FRIDAY}; the seeded data no longer supports this scenario: {current_reservation!r}"
             )
+            freed_seating_availability_request: AvailabilityRequest = AvailabilityRequest(
+                reservation_date=BUSY_FRIDAY, reservation_time=f"{freed_seating_time:%H:%M}", party_size=freed_party_size
+            )
+            availability_before_cancelling: AvailabilityResult = await domain_facade.check_availability(freed_seating_availability_request)
+            assert not availability_before_cancelling.is_available, (
+                f"Cancelling to free a table needs every table for {freed_party_size} taken at {freed_seating_time:%H:%M} on {BUSY_FRIDAY} "
+                f"before the cancellation; the seeded data no longer supports this scenario: {availability_before_cancelling!r}"
+            )
             expected_cancelled_reservation: Reservation = replace(current_reservation, reservation_status=ReservationStatus.CANCELLED)
             actual_cancelled_reservation: Reservation = await domain_facade.cancel_reservation(
                 create_code_cancellation_request(current_reservation.confirmation_code, SEEDED_PRIYA_PHONE)
             )
             actual_found_reservations: list[Reservation] = await domain_facade.find_reservations(create_booking_search_request(current_reservation))
-            actual_availability_result: AvailabilityResult = await domain_facade.check_availability(
-                AvailabilityRequest(reservation_date=BUSY_FRIDAY, reservation_time=f"{freed_seating_time:%H:%M}", party_size=freed_party_size)
-            )
+            actual_availability_result: AvailabilityResult = await domain_facade.check_availability(freed_seating_availability_request)
 
         assert actual_cancelled_reservation == expected_cancelled_reservation
         assert actual_found_reservations == expected_found_reservations

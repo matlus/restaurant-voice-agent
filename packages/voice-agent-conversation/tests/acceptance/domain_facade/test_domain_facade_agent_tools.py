@@ -5,6 +5,7 @@
 
 import asyncio
 import json
+import secrets
 from collections.abc import Sequence
 from contextlib import aclosing
 from dataclasses import asdict, dataclass, replace
@@ -71,11 +72,13 @@ PROVIDER_CONVERSATION_AUDIO_FORMAT: Final[ConversationAudioFormat] = Conversatio
 )
 GUEST_QUESTION_AUDIO: Final[bytes] = b"guest asks the agent something"
 CONVERSATION_TIME_LIMIT_SECONDS: Final[float] = 5.0
-TOOL_CALL_ID: Final[str] = "call_guest_question"
-SECOND_TOOL_CALL_ID: Final[str] = "call_guest_question_again"
+TOOL_CALL_ID: Final[str] = f"call_{secrets.token_hex(8)}"
+SECOND_TOOL_CALL_ID: Final[str] = f"call_{secrets.token_hex(8)}"
 UNKNOWN_TOOL_NAME: Final[str] = "order_pizza"
 KETO_SEARCH_ARGUMENTS_JSON: Final[str] = '{"diet_labels": ["keto"]}'
 WRONG_CALLS_ALLOWED_IN_A_ROW: Final[int] = 3
+# More bookings than the seeded dining room has tables, so filling one time always ends.
+MAXIMUM_BOOKINGS_TO_FILL_A_TIME: Final[int] = 50
 TECHNICAL_FAILURE_HTTP_STATUS_CODE: Final[int] = 500
 GREETING_EVENTS: Final[list[ConversationEvent]] = [
     ConversationStarted(
@@ -115,6 +118,31 @@ class BookingSummaryAnswer:
     reservation_date: str
     reservation_time: str
     party_size: int
+
+
+@dataclass(frozen=True)
+class DishListingAnswer:
+    """A dish in a menu search answer as the agent reads it: exactly these fields and no others."""
+
+    name: str
+    section: str
+    price: str
+    diet_labels: list[str]
+
+
+@dataclass(frozen=True)
+class WeekdayHoursRecord:
+    """One weekday of an opening-hours answer as the agent reads it: exactly these fields and no others."""
+
+    weekday: str
+    hours: str
+
+
+@dataclass(frozen=True)
+class ChangeBookingArguments:
+    confirmation_code: str
+    phone_number: str
+    clear_notes: bool
 
 
 @dataclass(frozen=True)
@@ -205,6 +233,20 @@ async def create_tomorrows_availability_request(restaurant_database_path: Path, 
     return AvailabilityRequest(reservation_date=tomorrow.isoformat(), reservation_time=reservation_time, party_size=party_size)
 
 
+async def fill_tomorrows_booking_time(restaurant_database_path: Path, availability_request: AvailabilityRequest) -> AvailabilityResult:
+    """Books generated guests at TOMORROWS_BOOKING_TIME until no table fits the party, and returns the full time's availability."""
+    tomorrow: date = date.fromisoformat(availability_request.reservation_date)
+    async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
+        for _ in range(MAXIMUM_BOOKINGS_TO_FILL_A_TIME):
+            availability_result: AvailabilityResult = await restaurant_domain_facade.check_availability(availability_request)
+            if not availability_result.is_available:
+                return availability_result
+            await restaurant_domain_facade.create_reservation(
+                create_tomorrows_reservation_request(tomorrow, create_generated_guest(), create_generated_note())
+            )
+    raise AssertionError(f"{MAXIMUM_BOOKINGS_TO_FILL_A_TIME} bookings did not fill {TOMORROWS_BOOKING_TIME} tomorrow; the seed has more tables")
+
+
 def create_tomorrows_reservation_request(tomorrow: date, generated_guest: GeneratedGuest, notes: str) -> ReservationRequest:
     """A booking at TOMORROWS_BOOKING_TIME for TOMORROWS_BOOKING_PARTY_SIZE, a quiet evening in the seed."""
     return ReservationRequest(
@@ -239,13 +281,10 @@ def describe_spoken_price(price_cents: int) -> str:
     return f"${price_cents // 100}" if price_cents % 100 == 0 else f"${price_cents // 100}.{price_cents % 100:02d}"
 
 
-def create_expected_dish_listing(dish: Dish) -> dict[str, object]:
-    return {
-        "name": dish.name,
-        "section": dish.category.value,
-        "price": describe_spoken_price(dish.price_cents),
-        "diet_labels": list(dish.diet_labels),
-    }
+def create_expected_dish_listing(dish: Dish) -> DishListingAnswer:
+    return DishListingAnswer(
+        name=dish.name, section=dish.category.value, price=describe_spoken_price(dish.price_cents), diet_labels=list(dish.diet_labels)
+    )
 
 
 def read_refusal_answers(realtime_voice_service_scripted: RealtimeVoiceServiceScripted) -> list[AgentToolRefusalAnswer]:
@@ -319,7 +358,7 @@ class TestAgentTools:
             ).dishes
         assert keto_dishes, "The menu must hold keto dishes for this scenario; the seeded data no longer supports it"
         # Keto is a lifestyle diet, not an allergy question, so the answer carries no allergen notice.
-        expected_tool_answer: tuple[list[str], list[list[dict[str, object]]], list[int], list[bool]] = (
+        expected_tool_answer: tuple[list[str], list[list[DishListingAnswer]], list[int], list[bool]] = (
             [TOOL_CALL_ID],
             [[create_expected_dish_listing(keto_dish) for keto_dish in keto_dishes[:MAXIMUM_LISTED_DISHES]]],
             [max(len(keto_dishes) - MAXIMUM_LISTED_DISHES, 0)],
@@ -341,10 +380,10 @@ class TestAgentTools:
 
         actual_tool_outputs: list[CapturedToolOutput] = collect_tool_outputs(realtime_voice_service_scripted)
         actual_tool_answers: list[dict[str, Any]] = [json.loads(actual_tool_output.output) for actual_tool_output in actual_tool_outputs]
-        actual_tool_answer: tuple[list[str], list[list[dict[str, object]]], list[int], list[bool]] = (
+        actual_tool_answer: tuple[list[str], list[list[DishListingAnswer]], list[int], list[bool]] = (
             [actual_tool_output.call_id for actual_tool_output in actual_tool_outputs],
-            [actual_tool_answer["dishes"] for actual_tool_answer in actual_tool_answers],
-            [actual_tool_answer["more_available"] for actual_tool_answer in actual_tool_answers],
+            [[DishListingAnswer(**dish_answer) for dish_answer in actual_tool_answer["dishes"]] for actual_tool_answer in actual_tool_answers],
+            [actual_tool_answer["unlisted_matching_dish_count"] for actual_tool_answer in actual_tool_answers],
             ["allergen_notice" in actual_tool_answer for actual_tool_answer in actual_tool_answers],
         )
         AsserterConversation.assert_conversation_events_are_as_expected(
@@ -488,15 +527,15 @@ class TestAgentTools:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
             opening_hours: OpeningHours = await restaurant_domain_facade.get_opening_hours()
-        expected_weekly_hours: list[dict[str, str]] = [
-            {
-                "weekday": weekday_hours.weekday.value,
-                "hours": (
+        expected_weekly_hours: list[WeekdayHoursRecord] = [
+            WeekdayHoursRecord(
+                weekday=weekday_hours.weekday.value,
+                hours=(
                     f"{describe_spoken_time(weekday_hours.opens_at)} to {describe_spoken_time(weekday_hours.closes_at)}"
                     if isinstance(weekday_hours, OpenWeekday)
                     else "closed"
                 ),
-            }
+            )
             for weekday_hours in opening_hours.weekly_hours
         ]
 
@@ -510,7 +549,10 @@ class TestAgentTools:
         ):
             await guest_microphone.take_part(conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1))
 
-        actual_weekly_hours: list[dict[str, str]] = json.loads(collect_tool_outputs(realtime_voice_service_scripted)[0].output)["weekly_hours"]
+        actual_weekly_hours: list[WeekdayHoursRecord] = [
+            WeekdayHoursRecord(**weekday_hours_answer)
+            for weekday_hours_answer in json.loads(collect_tool_outputs(realtime_voice_service_scripted)[0].output)["weekly_hours"]
+        ]
         assert actual_weekly_hours == expected_weekly_hours
 
     async def test_Converse_WhenTheAgentChecksAvailability_ThenTheRequestedAndAlternativeTimesAreReadyToSay(
@@ -520,8 +562,12 @@ class TestAgentTools:
         availability_request: AvailabilityRequest = await create_tomorrows_availability_request(
             restaurant_database_path, TOMORROWS_BOOKING_TIME, TOMORROWS_BOOKING_PARTY_SIZE
         )
-        async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
-            availability_result: AvailabilityResult = await restaurant_domain_facade.check_availability(availability_request)
+        # A full time is the one that brings alternatives, so every table that fits the party is booked first.
+        availability_result: AvailabilityResult = await fill_tomorrows_booking_time(restaurant_database_path, availability_request)
+        assert availability_result.alternative_times, (
+            f"Filling {TOMORROWS_BOOKING_TIME} tomorrow must leave other times free to offer; the seeded data no longer supports this "
+            f"scenario: {availability_result!r}"
+        )
         expected_spoken_times: tuple[str, list[str]] = (
             TOMORROWS_BOOKING_SPOKEN_TIME,
             [describe_spoken_time(alternative_time) for alternative_time in availability_result.alternative_times],
@@ -718,7 +764,11 @@ class TestAgentTools:
             booked_reservation: Reservation = await restaurant_domain_facade.create_reservation(reservation_request)
         expected_stored_reservations: list[Reservation] = [replace(booked_reservation, notes=None)]
         change_booking_arguments_json: str = json.dumps(
-            {"confirmation_code": booked_reservation.confirmation_code, "phone_number": generated_guest.phone_digits, "clear_notes": True}
+            asdict(
+                ChangeBookingArguments(
+                    confirmation_code=booked_reservation.confirmation_code, phone_number=generated_guest.phone_digits, clear_notes=True
+                )
+            )
         )
 
         async with (
