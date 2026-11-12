@@ -1,3 +1,4 @@
+import math
 from collections.abc import Mapping
 from typing import Final
 
@@ -12,12 +13,11 @@ class SettingsProviderCallLimits:
 
     MAXIMUM_CALL_SECONDS_VARIABLE_NAME: Final[str] = "VOICE_AGENT_MAXIMUM_CALL_SECONDS"
     MAXIMUM_SILENCE_SECONDS_VARIABLE_NAME: Final[str] = "VOICE_AGENT_MAXIMUM_SILENCE_SECONDS"
-    MAXIMUM_CONCURRENT_CALLS_VARIABLE_NAME: Final[str] = "VOICE_AGENT_MAXIMUM_CONCURRENT_CALLS"
     # A reservation call rarely lasts five minutes; fifteen leaves room for a slow one.
     DEFAULT_MAXIMUM_CALL_SECONDS: Final[float] = 900.0
     # Long enough for a caller to look something up, short enough that a forgotten tab stops costing money.
     DEFAULT_MAXIMUM_SILENCE_SECONDS: Final[float] = 120.0
-    DEFAULT_MAXIMUM_CONCURRENT_CALLS: Final[int] = 10
+    SECONDS_FORM_DESCRIPTION: Final[str] = "a finite number of seconds"
     ENVIRONMENT_VARIABLE_NAME_CONTEXT_KEY: Final[str] = "Configuration.EnvironmentVariableName"
     SETTING_VALUE_CONTEXT_KEY: Final[str] = "Configuration.SettingValue"
 
@@ -32,7 +32,6 @@ class SettingsProviderCallLimits:
         return CallLimitSettings(
             maximum_call_seconds=self._read_positive_seconds(self.MAXIMUM_CALL_SECONDS_VARIABLE_NAME, self.DEFAULT_MAXIMUM_CALL_SECONDS),
             maximum_silence_seconds=self._read_positive_seconds(self.MAXIMUM_SILENCE_SECONDS_VARIABLE_NAME, self.DEFAULT_MAXIMUM_SILENCE_SECONDS),
-            maximum_concurrent_calls=self._read_positive_count(self.MAXIMUM_CONCURRENT_CALLS_VARIABLE_NAME, self.DEFAULT_MAXIMUM_CONCURRENT_CALLS),
         )
 
     def _read_positive_seconds(self, variable_name: str, default_seconds: float) -> float:
@@ -42,27 +41,16 @@ class SettingsProviderCallLimits:
         try:
             seconds: float = float(raw_value.strip())
         except ValueError as value_error:
-            raise self._create_not_positive_exception(variable_name, raw_value, "a number of seconds") from value_error
-        if seconds <= 0:
-            raise self._create_not_positive_exception(variable_name, raw_value, "a number of seconds")
+            raise self._create_not_positive_exception(variable_name, raw_value) from value_error
+        # float() also reads "nan" and "inf", which would disable the limit or keep it from ever being reached.
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise self._create_not_positive_exception(variable_name, raw_value)
         return seconds
 
-    def _read_positive_count(self, variable_name: str, default_count: int) -> int:
-        raw_value: str | None = self._settings_source.read_setting_value(variable_name)
-        if not SettingsSource.is_setting_present(raw_value):
-            return default_count
-        try:
-            count: int = int(raw_value.strip())
-        except ValueError as value_error:
-            raise self._create_not_positive_exception(variable_name, raw_value, "a whole number") from value_error
-        if count <= 0:
-            raise self._create_not_positive_exception(variable_name, raw_value, "a whole number")
-        return count
-
-    def _create_not_positive_exception(self, variable_name: str, raw_value: str, expected_form: str) -> ConfigurationSettingException:
+    def _create_not_positive_exception(self, variable_name: str, raw_value: str) -> ConfigurationSettingException:
         return ConfigurationSettingException(
             message=(
-                f"Configuration setting '{variable_name}' must be {expected_form} greater than zero but was '{raw_value.strip()}'. "
+                f"Configuration setting '{variable_name}' must be {self.SECONDS_FORM_DESCRIPTION} greater than zero but was '{raw_value.strip()}'. "
                 "Leave it unset to use the default."
             ),
             log_event=LogEventConfiguration.CALL_LIMIT_SETTINGS_RETRIEVAL,

@@ -22,7 +22,7 @@ class MiddlewareWebSocketOrigin:
 
     def __init__(self, app: ASGIApp, allowed_origins: Collection[str]) -> None:
         self._app: ASGIApp = app
-        self._allowed_origins: frozenset[str] = frozenset(self._normalize_origin(allowed_origin) for allowed_origin in allowed_origins)
+        self._allowed_origins: frozenset[str] = self._normalize_allowed_origins(allowed_origins)
         self._logger: logging.Logger = logging.getLogger(__name__)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -38,12 +38,29 @@ class MiddlewareWebSocketOrigin:
         origin: str | None = headers.get(self.ORIGIN_HEADER_NAME)
         if origin is None:
             return True
-        normalized_origin: str = self._normalize_origin(origin)
-        own_host: str = headers.get(self.HOST_HEADER_NAME, "").lower()
-        return normalized_origin in self._allowed_origins or (own_host != "" and urlsplit(normalized_origin).netloc == own_host)
+        # An origin with no scheme or host, such as the "null" a sandboxed page sends, names no site to trust.
+        normalized_origin: str | None = self._normalize_origin(origin)
+        if normalized_origin is None:
+            return False
+        own_host: str | None = headers.get(self.HOST_HEADER_NAME)
+        return normalized_origin in self._allowed_origins or (own_host is not None and urlsplit(normalized_origin).netloc == own_host.lower())
+
+    @classmethod
+    def _normalize_allowed_origins(cls, allowed_origins: Collection[str]) -> frozenset[str]:
+        normalized_allowed_origins: set[str] = set()
+        allowed_origin: str
+        for allowed_origin in allowed_origins:
+            normalized_allowed_origin: str | None = cls._normalize_origin(allowed_origin)
+            # A bare host names no scheme; accepting it would leave an allowed origin that names no site.
+            if normalized_allowed_origin is None:
+                raise ValueError(f"Allowed origin '{allowed_origin}' must name a scheme and a host, such as https://booking.example.com.")
+            normalized_allowed_origins.add(normalized_allowed_origin)
+        return frozenset(normalized_allowed_origins)
 
     @staticmethod
-    def _normalize_origin(origin: str) -> str:
-        # An origin is scheme, host and port; case and a trailing slash do not change it.
+    def _normalize_origin(origin: str) -> str | None:
+        """An origin is scheme, host and port; case and a trailing slash do not change it. None when it names no site."""
         split_origin: SplitResult = urlsplit(origin.strip().lower())
+        if split_origin.scheme == "" or split_origin.netloc == "":
+            return None
         return f"{split_origin.scheme}://{split_origin.netloc}"

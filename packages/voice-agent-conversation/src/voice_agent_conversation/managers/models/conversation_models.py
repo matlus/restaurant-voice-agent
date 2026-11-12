@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -86,6 +87,15 @@ class CallLimitReached:
     """The last event of a call a limit ended: the agent has said goodbye, and the host should end the call."""
 
     call_limit: CallLimit
+
+
+@dataclass(frozen=True)
+class CallEndSignals:
+    """How the parts of one call tell each other it is ending: the guest's side has ended, or a call limit was reached and
+    the farewell asked for. Each is set once and never cleared."""
+
+    guest_audio_ended: asyncio.Event
+    reached_call_limit: asyncio.Future[CallLimit]
 
 
 @dataclass(frozen=True)

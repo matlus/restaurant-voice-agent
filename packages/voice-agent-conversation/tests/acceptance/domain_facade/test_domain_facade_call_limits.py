@@ -1,12 +1,13 @@
 # Acceptance tests for the limits on a call, black-box through the conversation DomainFacade. Every call holds a paid
-# speech provider session, so a call ends with a spoken goodbye at its time or silence limit, only so many calls run at
-# once, and guest speech that is too large or arrives faster than it could be spoken never reaches the provider. The
+# speech provider session, so a call ends with a spoken goodbye at its time or silence limit, and guest speech that is
+# too large or arrives faster than it could be spoken never reaches the provider. The
 # scripted Realtime service answers every reply request with the same speech, so the farewell sounds like the greeting;
 # what tells them apart is the instructions the farewell request carried.
 
 import asyncio
 import secrets
 from contextlib import aclosing
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
@@ -15,12 +16,17 @@ from conversation_acceptance_support.asserters.asserter_conversation import Asse
 from conversation_acceptance_support.asserters.asserter_exception import AsserterException, ExpectedExceptionContent, ExpectedExceptionMetadata
 from conversation_acceptance_support.bundled_voice_catalog import read_catalog_voice_option
 from conversation_acceptance_support.guest_microphone import GREETING_EVENT_COUNT, GuestMicrophone
-from conversation_acceptance_support.realtime_voice_service_scripted import SCRIPTED_GREETING_AUDIO, RealtimeVoiceServiceScripted
+from conversation_acceptance_support.realtime_voice_service_scripted import (
+    ACTIVE_RESPONSE_ERROR_CODE,
+    SCRIPTED_GREETING_AUDIO,
+    RealtimeVoiceServiceScripted,
+)
 from conversation_acceptance_support.service_locator_testing import (
     MAXIMUM_CALL_SECONDS_VARIABLE_NAME,
-    MAXIMUM_CONCURRENT_CALLS_VARIABLE_NAME,
     MAXIMUM_SILENCE_SECONDS_VARIABLE_NAME,
+    ServiceLocatorTesting,
     create_domain_facade,
+    create_service_locator_testing,
 )
 
 from voice_agent_conversation import (
@@ -30,14 +36,14 @@ from voice_agent_conversation import (
     CallLimitReached,
     ConfigurationSettingException,
     ConversationAudioFormat,
-    ConversationCapacityReachedException,
     ConversationEvent,
     ConversationRequest,
     ConversationStarted,
+    DomainFacade,
     ExceptionAction,
     LogEventConfiguration,
-    LogEventConversation,
     Severity,
+    SpeechProviderErrorTolerated,
     VoiceOption,
 )
 
@@ -62,15 +68,23 @@ GUEST_KEEPS_LISTENING_EVENT_COUNT: Final[int] = 99
 # largest piece it takes is a fifth of that.
 BURST_BYTE_COUNT: Final[int] = PROVIDER_CONVERSATION_AUDIO_FORMAT.guest_audio_sample_rate_hz * 2
 LARGEST_PIECE_BYTE_COUNT: Final[int] = BURST_BYTE_COUNT // 5
-SERVICE_UNAVAILABLE_HTTP_STATUS_CODE: Final[int] = 503
 TECHNICAL_FAILURE_HTTP_STATUS_CODE: Final[int] = 500
+SETTING_VALUE_CONTEXT_NAME: Final[str] = "Configuration.SettingValue"
 
 
-def read_farewell_request(realtime_voice_service_scripted: RealtimeVoiceServiceScripted) -> tuple[int, bool]:
-    """How many replies the call asked for, and whether the last one carried the farewell instructions."""
+@dataclass(frozen=True)
+class FarewellRequest:
+    reply_request_count: int
+    last_reply_carried_farewell_instructions: bool
+
+
+def read_farewell_request(realtime_voice_service_scripted: RealtimeVoiceServiceScripted) -> FarewellRequest:
     agent_response_instructions: list[str | None] = realtime_voice_service_scripted.captured_realtime_sessions[0].agent_response_instructions
     last_reply_instructions: str | None = agent_response_instructions[-1]
-    return len(agent_response_instructions), last_reply_instructions is not None and FAREWELL_INSTRUCTION_PHRASE in last_reply_instructions
+    return FarewellRequest(
+        reply_request_count=len(agent_response_instructions),
+        last_reply_carried_farewell_instructions=last_reply_instructions is not None and FAREWELL_INSTRUCTION_PHRASE in last_reply_instructions,
+    )
 
 
 class TestCallLimits:
@@ -86,7 +100,7 @@ class TestCallLimits:
     ) -> None:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         expected_conversation_events: list[ConversationEvent] = [*GREETING_EVENTS, *FAREWELL_EVENTS, CallLimitReached(call_limit=expected_call_limit)]
-        expected_farewell_request: tuple[int, bool] = (2, True)
+        expected_farewell_request: FarewellRequest = FarewellRequest(reply_request_count=2, last_reply_carried_farewell_instructions=True)
 
         async with (
             RealtimeVoiceServiceScripted() as realtime_voice_service_scripted,
@@ -105,69 +119,40 @@ class TestCallLimits:
         )
         assert read_farewell_request(realtime_voice_service_scripted) == expected_farewell_request
 
-    async def test_Converse_WhenEveryAllowedCallIsInProgress_ThenTheNextCallerIsRefusedBeforeTheProviderIsCalled(
+    async def test_Converse_WhenTheProviderRefusesTheFarewellBecauseAReplyIsUnderWay_ThenTheFarewellIsAskedForAgainOnceThatReplyEnds(
         self, restaurant_database_path: Path
     ) -> None:
-        first_guest_microphone: GuestMicrophone = GuestMicrophone()
-        second_guest_microphone: GuestMicrophone = GuestMicrophone()
-        maximum_concurrent_calls: int = 1
-        expected_exception_content: ExpectedExceptionContent = ExpectedExceptionContent(
-            message_phrases=[f"all {maximum_concurrent_calls} allowed concurrent calls are in progress"],
-            expected_exception_metadata=ExpectedExceptionMetadata(
-                http_status_code=SERVICE_UNAVAILABLE_HTTP_STATUS_CODE,
-                exception_action=ExceptionAction.RETRY_ACTION_NEEDED,
-                reason="All lines are busy. Please try again in a few minutes",
-                severity=Severity.ERROR,
-                log_event=LogEventConversation.CONVERSATION_ADMISSION,
+        guest_microphone: GuestMicrophone = GuestMicrophone()
+        farewell_request_number: int = 2
+        expected_conversation_events: list[ConversationEvent] = [
+            *GREETING_EVENTS,
+            SpeechProviderErrorTolerated(
+                error_type="invalid_request_error",
+                error_code=ACTIVE_RESPONSE_ERROR_CODE,
+                error_message="Conversation already has an active response in progress.",
             ),
-            contextual_data_by_name={"Conversation.MaximumConcurrentCalls": maximum_concurrent_calls},
-        )
-        expected_provider_session_count: int = 1
+            AgentTurnFinished(),
+            *FAREWELL_EVENTS,
+            CallLimitReached(call_limit=CallLimit.MAXIMUM_DURATION),
+        ]
+        expected_farewell_request: FarewellRequest = FarewellRequest(reply_request_count=3, last_reply_carried_farewell_instructions=True)
 
         async with (
-            RealtimeVoiceServiceScripted() as realtime_voice_service_scripted,
+            RealtimeVoiceServiceScripted(refused_reply_request_numbers=[farewell_request_number]) as realtime_voice_service_scripted,
             create_domain_facade(
-                realtime_voice_service_scripted, restaurant_database_path, {MAXIMUM_CONCURRENT_CALLS_VARIABLE_NAME: str(maximum_concurrent_calls)}
+                realtime_voice_service_scripted, restaurant_database_path, {MAXIMUM_CALL_SECONDS_VARIABLE_NAME: SHORT_LIMIT_SECONDS}
             ) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
-            aclosing(domain_facade.converse(CONVERSATION_REQUEST, first_guest_microphone.stream_guest_side_events())) as first_conversation,
-            aclosing(domain_facade.converse(CONVERSATION_REQUEST, second_guest_microphone.stream_guest_side_events())) as second_conversation,
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
         ):
-            await anext(first_conversation)
-            with pytest.raises(ConversationCapacityReachedException) as raised:
-                await anext(second_conversation)
-
-        AsserterException.assert_call_failure_is_as_expected(
-            expected_exception_content=expected_exception_content,
-            expected_provider_session_count=expected_provider_session_count,
-            actual_voice_agent_conversation_exception=raised.value,
-            actual_captured_realtime_sessions=realtime_voice_service_scripted.captured_realtime_sessions,
-        )
-
-    async def test_Converse_WhenTheOnlyAllowedCallHasEnded_ThenTheNextCallerIsAdmitted(self, restaurant_database_path: Path) -> None:
-        first_guest_microphone: GuestMicrophone = GuestMicrophone()
-        second_guest_microphone: GuestMicrophone = GuestMicrophone()
-        expected_conversation_events: list[ConversationEvent] = GREETING_EVENTS
-
-        async with (
-            RealtimeVoiceServiceScripted() as realtime_voice_service_scripted,
-            create_domain_facade(
-                realtime_voice_service_scripted, restaurant_database_path, {MAXIMUM_CONCURRENT_CALLS_VARIABLE_NAME: "1"}
-            ) as domain_facade,
-            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
-        ):
-            async with aclosing(
-                domain_facade.converse(CONVERSATION_REQUEST, first_guest_microphone.stream_guest_side_events())
-            ) as first_conversation:
-                await first_guest_microphone.take_part(first_conversation, [])
-            async with aclosing(
-                domain_facade.converse(CONVERSATION_REQUEST, second_guest_microphone.stream_guest_side_events())
-            ) as second_conversation:
-                actual_conversation_events: list[ConversationEvent] = await second_guest_microphone.take_part(second_conversation, [])
+            actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
+                conversation, [], hang_up_after_event_count=GUEST_KEEPS_LISTENING_EVENT_COUNT
+            )
 
         AsserterConversation.assert_conversation_events_are_as_expected(
             expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
         )
+        assert read_farewell_request(realtime_voice_service_scripted) == expected_farewell_request
 
     async def test_Converse_WhenTheGuestSendsAnOversizedPieceThenSpeechFasterThanRealTime_ThenOnlySpeechWithinTheAllowanceReachesTheProvider(
         self, restaurant_database_path: Path
@@ -196,9 +181,11 @@ class TestCallLimitSettings:
         [
             pytest.param("soon", "'soon'", id="not-a-number"),
             pytest.param("0", "'0'", id="zero"),
+            pytest.param("nan", "'nan'", id="not-a-number-value"),
+            pytest.param("inf", "'inf'", id="infinite"),
         ],
     )
-    def test_Construct_WhenAMaximumCallLengthIsNotAPositiveNumber_ThenTheHostCannotStartAndIsToldWhichSettingToFix(
+    def test_Construct_WhenAMaximumCallLengthIsNotAPositiveFiniteNumber_ThenTheHostCannotStartAndIsToldWhichSettingToFix(
         self, restaurant_database_path: Path, maximum_call_seconds: str, expected_message_phrase: str
     ) -> None:
         realtime_voice_service_scripted: RealtimeVoiceServiceScripted = RealtimeVoiceServiceScripted()
@@ -211,14 +198,19 @@ class TestCallLimitSettings:
                 severity=Severity.ERROR,
                 log_event=LogEventConfiguration.CALL_LIMIT_SETTINGS_RETRIEVAL,
             ),
-            contextual_data_by_name={"Configuration.EnvironmentVariableName": MAXIMUM_CALL_SECONDS_VARIABLE_NAME},
+            contextual_data_by_name={
+                "Configuration.EnvironmentVariableName": MAXIMUM_CALL_SECONDS_VARIABLE_NAME,
+                SETTING_VALUE_CONTEXT_NAME: maximum_call_seconds,
+            },
         )
         expected_provider_session_count: int = 0
 
-        with realtime_voice_service_scripted, pytest.raises(ConfigurationSettingException) as raised:
-            create_domain_facade(
+        with realtime_voice_service_scripted:
+            service_locator_testing: ServiceLocatorTesting = create_service_locator_testing(
                 realtime_voice_service_scripted, restaurant_database_path, {MAXIMUM_CALL_SECONDS_VARIABLE_NAME: maximum_call_seconds}
             )
+            with pytest.raises(ConfigurationSettingException) as raised:
+                DomainFacade(service_locator_testing)
 
         AsserterException.assert_call_failure_is_as_expected(
             expected_exception_content=expected_exception_content,

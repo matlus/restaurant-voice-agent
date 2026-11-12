@@ -9,11 +9,7 @@ from voice_agent_conversation.managers.agent_tools.agent_toolbox import AgentToo
 from voice_agent_conversation.managers.configuration_providers.configuration_provider import ConfigurationProvider
 from voice_agent_conversation.managers.configuration_providers.settings_models.call_limit_settings import CallLimitSettings
 from voice_agent_conversation.managers.data_managers.data_manager_voice_catalog import DataManagerVoiceCatalog
-from voice_agent_conversation.managers.exceptions.conversation_exceptions import (
-    ConversationCapacityReachedException,
-    LogEventConversation,
-    VoiceNotOfferedException,
-)
+from voice_agent_conversation.managers.exceptions.conversation_exceptions import LogEventConversation, VoiceNotOfferedException
 from voice_agent_conversation.managers.gateways.realtime_voice_gateway_base import RealtimeVoiceGatewayBase, RealtimeVoiceSessionBase
 from voice_agent_conversation.managers.gateways.realtime_voice_gateway_openai import RealtimeVoiceGatewayOpenAI
 from voice_agent_conversation.managers.models.conversation_models import (
@@ -24,6 +20,7 @@ from voice_agent_conversation.managers.models.conversation_models import (
     AgentSpeechReceived,
     AgentToolCallRequested,
     AgentTurnFinished,
+    CallEndSignals,
     CallLimit,
     CallLimitReached,
     ConversationEvent,
@@ -36,6 +33,7 @@ from voice_agent_conversation.managers.models.conversation_models import (
     GuestStartedSpeaking,
     GuestStoppedSpeaking,
     SentAgentSpeech,
+    SpeechProviderErrorTolerated,
     VoiceOption,
     VoiceSessionEvent,
     VoiceSessionSettings,
@@ -52,8 +50,9 @@ from voice_agent_restaurant import DomainFacade as RestaurantDomainFacade, Resta
 class ManagerConversation:
     """Runs voice conversations: chooses the voice, briefs the agent, relays audio both ways and runs the tools the agent calls.
 
-    Every call holds a paid speech provider session, so calls are bounded: only so many run at once, and each ends with a
-    spoken goodbye once it runs too long or the guest goes quiet for too long.
+    Every call holds a paid speech provider session, so each call ends with a spoken goodbye once it runs too long or the
+    guest goes quiet for too long. How many calls run at once is the host's to bound: it is process-wide state, which no
+    behavior class here holds.
     """
 
     def __init__(self, service_locator: ServiceLocatorBase) -> None:
@@ -62,8 +61,6 @@ class ManagerConversation:
         self._agent_toolbox: AgentToolbox = AgentToolbox(self._restaurant_domain_facade)
         self._realtime_voice_gateway: RealtimeVoiceGatewayBase = RealtimeVoiceGatewayOpenAI(configuration_provider.get_openai_realtime_settings())
         self._call_limit_settings: CallLimitSettings = configuration_provider.get_call_limit_settings()
-        # One slot per call that may run at once. The semaphore itself is never replaced; calls take and return slots.
-        self._call_slots: asyncio.Semaphore = asyncio.Semaphore(self._call_limit_settings.maximum_concurrent_calls)
 
     async def __aenter__(self) -> Self:
         return self
@@ -83,30 +80,23 @@ class ManagerConversation:
         self, conversation_request: ConversationRequest, guest_side_events: AsyncIterable[GuestSideEvent]
     ) -> AsyncGenerator[ConversationEvent]:
         voice_key: str = ValidatorConversationRequests.validate_conversation_request(conversation_request)
-        # A caller beyond the limit is refused before anything is paid for; checking and taking the slot do not yield,
-        # so no other call can take the last slot in between.
-        if self._call_slots.locked():
-            raise ConversationCapacityReachedException(
-                maximum_concurrent_calls=self._call_limit_settings.maximum_concurrent_calls, log_event=LogEventConversation.CONVERSATION_ADMISSION
-            )
-        async with self._call_slots:
-            voice_option: VoiceOption = await self._retrieve_voice_option(voice_key)
-            restaurant_profile: RestaurantProfile = await self._restaurant_domain_facade.get_restaurant_profile()
-            voice_session_settings: VoiceSessionSettings = VoiceSessionSettings(
-                provider_voice_id=voice_option.provider_voice_id,
-                agent_instructions=await self._compose_agent_instructions(restaurant_profile.name),
-                agent_tool_definitions=self._agent_toolbox.get_tool_definitions(),
-            )
-            async with await self._realtime_voice_gateway.open_session(voice_session_settings) as realtime_voice_session:
-                yield ConversationStarted(conversation_audio_format=realtime_voice_session.conversation_audio_format, voice_option=voice_option)
-                await realtime_voice_session.request_greeting(AgentInstructions.compose_greeting(restaurant_profile.name))
-                # Closing the relay here, in this task, settles guest side forwarding before the session closes.
-                async with contextlib.aclosing(
-                    self._relay_conversation(realtime_voice_session, guest_side_events, self._agent_toolbox, self._call_limit_settings)
-                ) as agent_session_events:
-                    agent_session_event: AgentSessionEvent
-                    async for agent_session_event in agent_session_events:
-                        yield agent_session_event
+        voice_option: VoiceOption = await self._retrieve_voice_option(voice_key)
+        restaurant_profile: RestaurantProfile = await self._restaurant_domain_facade.get_restaurant_profile()
+        voice_session_settings: VoiceSessionSettings = VoiceSessionSettings(
+            provider_voice_id=voice_option.provider_voice_id,
+            agent_instructions=await self._compose_agent_instructions(restaurant_profile.name),
+            agent_tool_definitions=self._agent_toolbox.get_tool_definitions(),
+        )
+        async with await self._realtime_voice_gateway.open_session(voice_session_settings) as realtime_voice_session:
+            yield ConversationStarted(conversation_audio_format=realtime_voice_session.conversation_audio_format, voice_option=voice_option)
+            await realtime_voice_session.request_greeting(AgentInstructions.compose_greeting(restaurant_profile.name))
+            # Closing the relay here, in this task, settles guest side forwarding before the session closes.
+            async with contextlib.aclosing(
+                self._relay_conversation(realtime_voice_session, guest_side_events, self._agent_toolbox, self._call_limit_settings)
+            ) as agent_session_events:
+                agent_session_event: AgentSessionEvent
+                async for agent_session_event in agent_session_events:
+                    yield agent_session_event
 
     async def _retrieve_voice_option(self, voice_key: str) -> VoiceOption:
         voice_options: list[VoiceOption] = await self.get_voice_options()
@@ -140,35 +130,46 @@ class ManagerConversation:
         guest stopped hearing it.
 
         Once a call limit is reached and the farewell asked for, the next finished reply ends the call with CallLimitReached.
+        A farewell the provider refuses, because a reply was under way, is asked for again once that reply ends.
         """
-        event_loop: asyncio.AbstractEventLoop = asyncio.get_running_loop()
-        guest_audio_ended: asyncio.Event = asyncio.Event()
+        call_end_signals: CallEndSignals = ManagerConversation._create_call_end_signals()
         # Rebound as speech is passed on and as the guest starts and stops talking; the tasks below read the latest
         # value through this frame.
         sent_agent_speech: SentAgentSpeech | None = None
-        guest_speech_activity: GuestSpeechActivity = GuestSpeechActivity(guest_is_speaking=False, last_heard_at=event_loop.time())
-        reached_call_limit: asyncio.Future[CallLimit] = event_loop.create_future()
-        guest_audio_forwarding: asyncio.Task[None] = asyncio.create_task(
-            ManagerConversation._forward_guest_side_events(guest_side_events, realtime_voice_session, guest_audio_ended, lambda: sent_agent_speech)
+        guest_speech_activity: GuestSpeechActivity = GuestSpeechActivity(guest_is_speaking=False, last_heard_at=asyncio.get_running_loop().time())
+        guest_audio_forwarding: asyncio.Task[None] = ManagerConversation._start_guest_side_forwarding(
+            guest_side_events, realtime_voice_session, call_end_signals, lambda: sent_agent_speech
         )
-        call_limit_enforcement: asyncio.Task[None] = asyncio.create_task(
-            ManagerConversation._enforce_call_limits(
-                realtime_voice_session, call_limit_settings, lambda: guest_speech_activity, guest_audio_ended, reached_call_limit
-            )
+        call_limit_enforcement: asyncio.Task[None] = ManagerConversation._start_call_limit_enforcement(
+            realtime_voice_session, call_limit_settings, call_end_signals, lambda: guest_speech_activity
         )
         # Wrong tool calls are counted per conversation; the toolbox ends the call when too many come in a row.
         consecutive_call_repair_count: int = 0
         has_answered_tool_calls: bool = False
+        farewell_was_refused: bool = False
         try:
             voice_session_event: VoiceSessionEvent
             async for voice_session_event in realtime_voice_session.receive_events():
                 match voice_session_event:
-                    case AgentTurnFinished() if reached_call_limit.done():
+                    case SpeechProviderErrorTolerated() if call_end_signals.reached_call_limit.done():
+                        # After the limit the only reply asked for is the farewell, so a tolerated refusal is its refusal.
+                        farewell_was_refused = True
                         yield voice_session_event
-                        break
+                    case AgentTurnFinished() if call_end_signals.reached_call_limit.done():
+                        yield voice_session_event
+                        if not farewell_was_refused:
+                            break
+                        farewell_was_refused = False
+                        await ManagerConversation._request_farewell(
+                            realtime_voice_session, call_end_signals.reached_call_limit.result(), call_end_signals.guest_audio_ended
+                        )
                     case AgentToolCallRequested():
                         consecutive_call_repair_count = await ManagerConversation._answer_tool_call(
-                            realtime_voice_session, agent_toolbox, voice_session_event, consecutive_call_repair_count, guest_audio_ended
+                            realtime_voice_session,
+                            agent_toolbox,
+                            voice_session_event,
+                            consecutive_call_repair_count,
+                            call_end_signals.guest_audio_ended,
                         )
                         has_answered_tool_calls = True
                     case AgentSpeechReceived(pcm_audio=pcm_audio):
@@ -178,20 +179,46 @@ class ManagerConversation:
                         has_answered_tool_calls = False
                         # A guest who is talking gets the reply the provider starts by itself when they finish.
                         if not guest_speech_activity.guest_is_speaking:
-                            await ManagerConversation._request_next_reply(realtime_voice_session, guest_audio_ended)
+                            await ManagerConversation._request_next_reply(realtime_voice_session, call_end_signals.guest_audio_ended)
                     case GuestStartedSpeaking():
-                        guest_speech_activity = GuestSpeechActivity(guest_is_speaking=True, last_heard_at=event_loop.time())
+                        guest_speech_activity = GuestSpeechActivity(guest_is_speaking=True, last_heard_at=asyncio.get_running_loop().time())
                         yield voice_session_event
                     case GuestStoppedSpeaking():
-                        guest_speech_activity = GuestSpeechActivity(guest_is_speaking=False, last_heard_at=event_loop.time())
+                        guest_speech_activity = GuestSpeechActivity(guest_is_speaking=False, last_heard_at=asyncio.get_running_loop().time())
                     case _:
                         yield voice_session_event
             # Reached after the farewell finished, or after enforcement closed a session whose farewell never came.
-            if reached_call_limit.done():
-                yield CallLimitReached(call_limit=reached_call_limit.result())
+            if call_end_signals.reached_call_limit.done():
+                yield CallLimitReached(call_limit=call_end_signals.reached_call_limit.result())
         finally:
             await ManagerConversation._settle_call_limit_enforcement(call_limit_enforcement)
-            await ManagerConversation._settle_guest_audio_forwarding(guest_audio_forwarding, guest_audio_ended)
+            await ManagerConversation._settle_guest_audio_forwarding(guest_audio_forwarding, call_end_signals.guest_audio_ended)
+
+    @staticmethod
+    def _create_call_end_signals() -> CallEndSignals:
+        return CallEndSignals(guest_audio_ended=asyncio.Event(), reached_call_limit=asyncio.get_running_loop().create_future())
+
+    @staticmethod
+    def _start_guest_side_forwarding(
+        guest_side_events: AsyncIterable[GuestSideEvent],
+        realtime_voice_session: RealtimeVoiceSessionBase,
+        call_end_signals: CallEndSignals,
+        read_sent_agent_speech: Callable[[], SentAgentSpeech | None],
+    ) -> asyncio.Task[None]:
+        return asyncio.create_task(
+            ManagerConversation._forward_guest_side_events(guest_side_events, realtime_voice_session, call_end_signals, read_sent_agent_speech)
+        )
+
+    @staticmethod
+    def _start_call_limit_enforcement(
+        realtime_voice_session: RealtimeVoiceSessionBase,
+        call_limit_settings: CallLimitSettings,
+        call_end_signals: CallEndSignals,
+        read_guest_speech_activity: Callable[[], GuestSpeechActivity],
+    ) -> asyncio.Task[None]:
+        return asyncio.create_task(
+            ManagerConversation._enforce_call_limits(realtime_voice_session, call_limit_settings, call_end_signals, read_guest_speech_activity)
+        )
 
     @staticmethod
     async def _answer_tool_call(
@@ -218,20 +245,25 @@ class ManagerConversation:
     async def _enforce_call_limits(
         realtime_voice_session: RealtimeVoiceSessionBase,
         call_limit_settings: CallLimitSettings,
+        call_end_signals: CallEndSignals,
         read_guest_speech_activity: Callable[[], GuestSpeechActivity],
-        guest_audio_ended: asyncio.Event,
-        reached_call_limit: asyncio.Future[CallLimit],
     ) -> None:
-        """Waits for a call limit, asks for the farewell and reports the limit. A farewell the provider refuses, because a
-        reply is under way, never finishes; the session is closed after a grace period so the call still ends."""
+        """Waits for a call limit, asks for the farewell and reports the limit. A farewell that never finishes would hold
+        the paid session open, so the session is closed after a grace period and the call still ends."""
         call_limit: CallLimit = await ManagerConversation._wait_for_call_limit(call_limit_settings, read_guest_speech_activity)
         # A guest who hung up gets no farewell: the session is already closing.
-        if guest_audio_ended.is_set():
+        if call_end_signals.guest_audio_ended.is_set():
             return
-        await realtime_voice_session.request_farewell(AgentInstructions.compose_farewell(call_limit))
-        reached_call_limit.set_result(call_limit)
+        await ManagerConversation._request_farewell(realtime_voice_session, call_limit, call_end_signals.guest_audio_ended)
+        call_end_signals.reached_call_limit.set_result(call_limit)
         await asyncio.sleep(CallLimits.FAREWELL_GRACE_SECONDS)
         await realtime_voice_session.close()
+
+    @staticmethod
+    async def _request_farewell(realtime_voice_session: RealtimeVoiceSessionBase, call_limit: CallLimit, guest_audio_ended: asyncio.Event) -> None:
+        # A guest who hung up gets no farewell: the session is already closing.
+        if not guest_audio_ended.is_set():
+            await realtime_voice_session.request_farewell(AgentInstructions.compose_farewell(call_limit))
 
     @staticmethod
     async def _wait_for_call_limit(
@@ -285,7 +317,7 @@ class ManagerConversation:
     async def _forward_guest_side_events(
         guest_side_events: AsyncIterable[GuestSideEvent],
         realtime_voice_session: RealtimeVoiceSessionBase,
-        guest_audio_ended: asyncio.Event,
+        call_end_signals: CallEndSignals,
         read_sent_agent_speech: Callable[[], SentAgentSpeech | None],
     ) -> None:
         # The part already cut off is remembered, so one part is cut off once however many reports follow.
@@ -296,6 +328,10 @@ class ManagerConversation:
         try:
             guest_side_event: GuestSideEvent
             async for guest_side_event in guest_side_events:
+                # Once a limit is reached the guest hears the farewell; nothing more reaches a session that is about to
+                # close, so nothing is sent to one already closed.
+                if call_end_signals.reached_call_limit.done():
+                    continue
                 match guest_side_event:
                     case GuestSpeechChunk(pcm_audio=pcm_audio):
                         guest_audio_allowance = await ManagerConversation._forward_guest_speech(
@@ -307,7 +343,7 @@ class ManagerConversation:
                         )
         finally:
             # The guest hung up or forwarding failed. Closing the session ends the event relay.
-            guest_audio_ended.set()
+            call_end_signals.guest_audio_ended.set()
             await realtime_voice_session.close()
 
     @staticmethod

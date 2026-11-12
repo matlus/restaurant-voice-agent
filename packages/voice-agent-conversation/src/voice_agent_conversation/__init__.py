@@ -4,7 +4,6 @@ from voice_agent_conversation.domain_facade import DomainFacade
 from voice_agent_conversation.managers.exceptions.agent_tool_exceptions import AgentToolCallRepairsExhaustedException, LogEventAgentTool
 from voice_agent_conversation.managers.exceptions.configuration_exceptions import ConfigurationSettingException, LogEventConfiguration
 from voice_agent_conversation.managers.exceptions.conversation_exceptions import (
-    ConversationCapacityReachedException,
     ConversationRequestValidationException,
     LogEventConversation,
     VoiceCatalogInvalidException,
@@ -54,7 +53,6 @@ __all__ = [
     "CallLimitReached",
     "ConfigurationSettingException",
     "ConversationAudioFormat",
-    "ConversationCapacityReachedException",
     "ConversationEvent",
     "ConversationRequest",
     "ConversationRequestValidationException",

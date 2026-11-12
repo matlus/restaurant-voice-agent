@@ -3,7 +3,7 @@ import base64
 import contextlib
 import json
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from types import TracebackType
@@ -21,6 +21,7 @@ SERVICE_START_TIMEOUT_SECONDS: Final[float] = 10.0
 SERVICE_STOP_TIMEOUT_SECONDS: Final[float] = 10.0
 CONNECTION_CLOSE_TIMEOUT_SECONDS: Final[float] = 1.0
 PROVIDER_REFUSAL_CLOSE_CODE: Final[int] = 3000
+ACTIVE_RESPONSE_ERROR_CODE: Final[str] = "conversation_already_has_active_response"
 
 
 # The subset of OpenAI Realtime server events this service sends, shaped as they travel on the wire.
@@ -274,7 +275,9 @@ class RealtimeVoiceServiceScripted:
     end of the wire is scripted. It confirms session settings, greets when asked for a response, answers
     each piece of guest audio with the scripted events, and captures every tool answer and speech truncation the client sends.
     It can also refuse the WebSocket handshake with an HTTP status, refuse an accepted connection by closing
-    it the way OpenAI does for an invalid API key, or reject the session settings with a provider error event.
+    it the way OpenAI does for an invalid API key, or reject the session settings with a provider error event. It can
+    refuse chosen reply requests, counted from one, as OpenAI does when a reply is already under way: it reports the
+    refusal and then the end of the reply that was under way.
 
     It runs on its own thread and event loop, so asynchronous acceptance tests and the synchronous web
     test client can both use it. Read what it captured after it has stopped: stopping waits for every
@@ -288,11 +291,13 @@ class RealtimeVoiceServiceScripted:
         session_update_error_event_message: ErrorEventMessage | None = None,
         handshake_refusal_status: HTTPStatus | None = None,
         connection_refusal_close_reason: str | None = None,
+        refused_reply_request_numbers: Collection[int] = (),
     ) -> None:
         self._events_after_each_guest_audio: tuple[ScriptedServerEventMessage, ...] = tuple(events_after_each_guest_audio)
         self._session_update_error_event_message: ErrorEventMessage | None = session_update_error_event_message
         self._handshake_refusal_status: HTTPStatus | None = handshake_refusal_status
         self._connection_refusal_close_reason: str | None = connection_refusal_close_reason
+        self._refused_reply_request_numbers: frozenset[int] = frozenset(refused_reply_request_numbers)
         self.captured_realtime_sessions: list[CapturedRealtimeSession] = []
         self.captured_handshake_count: int = 0
         self._port: int | None = None
@@ -392,6 +397,9 @@ class RealtimeVoiceServiceScripted:
                     if isinstance(response_settings, Mapping)
                     else None
                 )
+                if captured_realtime_session.agent_response_request_count in self._refused_reply_request_numbers:
+                    await self._refuse_reply_request(server_connection)
+                    return
                 await self._speak_greeting(server_connection)
             case "input_audio_buffer.append":
                 input_audio_buffer_append_event_message: InputAudioBufferAppendEventMessage = cast(InputAudioBufferAppendEventMessage, client_event)
@@ -439,6 +447,21 @@ class RealtimeVoiceServiceScripted:
         await self._send_event(
             server_connection,
             {"type": "session.updated", "event_id": "event_session_updated", "session": cast(dict[str, object], session_settings_message)},
+        )
+
+    @classmethod
+    async def _refuse_reply_request(cls, server_connection: ServerConnection) -> None:
+        await cls._send_event(
+            server_connection,
+            create_error_event("invalid_request_error", ACTIVE_RESPONSE_ERROR_CODE, "Conversation already has an active response in progress."),
+        )
+        await cls._send_event(
+            server_connection,
+            {
+                "type": "response.done",
+                "event_id": "event_active_response_done",
+                "response": {"id": "response_active", "object": "realtime.response", "status": "completed", "status_details": None},
+            },
         )
 
     @classmethod

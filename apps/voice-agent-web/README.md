@@ -24,4 +24,5 @@ Open http://127.0.0.1:8000, choose a voice and press the button. The browser ask
   speech it had not played, so the agent does not think the caller heard it; other text frames are ignored.
 
 A `/conversation` handshake whose `Origin` is neither this host nor in `VOICE_AGENT_WEB_ALLOWED_ORIGINS` is refused.
-A caller beyond the concurrent-call limit gets an `error` frame and a `1013` close.
+No more than `VOICE_AGENT_MAXIMUM_CONCURRENT_CALLS` calls (default 10) run in one process; the host enforces this
+before the domain sees the call. A caller beyond it gets an `error` frame and a `1013` close.

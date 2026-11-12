@@ -1,7 +1,9 @@
 # Class tests for MiddlewareWebSocketOrigin, driven directly with a scripted ASGI app. They prove a handshake from a page
-# on another site is refused before the app sees it, and that this host's own page, an allowed site, a client that
-# names no origin and plain HTTP all reach the app untouched.
+# on another site, from a sandboxed page or without a host to compare against is refused before the app sees it, that
+# this host's own page, an allowed site, a client that names no origin and plain HTTP all reach the app untouched, and
+# that an allowed origin naming no scheme is refused when the middleware is built.
 
+import re
 from collections.abc import Sequence
 from typing import Final
 
@@ -49,11 +51,21 @@ def create_scope(scope_type: str, header_pairs: Sequence[tuple[str, str]]) -> Sc
 
 
 class TestMiddlewareWebSocketOrigin:
-    async def test_Call_WhenAPageOnAnotherSiteOpensAWebSocket_ThenTheHandshakeIsRefusedAndTheAppNeverSeesIt(self) -> None:
+    @pytest.mark.parametrize(
+        "header_pairs",
+        [
+            pytest.param([("host", OWN_HOST), ("origin", "https://attacker.example.net")], id="a-page-on-another-site"),
+            pytest.param([("host", OWN_HOST), ("origin", "null")], id="a-sandboxed-page-naming-no-site"),
+            pytest.param([("origin", f"https://{OWN_HOST}")], id="no-host-to-compare-the-origin-against"),
+        ],
+    )
+    async def test_Call_WhenTheOriginIsNotOneThisHostTrusts_ThenTheHandshakeIsRefusedAndTheAppNeverSeesIt(
+        self, header_pairs: list[tuple[str, str]]
+    ) -> None:
         scripted_asgi_app: ScriptedAsgiApp = ScriptedAsgiApp()
         scripted_asgi_server: ScriptedAsgiServer = ScriptedAsgiServer()
         middleware_websocket_origin: MiddlewareWebSocketOrigin = MiddlewareWebSocketOrigin(scripted_asgi_app, allowed_origins=[ALLOWED_ORIGIN])
-        scope: Scope = create_scope("websocket", [("host", OWN_HOST), ("origin", "https://attacker.example.net")])
+        scope: Scope = create_scope("websocket", header_pairs)
         expected_outcome: tuple[list[Message], list[str]] = ([{"type": "websocket.close", "code": POLICY_VIOLATION_CLOSE_CODE}], [])
 
         await middleware_websocket_origin(scope, scripted_asgi_server.receive, scripted_asgi_server.send)
@@ -83,3 +95,10 @@ class TestMiddlewareWebSocketOrigin:
 
         actual_outcome: tuple[list[Message], list[str]] = (scripted_asgi_server.sent_messages, scripted_asgi_app.received_scope_types)
         assert actual_outcome == expected_outcome
+
+    def test_Construct_WhenAnAllowedOriginNamesNoScheme_ThenAValueErrorNamesThatOrigin(self) -> None:
+        bare_host_origin: str = "booking.example.com"
+        expected_message: str = f"Allowed origin '{bare_host_origin}' must name a scheme and a host, such as https://booking.example.com."
+
+        with pytest.raises(ValueError, match=f"^{re.escape(expected_message)}$"):
+            MiddlewareWebSocketOrigin(ScriptedAsgiApp(), allowed_origins=[ALLOWED_ORIGIN, bare_host_origin])
