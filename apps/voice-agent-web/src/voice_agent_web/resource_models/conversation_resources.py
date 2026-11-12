@@ -26,6 +26,14 @@ class AgentTurnFinishedMessage(TypedDict):
     type: Literal["agent_turn_finished"]
 
 
+class CallLimitReachedMessage(TypedDict):
+    """The last text frame of a call a limit ended, after the agent's goodbye; the socket then closes normally."""
+
+    type: Literal["call_limit_reached"]
+    call_limit: str
+    detail: str
+
+
 class ConversationErrorMessage(TypedDict):
     """The last text frame of a failed conversation, sent just before the socket closes."""
 
@@ -34,7 +42,7 @@ class ConversationErrorMessage(TypedDict):
     detail: str
 
 
-type JsonMessage = ConversationStartedMessage | GuestStartedSpeakingMessage | AgentTurnFinishedMessage
+type JsonMessage = ConversationStartedMessage | GuestStartedSpeakingMessage | AgentTurnFinishedMessage | CallLimitReachedMessage
 
 # Speech goes to the browser as a binary frame of PCM; everything else as a JSON text frame.
 type ConversationMessage = bytes | JsonMessage

@@ -6,6 +6,13 @@ class SpeechProvider(StrEnum):
     OPENAI = "openai"
 
 
+class CallLimit(StrEnum):
+    """Which limit ended a call. Each holds a paid speech provider session open, so neither runs unbounded."""
+
+    MAXIMUM_DURATION = "maximum_duration"
+    MAXIMUM_SILENCE = "maximum_silence"
+
+
 class PresentedGender(StrEnum):
     """How a voice presents to listeners. Providers do not label their voices this way; the catalog does."""
 
@@ -75,6 +82,30 @@ class SpeechProviderErrorTolerated:
 
 
 @dataclass(frozen=True)
+class CallLimitReached:
+    """The last event of a call a limit ended: the agent has said goodbye, and the host should end the call."""
+
+    call_limit: CallLimit
+
+
+@dataclass(frozen=True)
+class GuestSpeechActivity:
+    """Whether the guest is talking, and when they were last heard starting or stopping, on the event loop's clock."""
+
+    guest_is_speaking: bool
+    last_heard_at: float
+
+
+@dataclass(frozen=True)
+class GuestAudioAllowance:
+    """How much guest speech may still go to the provider at once, as of measured_at on the event loop's clock. Speech
+    earns allowance as fast as it can be spoken, so a sender cannot push audio faster than real time for long."""
+
+    available_byte_count: float
+    measured_at: float
+
+
+@dataclass(frozen=True)
 class AgentTurnFinished:
     """The agent finished, or abandoned, its current reply."""
 
@@ -140,11 +171,11 @@ class SentAgentSpeech:
 
 
 # What the guest's side of a call is sent: the page plays or acts on every one of these.
-type GuestFacingConversationEvent = ConversationStarted | AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished
+type GuestFacingConversationEvent = ConversationStarted | AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished | CallLimitReached
 
 type ConversationEvent = GuestFacingConversationEvent | SpeechProviderErrorTolerated
 
-type AgentSessionEvent = AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished | SpeechProviderErrorTolerated
+type AgentSessionEvent = AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished | SpeechProviderErrorTolerated | CallLimitReached
 
 type VoiceSessionEvent = (
     AgentSpeechReceived | GuestStartedSpeaking | GuestStoppedSpeaking | AgentTurnFinished | AgentToolCallRequested | SpeechProviderErrorTolerated

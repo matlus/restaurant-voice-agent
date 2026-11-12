@@ -20,6 +20,9 @@ RESTAURANT_STORE_SEEDING_VARIABLE_NAME: Final[str] = "VOICE_AGENT_RESTAURANT_STO
 OPENAI_API_KEY_VARIABLE_NAME: Final[str] = "OPENAI_API_KEY"
 OPENAI_REALTIME_MODEL_VARIABLE_NAME: Final[str] = "VOICE_AGENT_OPENAI_REALTIME_MODEL"
 OPENAI_REALTIME_WEBSOCKET_BASE_URL_VARIABLE_NAME: Final[str] = "VOICE_AGENT_OPENAI_REALTIME_WEBSOCKET_BASE_URL"
+MAXIMUM_CALL_SECONDS_VARIABLE_NAME: Final[str] = "VOICE_AGENT_MAXIMUM_CALL_SECONDS"
+MAXIMUM_SILENCE_SECONDS_VARIABLE_NAME: Final[str] = "VOICE_AGENT_MAXIMUM_SILENCE_SECONDS"
+MAXIMUM_CONCURRENT_CALLS_VARIABLE_NAME: Final[str] = "VOICE_AGENT_MAXIMUM_CONCURRENT_CALLS"
 # A placeholder key: it only ever reaches the scripted Realtime service on this machine.
 SCRIPTED_SERVICE_API_KEY: Final[str] = "scripted-realtime-service-key"
 TESTING_REALTIME_MODEL: Final[str] = "gpt-realtime-testing"
@@ -73,14 +76,20 @@ class ServiceLocatorTesting(ServiceLocatorBase):
         return create_restaurant_domain_facade(self._restaurant_database_path)
 
 
-def create_domain_facade(realtime_voice_service_scripted: RealtimeVoiceServiceScripted, restaurant_database_path: Path) -> DomainFacade:
-    # The single place tests create the conversation DomainFacade.
+def create_domain_facade(
+    realtime_voice_service_scripted: RealtimeVoiceServiceScripted,
+    restaurant_database_path: Path,
+    scenario_setting_by_environment_variable_name: Mapping[str, str] | None = None,
+) -> DomainFacade:
+    """The single place tests create the conversation DomainFacade. A scenario arranges settings such as call limits
+    through scenario_setting_by_environment_variable_name; every other setting keeps its production default."""
     return DomainFacade(
         ServiceLocatorTesting(
             {
                 OPENAI_API_KEY_VARIABLE_NAME: SCRIPTED_SERVICE_API_KEY,
                 OPENAI_REALTIME_MODEL_VARIABLE_NAME: TESTING_REALTIME_MODEL,
                 OPENAI_REALTIME_WEBSOCKET_BASE_URL_VARIABLE_NAME: realtime_voice_service_scripted.websocket_base_url,
+                **(scenario_setting_by_environment_variable_name or {}),
             },
             restaurant_database_path,
         )

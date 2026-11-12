@@ -38,6 +38,8 @@ async function startCall() {
   const socket = new WebSocket(`${scheme}://${location.host}/conversation?voice=${encodeURIComponent(voiceSelect.value)}`);
   socket.binaryType = "arraybuffer";
   call = { microphone, audioContext, socket, capture: null, playback: null };
+  // Set when the server ends the call on purpose, such as at its time limit, so the close shows why.
+  let endedMessage = null;
 
   socket.onmessage = (event) => {
     if (event.data instanceof ArrayBuffer) {
@@ -51,11 +53,17 @@ async function startCall() {
     } else if (message.type === "guest_started_speaking") {
       // Barge-in: the guest is talking, so stop the agent at once.
       call.playback?.port.postMessage("clear");
+    } else if (message.type === "call_limit_reached") {
+      endedMessage = message.detail;
     } else if (message.type === "error") {
       statusLine.textContent = message.detail;
     }
   };
   socket.onclose = (event) => {
+    if (endedMessage) {
+      endCall(endedMessage);
+      return;
+    }
     const reason = statusLine.textContent && callButton.dataset.state !== "live" ? statusLine.textContent : "Call ended.";
     endCall(event.code === 1000 || event.code === 1005 ? "Call ended." : reason);
   };

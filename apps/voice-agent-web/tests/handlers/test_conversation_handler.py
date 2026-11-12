@@ -21,6 +21,8 @@ from voice_agent_conversation import (
     AgentSpeechChunk,
     AgentSpeechCutOff,
     AgentTurnFinished,
+    CallLimit,
+    CallLimitReached,
     ConversationAudioFormat,
     ConversationEvent,
     ConversationRequest,
@@ -147,10 +149,18 @@ class TestConversationHandlerHoldConversation:
             AgentSpeechChunk(pcm_audio=AGENT_SPEECH),
             GuestStartedSpeaking(),
             AgentTurnFinished(),
+            CallLimitReached(call_limit=CallLimit.MAXIMUM_DURATION),
         ]
         scripted_browser: ScriptedBrowser = ScriptedBrowser(query_string=b"voice=openai-cedar")
         conversation_handler_for_test: ConversationHandlerForTest = ConversationHandlerForTest(
             scripted_conversation_events=scripted_conversation_events
+        )
+        expected_call_limit_text: str = json.dumps(
+            {
+                "type": "call_limit_reached",
+                "call_limit": "maximum_duration",
+                "detail": "The call reached its time limit. You're welcome to call again.",
+            }
         )
         expected_started_text: str = json.dumps(
             {
@@ -166,6 +176,7 @@ class TestConversationHandlerHoldConversation:
             {"type": "websocket.send", "bytes": AGENT_SPEECH},
             {"type": "websocket.send", "text": json.dumps({"type": "guest_started_speaking"})},
             {"type": "websocket.send", "text": json.dumps({"type": "agent_turn_finished"})},
+            {"type": "websocket.send", "text": expected_call_limit_text},
             {"type": "websocket.close", "code": NORMAL_CLOSURE_CODE},
         ]
 

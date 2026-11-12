@@ -1,8 +1,11 @@
 from datetime import datetime
 
+from voice_agent_conversation.managers.models.conversation_models import CallLimit
+
 
 class AgentInstructions:
-    """Composes what the speech model is told about its role before the guest says anything."""
+    """Composes what the speech model is told: its standing role before the guest says anything, and what to say in the
+    first and, when a limit ends the call, the last reply."""
 
     @classmethod
     def compose(cls, restaurant_name: str, restaurant_local_now: datetime) -> str:
@@ -75,6 +78,23 @@ class AgentInstructions:
                 f"The call has just connected. Greet the caller with a short, warm hello that names {restaurant_name} and",
                 f"offers the two main things you help with, in the spirit of 'Hi, thanks for calling {restaurant_name}.",
                 "Can I help with a booking, or would you like to hear about the menu?' Keep it to those two.",
+            ]
+        )
+
+    @staticmethod
+    def compose_farewell(call_limit: CallLimit) -> str:
+        """What the agent is told for the last reply of a call a limit ends. It must not ask anything: the call ends
+        as soon as it finishes speaking."""
+        situation_by_call_limit: dict[CallLimit, str] = {
+            CallLimit.MAXIMUM_DURATION: "The call has reached the longest a call can last and must end now.",
+            CallLimit.MAXIMUM_SILENCE: "You have not heard from the caller for a while, so the call must end now.",
+        }
+        return "\n".join(
+            [
+                "# Right now",
+                situation_by_call_limit[call_limit],
+                "In one or two short sentences, tell the caller the call is ending, that they're welcome to call back, and",
+                "say goodbye. Don't ask a question and don't offer anything else.",
             ]
         )
 

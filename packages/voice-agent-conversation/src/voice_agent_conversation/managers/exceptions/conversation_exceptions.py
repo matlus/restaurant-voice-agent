@@ -12,6 +12,7 @@ from voice_agent_conversation.managers.exceptions.voice_agent_conversation_excep
 
 class LogEventConversation(LogEventBase):
     CONVERSATION_START = "ConversationStart"
+    CONVERSATION_ADMISSION = "ConversationAdmission"
     VOICE_CATALOG_READ = "VoiceCatalogRead"
 
 
@@ -73,3 +74,31 @@ class VoiceCatalogInvalidException(VoiceAgentConversationTechnicalBaseException)
     @override
     def reason(self) -> str:
         return "The bundled voice catalog is invalid"
+
+
+@final
+class ConversationCapacityReachedException(VoiceAgentConversationTechnicalBaseException):
+    """As many calls as the process allows are already running, so no speech provider session was opened. Calling again
+    shortly may succeed."""
+
+    def __init__(self, maximum_concurrent_calls: int, log_event: LogEventBase) -> None:
+        super().__init__(
+            message=f"Refused a new call: all {maximum_concurrent_calls} allowed concurrent calls are in progress.",
+            log_event=log_event,
+            contextual_data_by_name={"Conversation.MaximumConcurrentCalls": maximum_concurrent_calls},
+        )
+
+    @property
+    @override
+    def http_status_code(self) -> int:
+        return 503
+
+    @property
+    @override
+    def action(self) -> ExceptionAction:
+        return ExceptionAction.RETRY_ACTION_NEEDED
+
+    @property
+    @override
+    def reason(self) -> str:
+        return "All lines are busy. Please try again in a few minutes"

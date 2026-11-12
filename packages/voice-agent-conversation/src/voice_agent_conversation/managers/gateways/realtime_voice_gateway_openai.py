@@ -168,14 +168,11 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
 
     @override
     async def request_greeting(self, greeting_instructions: str) -> None:
-        # Instructions given with one reply replace the session's for that reply, so the standing ones go with them.
-        connection: AsyncRealtimeConnection = self._get_open_connection()
-        try:
-            await connection.response.create(
-                response={"instructions": f"{self._voice_session_settings.agent_instructions}\n\n{greeting_instructions}"}
-            )
-        except (OpenAIError, WebSocketException, OSError) as provider_error:
-            self._raise_connection_failure(provider_error, "requesting the greeting", LogEventRealtimeVoice.AGENT_RESPONSE_REQUEST)
+        await self._request_reply_with_instructions(greeting_instructions, "requesting the greeting")
+
+    @override
+    async def request_farewell(self, farewell_instructions: str) -> None:
+        await self._request_reply_with_instructions(farewell_instructions, "requesting the farewell")
 
     @override
     async def request_next_reply(self) -> None:
@@ -230,6 +227,14 @@ class _RealtimeVoiceSessionOpenAI(RealtimeVoiceSessionBase):
             await connection.close()
         except (OpenAIError, WebSocketException, OSError) as provider_error:
             self._raise_connection_failure(provider_error, "closing the session", LogEventRealtimeVoice.SESSION_CLOSE)
+
+    async def _request_reply_with_instructions(self, reply_instructions: str, operation_description: str) -> None:
+        # Instructions given with one reply replace the session's for that reply, so the standing ones go with them.
+        connection: AsyncRealtimeConnection = self._get_open_connection()
+        try:
+            await connection.response.create(response={"instructions": f"{self._voice_session_settings.agent_instructions}\n\n{reply_instructions}"})
+        except (OpenAIError, WebSocketException, OSError) as provider_error:
+            self._raise_connection_failure(provider_error, operation_description, LogEventRealtimeVoice.AGENT_RESPONSE_REQUEST)
 
     def _get_open_connection(self) -> AsyncRealtimeConnection:
         if self._connection is None:
