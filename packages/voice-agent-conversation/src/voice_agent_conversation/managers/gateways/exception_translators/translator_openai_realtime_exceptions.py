@@ -34,6 +34,7 @@ class TranslatorOpenAIRealtimeExceptions:
     PROVIDER_CLOSE_CODES: Final[range] = range(3000, 5000)
     OPERATION_CONTEXT_KEY: Final[str] = "RealtimeVoice.Operation"
     PROVIDER_ERROR_CODE_CONTEXT_KEY: Final[str] = "RealtimeVoice.ProviderErrorCode"
+    PROVIDER_ERROR_MESSAGE_CONTEXT_KEY: Final[str] = "RealtimeVoice.ProviderErrorMessage"
     PROVIDER_NAME: Final[str] = "OpenAI Realtime"
 
     @classmethod
@@ -52,15 +53,34 @@ class TranslatorOpenAIRealtimeExceptions:
     def translate_reported_error(
         cls, error_type: str, error_code: str | None, error_message: str, operation_description: str, log_event: LogEventBase
     ) -> VoiceAgentConversationBaseException:
+        contextual_data_by_name: ContextualDataDict = cls._build_reported_error_context(error_type, error_code, operation_description)
+        return cls._create_reported_error_exception(error_type, error_code, error_message, operation_description, log_event, contextual_data_by_name)
+
+    @classmethod
+    def _build_reported_error_context(cls, error_type: str, error_code: str | None, operation_description: str) -> ContextualDataDict:
         contextual_data_by_name: ContextualDataDict = {
             cls.OPERATION_CONTEXT_KEY: operation_description,
             "RealtimeVoice.ProviderErrorType": error_type,
         }
         if error_code is not None:
             contextual_data_by_name[cls.PROVIDER_ERROR_CODE_CONTEXT_KEY] = error_code
+        return contextual_data_by_name
+
+    @classmethod
+    def _create_reported_error_exception(
+        cls,
+        error_type: str,
+        error_code: str | None,
+        error_message: str,
+        operation_description: str,
+        log_event: LogEventBase,
+        contextual_data_by_name: ContextualDataDict,
+    ) -> VoiceAgentConversationBaseException:
         if error_code == cls.SESSION_EXPIRED_ERROR_CODE:
-            contextual_data_by_name["RealtimeVoice.ProviderErrorMessage"] = error_message
-            return RealtimeVoiceSessionExpiredException(log_event=log_event, contextual_data_by_name=contextual_data_by_name)
+            # The message is written for the guest, so the provider's own words go to the log through the context.
+            return RealtimeVoiceSessionExpiredException(
+                log_event=log_event, contextual_data_by_name={**contextual_data_by_name, cls.PROVIDER_ERROR_MESSAGE_CONTEXT_KEY: error_message}
+            )
         if error_code in cls.ACCESS_DENIED_ERROR_CODES:
             return RealtimeVoiceProviderAccessDeniedException(
                 message=f"{cls.PROVIDER_NAME} refused the account while {operation_description}: {error_message}",

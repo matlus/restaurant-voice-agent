@@ -124,7 +124,8 @@ class AgentSpeechPart:
 
 @dataclass(frozen=True)
 class AgentSpeechReceived:
-    """A piece of the agent's speech as the session receives it, with the part it belongs to."""
+    """The manager passes the audio on as AgentSpeechChunk and keeps the part to itself, counting what the host was sent
+    so speech the guest did not hear can later be cut off."""
 
     pcm_audio: bytes
     agent_speech_part: AgentSpeechPart

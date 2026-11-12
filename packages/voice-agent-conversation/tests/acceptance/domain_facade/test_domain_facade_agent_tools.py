@@ -61,7 +61,9 @@ from voice_agent_restaurant import (
 CONFIRMATION_CODE_FIELD_NAME: Final[str] = "confirmation_code"
 CEDAR_VOICE_OPTION: Final[VoiceOption] = read_catalog_voice_option("openai-cedar")
 CONVERSATION_REQUEST: Final[ConversationRequest] = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
-PROVIDER_AUDIO_FORMAT: Final[ConversationAudioFormat] = ConversationAudioFormat(guest_audio_sample_rate_hz=24_000, agent_audio_sample_rate_hz=24_000)
+PROVIDER_CONVERSATION_AUDIO_FORMAT: Final[ConversationAudioFormat] = ConversationAudioFormat(
+    guest_audio_sample_rate_hz=24_000, agent_audio_sample_rate_hz=24_000
+)
 GUEST_QUESTION_AUDIO: Final[bytes] = b"guest asks the agent something"
 CONVERSATION_TIME_LIMIT_SECONDS: Final[float] = 5.0
 TOOL_CALL_ID: Final[str] = "call_guest_question"
@@ -71,7 +73,7 @@ KETO_SEARCH_ARGUMENTS_JSON: Final[str] = '{"diet_labels": ["keto"]}'
 WRONG_CALLS_ALLOWED_IN_A_ROW: Final[int] = 3
 TECHNICAL_FAILURE_HTTP_STATUS_CODE: Final[int] = 500
 GREETING_EVENTS: Final[list[ConversationEvent]] = [
-    ConversationStarted(conversation_audio_format=PROVIDER_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+    ConversationStarted(conversation_audio_format=PROVIDER_CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
     AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
     AgentTurnFinished(),
 ]

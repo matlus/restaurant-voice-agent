@@ -62,11 +62,13 @@ from voice_agent_conversation import (
 )
 
 CEDAR_VOICE_OPTION: Final[VoiceOption] = read_catalog_voice_option("openai-cedar")
-PROVIDER_AUDIO_FORMAT: Final[ConversationAudioFormat] = ConversationAudioFormat(guest_audio_sample_rate_hz=24_000, agent_audio_sample_rate_hz=24_000)
+PROVIDER_CONVERSATION_AUDIO_FORMAT: Final[ConversationAudioFormat] = ConversationAudioFormat(
+    guest_audio_sample_rate_hz=24_000, agent_audio_sample_rate_hz=24_000
+)
 GUEST_AUDIO_CHUNKS: Final[list[bytes]] = [b"guest audio chunk one", b"guest audio chunk two"]
 # One second of the agent's reply: mono 16-bit PCM at the provider's rate.
 AGENT_REPLY_SPEECH_MILLISECONDS: Final[int] = 1_000
-AGENT_REPLY_SPEECH: Final[bytes] = bytes(PROVIDER_AUDIO_FORMAT.agent_audio_sample_rate_hz * 2)
+AGENT_REPLY_SPEECH: Final[bytes] = bytes(PROVIDER_CONVERSATION_AUDIO_FORMAT.agent_audio_sample_rate_hz * 2)
 AGENT_REPLY_ITEM_ID: Final[str] = "item_reply"
 # ConversationStarted, the greeting's speech, the end of its turn, the reply's speech and the guest talking over it.
 TALKED_OVER_EVENT_COUNT: Final[int] = 5
@@ -108,7 +110,7 @@ class TestConversation:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         conversation_request: ConversationRequest = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
         expected_conversation_events: list[ConversationEvent] = [
-            ConversationStarted(conversation_audio_format=PROVIDER_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+            ConversationStarted(conversation_audio_format=PROVIDER_CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
             AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
             AgentTurnFinished(),
         ]
@@ -159,7 +161,7 @@ class TestConversation:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         conversation_request: ConversationRequest = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
         expected_conversation_events: list[ConversationEvent] = [
-            ConversationStarted(conversation_audio_format=PROVIDER_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+            ConversationStarted(conversation_audio_format=PROVIDER_CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
             AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
             AgentTurnFinished(),
             GuestStartedSpeaking(),
@@ -185,24 +187,24 @@ class TestConversation:
         # A reply asked for after tool calls can meet the reply the provider began itself when the guest spoke.
         guest_microphone: GuestMicrophone = GuestMicrophone()
         conversation_request: ConversationRequest = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
-        active_response_refusal: ErrorEventMessage = create_error_event(
+        active_response_refusal_error_event_message: ErrorEventMessage = create_error_event(
             "invalid_request_error", "conversation_already_has_active_response", "Conversation already has an active response in progress."
         )
         expected_conversation_events: list[ConversationEvent] = [
-            ConversationStarted(conversation_audio_format=PROVIDER_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+            ConversationStarted(conversation_audio_format=PROVIDER_CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
             AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
             AgentTurnFinished(),
             SpeechProviderErrorTolerated(
-                error_type=active_response_refusal["error"]["type"],
-                error_code=active_response_refusal["error"]["code"],
-                error_message=active_response_refusal["error"]["message"],
+                error_type=active_response_refusal_error_event_message["error"]["type"],
+                error_code=active_response_refusal_error_event_message["error"]["code"],
+                error_message=active_response_refusal_error_event_message["error"]["message"],
             ),
             GuestStartedSpeaking(),
         ]
 
         async with (
             RealtimeVoiceServiceScripted(
-                events_after_each_guest_audio=[active_response_refusal, create_speech_started_event()]
+                events_after_each_guest_audio=[active_response_refusal_error_event_message, create_speech_started_event()]
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
@@ -283,7 +285,7 @@ class TestConversation:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         conversation_request: ConversationRequest = ConversationRequest(voice_key="  OpenAI-Marin ")
         expected_conversation_started: ConversationStarted = ConversationStarted(
-            conversation_audio_format=PROVIDER_AUDIO_FORMAT, voice_option=read_catalog_voice_option("openai-marin")
+            conversation_audio_format=PROVIDER_CONVERSATION_AUDIO_FORMAT, voice_option=read_catalog_voice_option("openai-marin")
         )
 
         async with (
@@ -570,8 +572,9 @@ class TestConversationProviderFailures:
     ) -> None:
         guest_microphone: GuestMicrophone = GuestMicrophone()
         conversation_request: ConversationRequest = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
-        session_expiry: ErrorEventMessage = create_error_event(
-            "invalid_request_error", "session_expired", "Your session hit the maximum duration of 60 minutes."
+        session_expired_error_code: str = "session_expired"
+        session_expiry_error_event_message: ErrorEventMessage = create_error_event(
+            "invalid_request_error", session_expired_error_code, "Your session hit the maximum duration of 60 minutes."
         )
         guest_keeps_listening_event_count: int = 99
         expected_provider_session_count: int = 1
@@ -586,15 +589,15 @@ class TestConversationProviderFailures:
             ),
             contextual_data_by_name={
                 OPERATION_CONTEXT_NAME: "conversing",
-                PROVIDER_ERROR_TYPE_CONTEXT_NAME: session_expiry["error"]["type"],
-                PROVIDER_ERROR_CODE_CONTEXT_NAME: "session_expired",
-                PROVIDER_ERROR_MESSAGE_CONTEXT_NAME: session_expiry["error"]["message"],
+                PROVIDER_ERROR_TYPE_CONTEXT_NAME: session_expiry_error_event_message["error"]["type"],
+                PROVIDER_ERROR_CODE_CONTEXT_NAME: session_expired_error_code,
+                PROVIDER_ERROR_MESSAGE_CONTEXT_NAME: session_expiry_error_event_message["error"]["message"],
             },
-            withheld_message_phrases=[session_expiry["error"]["message"]],
+            withheld_message_phrases=[session_expiry_error_event_message["error"]["message"]],
         )
 
         async with (
-            RealtimeVoiceServiceScripted(events_after_each_guest_audio=[session_expiry]) as realtime_voice_service_scripted,
+            RealtimeVoiceServiceScripted(events_after_each_guest_audio=[session_expiry_error_event_message]) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_guest_side_events())) as conversation,
         ):

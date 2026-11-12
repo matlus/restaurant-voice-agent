@@ -120,7 +120,7 @@ class ManagerConversation:
         # Wrong tool calls are counted per conversation; the toolbox ends the call when too many come in a row.
         consecutive_call_repair_count: int = 0
         has_answered_tool_calls: bool = False
-        is_guest_speaking: bool = False
+        guest_is_speaking: bool = False
         try:
             voice_session_event: VoiceSessionEvent
             async for voice_session_event in realtime_voice_session.receive_events():
@@ -136,13 +136,13 @@ class ManagerConversation:
                     case AgentTurnFinished() if has_answered_tool_calls:
                         has_answered_tool_calls = False
                         # A guest who is talking gets the reply the provider starts by itself when they finish.
-                        if not is_guest_speaking:
+                        if not guest_is_speaking:
                             await ManagerConversation._request_next_reply(realtime_voice_session, guest_audio_ended)
                     case GuestStartedSpeaking():
-                        is_guest_speaking = True
+                        guest_is_speaking = True
                         yield voice_session_event
                     case GuestStoppedSpeaking():
-                        is_guest_speaking = False
+                        guest_is_speaking = False
                     case _:
                         yield voice_session_event
         finally:

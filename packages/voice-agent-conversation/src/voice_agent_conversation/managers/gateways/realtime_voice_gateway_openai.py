@@ -58,20 +58,8 @@ class RealtimeVoiceGatewayOpenAI(RealtimeVoiceGatewayBase):
 
     @override
     async def open_session(self, voice_session_settings: VoiceSessionSettings) -> RealtimeVoiceSessionBase:
-        client: AsyncOpenAI = self._get_open_client()
-        try:
-            connection: AsyncRealtimeConnection = await client.realtime.connect(model=self._model).enter()
-        except (OpenAIError, WebSocketException, OSError) as provider_error:
-            raise TranslatorOpenAIRealtimeExceptions.translate_connection_failure(
-                provider_error, self._describe_connect_operation(), LogEventRealtimeVoice.SESSION_OPEN
-            ) from provider_error
-        realtime_voice_session_openai: _RealtimeVoiceSessionOpenAI = _RealtimeVoiceSessionOpenAI(connection, voice_session_settings)
-        try:
-            await realtime_voice_session_openai.configure()
-        except BaseException:
-            await realtime_voice_session_openai.close()
-            raise
-        return realtime_voice_session_openai
+        connection: AsyncRealtimeConnection = await self._connect()
+        return await self._configure_session(connection, voice_session_settings)
 
     @override
     async def close(self) -> None:
@@ -86,6 +74,27 @@ class RealtimeVoiceGatewayOpenAI(RealtimeVoiceGatewayBase):
             raise TranslatorOpenAIRealtimeExceptions.translate_connection_failure(
                 provider_error, self.CLOSE_OPERATION_DESCRIPTION, LogEventRealtimeVoice.CLIENT_CLOSE
             ) from provider_error
+
+    async def _connect(self) -> AsyncRealtimeConnection:
+        client: AsyncOpenAI = self._get_open_client()
+        try:
+            return await client.realtime.connect(model=self._model).enter()
+        except (OpenAIError, WebSocketException, OSError) as provider_error:
+            raise TranslatorOpenAIRealtimeExceptions.translate_connection_failure(
+                provider_error, self._describe_connect_operation(), LogEventRealtimeVoice.SESSION_OPEN
+            ) from provider_error
+
+    @staticmethod
+    async def _configure_session(connection: AsyncRealtimeConnection, voice_session_settings: VoiceSessionSettings) -> RealtimeVoiceSessionBase:
+        """Hands the connection to a session and returns it once the provider has accepted the settings. A session that
+        cannot be configured is closed here, because the caller never receives it to close."""
+        realtime_voice_session_openai: _RealtimeVoiceSessionOpenAI = _RealtimeVoiceSessionOpenAI(connection, voice_session_settings)
+        try:
+            await realtime_voice_session_openai.configure()
+        except BaseException:
+            await realtime_voice_session_openai.close()
+            raise
+        return realtime_voice_session_openai
 
     def _get_open_client(self) -> AsyncOpenAI:
         if self._client is None:

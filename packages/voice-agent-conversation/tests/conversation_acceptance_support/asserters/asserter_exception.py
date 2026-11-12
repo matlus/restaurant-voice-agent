@@ -13,6 +13,7 @@ from voice_agent_conversation import (
     VoiceAgentConversationBaseException,
     VoiceNotOfferedException,
 )
+from voice_agent_conversation.managers.exceptions.voice_agent_conversation_exceptions import ExceptionCause
 
 type ContextualDataValue = str | int | float | bool
 
@@ -34,7 +35,7 @@ class ExpectedExceptionContent:
 
     Each message phrase must appear in the message, which may say more. Each contextual entry must be present with
     its value, and each absent name must be missing; the exception may carry other entries. Each absent phrase, such as
-    a credential the scenario supplied, must appear nowhere in the message or in any contextual value. Each withheld
+    a credential the scenario supplied, must appear nowhere in the message, in any contextual value or in the cause. Each withheld
     message phrase, such as a provider's own words kept for the log, must not appear in the message the guest may read.
     """
 
@@ -167,12 +168,16 @@ class AsserterException:
         expected_absent_phrases: Iterable[str], actual_voice_agent_conversation_exception: VoiceAgentConversationBaseException
     ) -> list[str]:
         mismatch_messages: list[str] = []
+        # The log entry also carries the cause's text, so a phrase must stay out of it as well.
+        actual_exception_cause: ExceptionCause | None = actual_voice_agent_conversation_exception.cause
         expected_absent_phrase: str
         contextual_data_name: str
         contextual_data_value: ContextualDataValue
         for expected_absent_phrase in expected_absent_phrases:
             if expected_absent_phrase in actual_voice_agent_conversation_exception.message:
                 mismatch_messages.append(f"Message discloses {expected_absent_phrase!r}, which must be absent.")
+            if actual_exception_cause is not None and expected_absent_phrase in actual_exception_cause.message:
+                mismatch_messages.append(f"Cause discloses {expected_absent_phrase!r}, which must be absent.")
             for contextual_data_name, contextual_data_value in actual_voice_agent_conversation_exception.contextual_data_by_name.items():
                 if expected_absent_phrase in str(contextual_data_value):
                     mismatch_messages.append(f"Context {contextual_data_name!r} discloses {expected_absent_phrase!r}, which must be absent.")
