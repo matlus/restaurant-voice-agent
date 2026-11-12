@@ -265,6 +265,8 @@ omit = [
 ]
 
 [tool.coverage.report]
+# The floor sits just under today's coverage, so a change that leaves new code untested fails the check.
+fail_under = 95
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",

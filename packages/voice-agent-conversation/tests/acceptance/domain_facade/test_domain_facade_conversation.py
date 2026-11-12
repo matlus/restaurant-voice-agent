@@ -138,6 +138,57 @@ class TestConversation:
             actual_captured_realtime_sessions=realtime_voice_service_scripted.captured_realtime_sessions,
         )
 
+    async def test_Converse_WhenTwoGuestsCallAtOnceThroughOneFacade_ThenEachCallHasItsOwnSessionIdAndAudio(
+        self, restaurant_database_path: Path
+    ) -> None:
+        first_guest_microphone: GuestMicrophone = GuestMicrophone()
+        second_guest_microphone: GuestMicrophone = GuestMicrophone()
+        conversation_request: ConversationRequest = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
+        first_guest_audio_chunks: list[bytes] = create_generated_guest_audio_chunks()
+        second_guest_audio_chunks: list[bytes] = create_generated_guest_audio_chunks()
+        expected_conversation_events: list[ConversationEvent] = [
+            ConversationStarted(
+                conversation_id=ANY_CONVERSATION_ID, conversation_audio_format=PROVIDER_CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION
+            ),
+            AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
+            AgentTurnFinished(),
+        ]
+        # The sessions may reach the provider in either order, so each call's audio is matched as a set of sessions.
+        expected_guest_audio_by_session: list[list[bytes]] = sorted([first_guest_audio_chunks, second_guest_audio_chunks])
+        expected_distinct_conversation_id_count: int = 2
+
+        async with (
+            RealtimeVoiceServiceScripted() as realtime_voice_service_scripted,
+            create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(conversation_request, first_guest_microphone.stream_guest_side_events())) as first_conversation,
+            aclosing(domain_facade.converse(conversation_request, second_guest_microphone.stream_guest_side_events())) as second_conversation,
+        ):
+            actual_conversation_events_by_call: list[list[ConversationEvent]] = await asyncio.gather(
+                first_guest_microphone.take_part(first_conversation, first_guest_audio_chunks),
+                second_guest_microphone.take_part(second_conversation, second_guest_audio_chunks),
+            )
+
+        AsserterConversation.assert_conversation_events_are_as_expected(
+            expected_conversation_events=[*expected_conversation_events, *expected_conversation_events],
+            actual_conversation_events=[*actual_conversation_events_by_call[0], *actual_conversation_events_by_call[1]],
+        )
+        actual_guest_audio_by_session: list[list[bytes]] = sorted(
+            captured_realtime_session.guest_audio for captured_realtime_session in realtime_voice_service_scripted.captured_realtime_sessions
+        )
+        actual_distinct_conversation_id_count: int = len(
+            {
+                conversation_event.conversation_id
+                for actual_conversation_events in actual_conversation_events_by_call
+                for conversation_event in actual_conversation_events
+                if isinstance(conversation_event, ConversationStarted)
+            }
+        )
+        assert (actual_guest_audio_by_session, actual_distinct_conversation_id_count) == (
+            expected_guest_audio_by_session,
+            expected_distinct_conversation_id_count,
+        )
+
     async def test_Converse_WhenAConversationStarts_ThenTheAgentIsBriefedWithTheRestaurantAndItsLocalDateAndTimeInTheChosenVoice(
         self, restaurant_database_path: Path
     ) -> None:
