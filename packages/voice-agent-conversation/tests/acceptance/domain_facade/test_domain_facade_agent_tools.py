@@ -18,7 +18,7 @@ from conversation_acceptance_support.asserters.asserter_conversation import ANY_
 from conversation_acceptance_support.asserters.asserter_exception import AsserterException, ExpectedExceptionContent, ExpectedExceptionMetadata
 from conversation_acceptance_support.bundled_voice_catalog import read_catalog_voice_option
 from conversation_acceptance_support.generated_guests import GeneratedGuest, create_generated_guest, create_generated_note
-from conversation_acceptance_support.guest_microphone import GuestMicrophone
+from conversation_acceptance_support.guest_microphone import GuestMicrophone, GuestPause
 from conversation_acceptance_support.realtime_voice_service_scripted import (
     SCRIPTED_GREETING_AUDIO,
     CapturedRealtimeSession,
@@ -457,6 +457,47 @@ class TestAgentTools:
             expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
         )
         assert count_agent_response_requests(realtime_voice_service_scripted) == expected_agent_response_request_count
+
+    async def test_Converse_WhenTheGuestHangsUpBeforeAToolCallIsAnswered_ThenTheCallReportsTheToolCallButSendsTheProviderNothingMore(
+        self, restaurant_database_path: Path
+    ) -> None:
+        # The guest hangs up as they start talking, and the domain reads on only once the session has closed, so the
+        # tool call the provider sent meanwhile is read after the hang-up.
+        guest_microphone: GuestMicrophone = GuestMicrophone()
+        expected_conversation_events: list[ConversationEvent] = [
+            *GREETING_EVENTS,
+            GuestStartedSpeaking(),
+            AgentToolCallAnswered(tool_name=SEARCH_MENU_TOOL_NAME, agent_tool_call_outcome=AgentToolCallOutcome.ANSWERED),
+        ]
+        hang_up_event_count: int = len(GREETING_EVENTS) + 1
+        expected_provider_requests: tuple[list[CapturedToolOutput], int] = ([], 1)
+
+        async with (
+            RealtimeVoiceServiceScripted(
+                events_after_each_guest_audio=[
+                    create_speech_started_event(),
+                    *create_tool_call_events(TOOL_CALL_ID, SEARCH_MENU_TOOL_NAME, KETO_SEARCH_ARGUMENTS_JSON),
+                ]
+            ) as realtime_voice_service_scripted,
+            create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
+        ):
+            actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
+                conversation,
+                [GUEST_QUESTION_AUDIO],
+                hang_up_after_event_count=hang_up_event_count,
+                guest_pause=GuestPause(after_event_count=hang_up_event_count, wait_for=realtime_voice_service_scripted.wait_until_session_ends),
+            )
+
+        AsserterConversation.assert_conversation_events_are_as_expected(
+            expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
+        )
+        actual_provider_requests: tuple[list[CapturedToolOutput], int] = (
+            collect_tool_outputs(realtime_voice_service_scripted),
+            count_agent_response_requests(realtime_voice_service_scripted),
+        )
+        assert actual_provider_requests == expected_provider_requests
 
     async def test_Converse_WhenTheGuestStoppedTalkingBeforeTheAgentsToolCallingReplyEnds_ThenTheNextReplyIsAskedFor(
         self, restaurant_database_path: Path

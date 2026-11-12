@@ -197,6 +197,7 @@ over HTTPS.
 | `VOICE_AGENT_WEB_ALLOWED_ORIGINS` | No | Comma-separated origins of other sites whose pages may open a call, such as `https://booking.example.com`. The app's own page is always allowed. |
 | `VOICE_AGENT_MAXIMUM_CALL_SECONDS` | No | The longest a call lasts before the agent says goodbye. Defaults to `900` (15 minutes). |
 | `VOICE_AGENT_MAXIMUM_SILENCE_SECONDS` | No | How long the caller may stay silent before the agent says goodbye. Defaults to `120`. |
+| `VOICE_AGENT_FAREWELL_GRACE_SECONDS` | No | How long the agent's goodbye may take before the call is ended without it. Defaults to `15`. |
 | `VOICE_AGENT_MAXIMUM_CONCURRENT_CALLS` | No | How many calls one process runs at once; a further caller is told all lines are busy. Defaults to `10`. |
 
 ### Limits and security

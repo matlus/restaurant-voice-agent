@@ -10,7 +10,7 @@ The `DomainFacade` offers two capabilities:
 Calls are bounded: a call ends with a spoken goodbye and `CallLimitReached` at its maximum length or after the guest has been silent too long; guest audio pieces over 200 ms, or arriving faster than real time beyond a one-second burst, are dropped.
 
 Settings: `OPENAI_API_KEY` (required), `VOICE_AGENT_OPENAI_REALTIME_MODEL` (default `gpt-realtime-2.1`) and
-`VOICE_AGENT_OPENAI_REALTIME_WEBSOCKET_BASE_URL` (optional, a `ws://` or `wss://` URL; unset means OpenAI's own address), and the call limits `VOICE_AGENT_MAXIMUM_CALL_SECONDS` (default 900) and `VOICE_AGENT_MAXIMUM_SILENCE_SECONDS` (default 120). How many calls run at once is the host's concern, not this package's.
+`VOICE_AGENT_OPENAI_REALTIME_WEBSOCKET_BASE_URL` (optional, a `ws://` or `wss://` URL; unset means OpenAI's own address), and the call limits `VOICE_AGENT_MAXIMUM_CALL_SECONDS` (default 900) `VOICE_AGENT_MAXIMUM_SILENCE_SECONDS` (default 120) and `VOICE_AGENT_FAREWELL_GRACE_SECONDS` (default 15). How many calls run at once is the host's concern, not this package's.
 
 Tests never call OpenAI. The real gateway connects over a real WebSocket to a scripted Realtime service that the
 test support runs on this machine, pointed at it through `VOICE_AGENT_OPENAI_REALTIME_WEBSOCKET_BASE_URL`.

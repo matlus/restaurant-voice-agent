@@ -55,7 +55,7 @@ class ProcessorCallLimitEnforcement:
             )
 
     async def _close_session_after_farewell_grace(self) -> None:
-        await asyncio.sleep(CallLimits.FAREWELL_GRACE_SECONDS)
+        await asyncio.sleep(self._call_limit_settings.farewell_grace_seconds)
         # Told first, so the relay sends nothing to the session being closed under it.
         self._call_end_signals.farewell_grace_ran_out.set()
         await self._realtime_voice_session.close()

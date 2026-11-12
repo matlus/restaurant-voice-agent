@@ -1,5 +1,3 @@
-from typing import Final
-
 from voice_agent_conversation.managers.configuration_providers.settings_models.call_limit_settings import CallLimitSettings
 from voice_agent_conversation.managers.models.conversation_models import CallLimit, GuestSpeechActivity
 
@@ -10,9 +8,6 @@ class CallLimits:
     Silence is counted from when the guest last started or stopped speaking, or from the start of the call if they have
     not spoken yet; it does not grow while the guest is talking.
     """
-
-    # How long a farewell may take before the call is ended without it. A goodbye takes a few seconds to speak.
-    FAREWELL_GRACE_SECONDS: Final[float] = 15.0
 
     @staticmethod
     def find_reached_call_limit(

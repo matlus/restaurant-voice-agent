@@ -1,11 +1,21 @@
 import asyncio
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from dataclasses import dataclass
 from typing import Final
 
 from voice_agent_conversation import AgentSpeechCutOff, ConversationEvent, GuestSideEvent, GuestSpeechChunk, GuestStartedSpeaking
 
 # ConversationStarted, the greeting's speech and the end of the agent's greeting turn.
 GREETING_EVENT_COUNT: Final[int] = 3
+
+
+@dataclass(frozen=True)
+class GuestPause:
+    """The guest stops listening after hearing a number of events until wait_for returns. Until it listens again the
+    domain holds the next event, so whatever happens meanwhile happens before the domain reads on."""
+
+    after_event_count: int
+    wait_for: Callable[[], Awaitable[None]]
 
 
 class GuestMicrophoneBreakdownException(Exception):
@@ -51,6 +61,7 @@ class GuestMicrophone:
         hang_up_after_event_count: int = GREETING_EVENT_COUNT,
         guest_microphone_breakdown_exception: GuestMicrophoneBreakdownException | None = None,
         unplayed_milliseconds_when_talked_over: int | None = None,
+        guest_pause: GuestPause | None = None,
     ) -> list[ConversationEvent]:
         """Plays the guest through the call and returns every event it heard. The guest speaks only after the greeting,
         because a real caller waits for the agent to answer."""
@@ -66,6 +77,8 @@ class GuestMicrophone:
                     self.break_down(guest_microphone_breakdown_exception)
             if guest_microphone_breakdown_exception is None and len(actual_conversation_events) == hang_up_after_event_count:
                 self.hang_up()
+            if guest_pause is not None and len(actual_conversation_events) == guest_pause.after_event_count:
+                await guest_pause.wait_for()
         return actual_conversation_events
 
     def _speak_chunks(self, guest_audio_chunks: Iterable[bytes]) -> None:
