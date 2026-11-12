@@ -176,11 +176,14 @@ class TestMiddlewareExceptionTranslationWebSocket:
             "reason": ExceptionToWireTranslator.UNEXPECTED_FAILURE_TITLE,
         }
         expected_unexpected_failure_log_count: int = 1
+        unexpected_failure_log_phrase: str = "unexpectedly"
 
         with caplog.at_level(logging.WARNING, logger=MIDDLEWARE_LOGGER_NAME):
             await middleware_exception_translation(create_websocket_scope(), scripted_asgi_server.receive, scripted_asgi_server.send)
 
-        actual_unexpected_failure_log_count: int = len([log_record for log_record in caplog.records if "unexpectedly" in log_record.getMessage()])
+        actual_unexpected_failure_log_count: int = len(
+            [log_record for log_record in caplog.records if unexpected_failure_log_phrase in log_record.getMessage()]
+        )
         assert (scripted_asgi_server.sent_messages[-1], actual_unexpected_failure_log_count) == (
             expected_last_sent_message,
             expected_unexpected_failure_log_count,

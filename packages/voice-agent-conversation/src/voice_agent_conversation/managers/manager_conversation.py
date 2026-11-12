@@ -257,7 +257,7 @@ class ManagerConversation:
         agent_reply_progress: AgentReplyProgress,
         guest_audio_ended: asyncio.Event,
     ) -> AgentToolCallAnswer:
-        """Runs the tool the agent asked for and sends the answer back, unless the guest hung up while it ran."""
+        # The answer is returned even when the guest hung up while the tool ran, so the call still reports the tool call.
         agent_tool_call_answer: AgentToolCallAnswer = await agent_toolbox.run_tool_call(
             agent_tool_call_requested, agent_reply_progress.consecutive_call_repair_count
         )

@@ -8,5 +8,5 @@ class HostSettings:
 
     host: str
     port: int
-    allowed_origins: list[str]
+    allowed_origins: frozenset[str]
     maximum_concurrent_calls: int

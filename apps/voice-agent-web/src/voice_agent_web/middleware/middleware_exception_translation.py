@@ -92,7 +92,7 @@ class MiddlewareExceptionTranslation:
             )
         elif isinstance(escaped_exception, VoiceAgentConversationBaseException | VoiceAgentRestaurantBaseException):
             escaped_exception.add_contextual_data({self.REQUEST_CONTEXT_KEY: request_description})
-            self._logger.error("Request failed: %s\n%s", request_description, escaped_exception.to_string())
+            self._logger.error("Request failed: %s\n%s", request_description, escaped_exception.to_log_entry())
         else:
             self._logger.error("Request failed unexpectedly: %s", request_description, exc_info=escaped_exception)
 

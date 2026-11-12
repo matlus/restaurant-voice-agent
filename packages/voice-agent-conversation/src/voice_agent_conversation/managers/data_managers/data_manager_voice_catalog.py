@@ -1,5 +1,6 @@
 import json
 from collections import Counter
+from collections.abc import Iterable
 from importlib import resources
 from typing import Final, cast
 
@@ -49,14 +50,16 @@ class DataManagerVoiceCatalog:
     @classmethod
     def _read_voice_entries(cls, catalog_document: object) -> list[object]:
         if not isinstance(catalog_document, dict):
-            raise cls._create_invalid_catalog_exception(cls.CATALOG_SHAPE_PROBLEM)
+            raise cls._create_invalid_catalog_exception(
+                f"{cls.CATALOG_SHAPE_PROBLEM}, but its top level parsed as a {type(catalog_document).__name__}"
+            )
         voice_entries: object = cast(dict[str, object], catalog_document).get("voices")
         if not isinstance(voice_entries, list):
-            raise cls._create_invalid_catalog_exception(cls.CATALOG_SHAPE_PROBLEM)
+            raise cls._create_invalid_catalog_exception(f"{cls.CATALOG_SHAPE_PROBLEM}, but its 'voices' parsed as a {type(voice_entries).__name__}")
         return cast(list[object], voice_entries)
 
     @classmethod
-    def _read_voice_options(cls, voice_entries: list[object]) -> list[VoiceOption]:
+    def _read_voice_options(cls, voice_entries: Iterable[object]) -> list[VoiceOption]:
         voice_options: list[VoiceOption] = []
         entry_index: int
         voice_entry: object
