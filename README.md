@@ -113,7 +113,8 @@ A call goes like this:
 2. The conversation domain opens a session with the speech model. The session carries the agent's instructions (its
    role, how to talk, the restaurant's local date and time) and the eight tool definitions.
 3. Audio streams both ways as it is spoken. Turn detection decides when the caller has finished: the turn ends after
-   half a second of silence. When the caller talks over the agent, the page stops playback at once ("barge-in").
+   half a second of silence. When the caller talks over the agent, the page stops playback at once ("barge-in")
+   and reports how much speech it dropped, so the agent forgets what the caller never heard.
 4. When the model needs a fact, it asks for a **tool call**, which means it names a tool and passes arguments as JSON.
    The toolbox checks the arguments, runs the tool against the restaurant domain, and sends the result back. The model
    then answers out loud.

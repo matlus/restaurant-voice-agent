@@ -787,6 +787,7 @@ version = "0.1.0"
 source = { editable = "apps/voice-agent-web" }
 dependencies = [
     { name = "fastapi" },
+    { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "voice-agent-conversation" },
@@ -800,6 +801,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.120.0" },
+    { name = "pydantic", specifier = ">=2.14.3" },
     { name = "python-dotenv", specifier = ">=1.1.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.38.0" },
     { name = "voice-agent-conversation", editable = "packages/voice-agent-conversation" },

@@ -25,11 +25,14 @@ from voice_agent_conversation.managers.exceptions.voice_agent_conversation_excep
 )
 from voice_agent_conversation.managers.models.conversation_models import (
     AgentSpeechChunk,
+    AgentSpeechCutOff,
     AgentTurnFinished,
     ConversationAudioFormat,
     ConversationEvent,
     ConversationRequest,
     ConversationStarted,
+    GuestSideEvent,
+    GuestSpeechChunk,
     GuestStartedSpeaking,
     PresentedGender,
     SpeechProvider,
@@ -38,6 +41,7 @@ from voice_agent_conversation.managers.models.conversation_models import (
 
 __all__ = [
     "AgentSpeechChunk",
+    "AgentSpeechCutOff",
     "AgentToolCallRepairsExhaustedException",
     "AgentTurnFinished",
     "ConfigurationSettingException",
@@ -48,6 +52,8 @@ __all__ = [
     "ConversationStarted",
     "DomainFacade",
     "ExceptionAction",
+    "GuestSideEvent",
+    "GuestSpeechChunk",
     "GuestStartedSpeaking",
     "LogEventAgentTool",
     "LogEventBase",

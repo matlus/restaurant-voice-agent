@@ -13,11 +13,11 @@ class ComposerConversationMessages:
         match conversation_event:
             case AgentSpeechChunk(pcm_audio=pcm_audio):
                 return pcm_audio
-            case ConversationStarted(audio_format=audio_format, voice_option=voice_option):
+            case ConversationStarted(conversation_audio_format=conversation_audio_format, voice_option=voice_option):
                 return {
                     "type": "conversation_started",
-                    "guest_audio_sample_rate_hz": audio_format.guest_audio_sample_rate_hz,
-                    "agent_audio_sample_rate_hz": audio_format.agent_audio_sample_rate_hz,
+                    "guest_audio_sample_rate_hz": conversation_audio_format.guest_audio_sample_rate_hz,
+                    "agent_audio_sample_rate_hz": conversation_audio_format.agent_audio_sample_rate_hz,
                     "voice": ComposerConversationMessages.compose_voice(voice_option),
                 }
             case GuestStartedSpeaking():

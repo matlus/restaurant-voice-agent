@@ -1,6 +1,6 @@
 # Handler tests for the browser's front door. They start at a handler method and end at its domain Hook, which
 # ConversationHandlerForTest scripts, so no domain runs beneath them. They prove only what the handler owns: the wire
-# request becomes the typed domain request, the guest's binary frames become the guest audio stream, the domain's
+# request becomes the typed domain request, the guest's binary frames and cut-off reports become the guest side stream, the domain's
 # answer becomes the browser's wire messages, a browser that hangs up ends the call quietly, and a domain failure or a
 # frame that cannot be sent fails onward to the middleware untouched.
 
@@ -13,15 +13,19 @@ from starlette.responses import Response
 from starlette.types import Message
 from starlette.websockets import WebSocketDisconnect
 from web_test_support.conversation_handler_for_test import ConversationHandlerForTest, GuestAudioReading
+from web_test_support.generated_words import create_generated_word
 from web_test_support.scripted_browser import ScriptedBrowser
 
 from voice_agent_conversation import (
     AgentSpeechChunk,
+    AgentSpeechCutOff,
     AgentTurnFinished,
     ConversationAudioFormat,
     ConversationEvent,
     ConversationRequest,
     ConversationStarted,
+    GuestSideEvent,
+    GuestSpeechChunk,
     GuestStartedSpeaking,
     PresentedGender,
     RealtimeVoiceProviderUnavailableException,
@@ -30,8 +34,9 @@ from voice_agent_conversation import (
 )
 from voice_agent_conversation.managers.exceptions.realtime_voice_exceptions import LogEventRealtimeVoice
 
-CEDAR_VOICE_OPTION: Final[VoiceOption] = VoiceOption("openai-cedar", SpeechProvider.OPENAI, "cedar", PresentedGender.MALE, "Calm and grounded.")
-CORAL_VOICE_OPTION: Final[VoiceOption] = VoiceOption("openai-coral", SpeechProvider.OPENAI, "coral", PresentedGender.FEMALE, "Bright and friendly.")
+# The descriptions are incidental: the handler passes whatever the domain says.
+CEDAR_VOICE_OPTION: Final[VoiceOption] = VoiceOption("openai-cedar", SpeechProvider.OPENAI, "cedar", PresentedGender.MALE, create_generated_word())
+CORAL_VOICE_OPTION: Final[VoiceOption] = VoiceOption("openai-coral", SpeechProvider.OPENAI, "coral", PresentedGender.FEMALE, create_generated_word())
 CONVERSATION_AUDIO_FORMAT: Final[ConversationAudioFormat] = ConversationAudioFormat(
     guest_audio_sample_rate_hz=16_000, agent_audio_sample_rate_hz=24_000
 )
@@ -39,6 +44,8 @@ AGENT_SPEECH: Final[bytes] = b"agent speech pcm"
 NORMAL_CLOSURE_CODE: Final[int] = 1000
 GOING_AWAY_CLOSE_CODE: Final[int] = 1001
 ABNORMAL_CLOSURE_CODE: Final[int] = 1006
+AGENT_SPEECH_CUT_OFF_MESSAGE_TYPE: Final[str] = "agent_speech_cut_off"
+UNPLAYED_MILLISECONDS_FIELD_NAME: Final[str] = "unplayed_milliseconds"
 
 
 def create_voices_request() -> Request:
@@ -54,8 +61,8 @@ class TestConversationHandlerListVoices:
         expected_media_type: str = "application/json"
         expected_body: dict[str, object] = {
             "voices": [
-                {"voice_key": "openai-cedar", "presented_gender": "male", "description": "Calm and grounded."},
-                {"voice_key": "openai-coral", "presented_gender": "female", "description": "Bright and friendly."},
+                {"voice_key": "openai-cedar", "presented_gender": "male", "description": CEDAR_VOICE_OPTION.description},
+                {"voice_key": "openai-coral", "presented_gender": "female", "description": CORAL_VOICE_OPTION.description},
             ]
         }
 
@@ -86,19 +93,54 @@ class TestConversationHandlerHoldConversation:
             guest_audio_reading=GuestAudioReading.READ_AFTER_THE_EVENTS
         )
         expected_conversation_request: ConversationRequest = ConversationRequest(voice_key="  OpenAI-Cedar ")
+        expected_guest_side_events: list[GuestSideEvent] = [GuestSpeechChunk(pcm_audio=guest_audio_chunk) for guest_audio_chunk in guest_audio_chunks]
         expected_delivered_messages: list[Message] = [{"type": "websocket.accept", "subprotocol": None, "headers": []}]
 
         await conversation_handler_for_test.hold_conversation(scripted_browser.create_websocket())
 
         assert (
             conversation_handler_for_test.captured_conversation_request,
-            conversation_handler_for_test.captured_guest_audio,
+            conversation_handler_for_test.captured_guest_side_events,
             scripted_browser.delivered_messages,
-        ) == (expected_conversation_request, guest_audio_chunks, expected_delivered_messages)
+        ) == (expected_conversation_request, expected_guest_side_events, expected_delivered_messages)
+
+    async def test_HoldConversation_WhenThePageReportsAgentSpeechCutOff_ThenTheDomainGetsHowMuchWentUnplayedAndInvalidReportsArePassedOver(
+        self,
+    ) -> None:
+        unplayed_milliseconds: int = 640
+        scripted_browser: ScriptedBrowser = ScriptedBrowser(
+            query_string=b"voice=openai-cedar",
+            browser_messages=[
+                {
+                    "type": "websocket.receive",
+                    "text": json.dumps({"type": AGENT_SPEECH_CUT_OFF_MESSAGE_TYPE, UNPLAYED_MILLISECONDS_FIELD_NAME: unplayed_milliseconds}),
+                },
+                {
+                    "type": "websocket.receive",
+                    "text": json.dumps({"type": AGENT_SPEECH_CUT_OFF_MESSAGE_TYPE, UNPLAYED_MILLISECONDS_FIELD_NAME: "a lot"}),
+                },
+                {
+                    "type": "websocket.receive",
+                    "text": json.dumps({"type": AGENT_SPEECH_CUT_OFF_MESSAGE_TYPE, UNPLAYED_MILLISECONDS_FIELD_NAME: True}),
+                },
+                {"type": "websocket.receive", "text": json.dumps({"type": AGENT_SPEECH_CUT_OFF_MESSAGE_TYPE, UNPLAYED_MILLISECONDS_FIELD_NAME: -5})},
+                {"type": "websocket.receive", "text": json.dumps({"type": "guest_started_speaking", UNPLAYED_MILLISECONDS_FIELD_NAME: 5})},
+                {"type": "websocket.receive", "text": "{not json"},
+                {"type": "websocket.disconnect", "code": NORMAL_CLOSURE_CODE},
+            ],
+        )
+        conversation_handler_for_test: ConversationHandlerForTest = ConversationHandlerForTest(
+            guest_audio_reading=GuestAudioReading.READ_AFTER_THE_EVENTS
+        )
+        expected_guest_side_events: list[GuestSideEvent] = [AgentSpeechCutOff(unplayed_milliseconds=unplayed_milliseconds)]
+
+        await conversation_handler_for_test.hold_conversation(scripted_browser.create_websocket())
+
+        assert conversation_handler_for_test.captured_guest_side_events == expected_guest_side_events
 
     async def test_HoldConversation_WhenTheDomainYieldsEveryKindOfEvent_ThenTheBrowserGetsEachAsItsWireFrameInOrderAndThenTheClose(self) -> None:
         scripted_conversation_events: list[ConversationEvent] = [
-            ConversationStarted(audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+            ConversationStarted(conversation_audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
             AgentSpeechChunk(pcm_audio=AGENT_SPEECH),
             GuestStartedSpeaking(),
             AgentTurnFinished(),
@@ -112,7 +154,7 @@ class TestConversationHandlerHoldConversation:
                 "type": "conversation_started",
                 "guest_audio_sample_rate_hz": 16_000,
                 "agent_audio_sample_rate_hz": 24_000,
-                "voice": {"voice_key": "openai-cedar", "presented_gender": "male", "description": "Calm and grounded."},
+                "voice": {"voice_key": "openai-cedar", "presented_gender": "male", "description": CEDAR_VOICE_OPTION.description},
             }
         )
         expected_delivered_messages: list[Message] = [
@@ -130,7 +172,7 @@ class TestConversationHandlerHoldConversation:
 
     async def test_HoldConversation_WhenTheBrowserHangsUpBeforeTheFirstFrame_ThenNothingMoreIsSentAndTheCallEndsWithoutAFailure(self) -> None:
         scripted_conversation_events: list[ConversationEvent] = [
-            ConversationStarted(audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+            ConversationStarted(conversation_audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
             AgentSpeechChunk(pcm_audio=AGENT_SPEECH),
             AgentTurnFinished(),
         ]
@@ -150,7 +192,7 @@ class TestConversationHandlerHoldConversation:
     async def test_HoldConversation_WhenAFrameCannotBeSent_ThenTheFailurePassesUntouchedToTheMiddleware(self) -> None:
         # The connection is gone but no disconnect has been read, so the handler still believes the browser is there.
         scripted_conversation_events: list[ConversationEvent] = [
-            ConversationStarted(audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION)
+            ConversationStarted(conversation_audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION)
         ]
         scripted_browser: ScriptedBrowser = ScriptedBrowser(query_string=b"voice=openai-cedar", connection_is_lost=True)
         conversation_handler_for_test: ConversationHandlerForTest = ConversationHandlerForTest(
@@ -171,7 +213,7 @@ class TestConversationHandlerHoldConversation:
         )
         scripted_browser: ScriptedBrowser = ScriptedBrowser(query_string=b"voice=openai-cedar")
         conversation_handler_for_test: ConversationHandlerForTest = ConversationHandlerForTest(
-            scripted_conversation_events=[ConversationStarted(audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION)],
+            scripted_conversation_events=[ConversationStarted(conversation_audio_format=CONVERSATION_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION)],
             scripted_conversation_failure=scripted_realtime_voice_provider_unavailable_exception,
         )
         expected_contextual_data_by_name: dict[str, str | int | float | bool] = dict(

@@ -54,6 +54,8 @@ from voice_agent_restaurant import (
     Weekday,
 )
 
+# The booking answer field the stored code travels in; the tests check it against the store, not a copy.
+CONFIRMATION_CODE_FIELD_NAME: Final[str] = "confirmation_code"
 CEDAR_VOICE_OPTION: Final[VoiceOption] = read_catalog_voice_option("openai-cedar")
 CONVERSATION_REQUEST: Final[ConversationRequest] = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
 PROVIDER_AUDIO_FORMAT: Final[ConversationAudioFormat] = ConversationAudioFormat(guest_audio_sample_rate_hz=24_000, agent_audio_sample_rate_hz=24_000)
@@ -66,7 +68,7 @@ KETO_SEARCH_ARGUMENTS_JSON: Final[str] = '{"diet_labels": ["keto"]}'
 WRONG_CALLS_ALLOWED_IN_A_ROW: Final[int] = 3
 TECHNICAL_FAILURE_HTTP_STATUS_CODE: Final[int] = 500
 GREETING_EVENTS: Final[list[ConversationEvent]] = [
-    ConversationStarted(audio_format=PROVIDER_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
+    ConversationStarted(conversation_audio_format=PROVIDER_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
     AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
     AgentTurnFinished(),
 ]
@@ -96,6 +98,14 @@ class BookingSummaryAnswer:
     reservation_date: str
     reservation_time: str
     party_size: int
+
+
+@dataclass(frozen=True)
+class AgentToolRefusalAnswer:
+    """A refusal as the agent reads it: that the restaurant refused, and its reason, and no other fields."""
+
+    refused: bool
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -159,6 +169,14 @@ def create_expected_booking_summary(reservation: Reservation) -> BookingSummaryA
     )
 
 
+def read_refusal_answers(realtime_voice_service_scripted: RealtimeVoiceServiceScripted) -> list[AgentToolRefusalAnswer]:
+    """Each tool answer read as a refusal; an answer carrying any other field fails to read as AgentToolRefusalAnswer."""
+    return [
+        AgentToolRefusalAnswer(**json.loads(captured_tool_output.output))
+        for captured_tool_output in collect_tool_outputs(realtime_voice_service_scripted)
+    ]
+
+
 def read_booking_summary_answers(realtime_voice_service_scripted: RealtimeVoiceServiceScripted) -> list[list[BookingSummaryAnswer]]:
     """Each lookup answer's bookings; an answer carrying any other field fails to read as BookingSummaryAnswer."""
     return [
@@ -195,7 +213,7 @@ class TestAgentTools:
             RealtimeVoiceServiceScripted() as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
-            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_audio())) as conversation,
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             await guest_microphone.take_part(conversation, [])
 
@@ -231,7 +249,7 @@ class TestAgentTools:
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
-            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_audio())) as conversation,
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
                 conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1)
@@ -272,7 +290,7 @@ class TestAgentTools:
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
-            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_audio())) as conversation,
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             await guest_microphone.take_part(conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1))
 
@@ -302,7 +320,7 @@ class TestAgentTools:
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
-            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_audio())) as conversation,
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             await guest_microphone.take_part(conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1))
 
@@ -337,7 +355,7 @@ class TestAgentTools:
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
-            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_audio())) as conversation,
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             await guest_microphone.take_part(conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1))
 
@@ -373,7 +391,7 @@ class TestAgentTools:
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
-            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_audio())) as conversation,
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             await guest_microphone.take_part(conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1))
         async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
@@ -390,10 +408,10 @@ class TestAgentTools:
         ]
         actual_outcome: tuple[list[BookingConfirmationDetails], bool] = (
             [
-                BookingConfirmationDetails(**{name: value for name, value in booking_answer.items() if name != "confirmation_code"})
+                BookingConfirmationDetails(**{name: value for name, value in booking_answer.items() if name != CONFIRMATION_CODE_FIELD_NAME})
                 for booking_answer in booking_answers
             ],
-            [booking_answer["confirmation_code"] for booking_answer in booking_answers]
+            [booking_answer[CONFIRMATION_CODE_FIELD_NAME] for booking_answer in booking_answers]
             == [stored_reservation.confirmation_code for stored_reservation in stored_reservations],
         )
         assert actual_outcome == expected_outcome
@@ -426,7 +444,7 @@ class TestAgentTools:
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
-            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_audio())) as conversation,
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             await guest_microphone.take_part(conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1))
         async with create_restaurant_domain_facade(restaurant_database_path) as restaurant_domain_facade:
@@ -454,7 +472,7 @@ class TestAgentTools:
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
-            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_audio())) as conversation,
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             await guest_microphone.take_part(conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1))
 
@@ -480,7 +498,7 @@ class TestAgentTools:
             )
             with pytest.raises(RestaurantClosedOnDateException) as raised:
                 await restaurant_domain_facade.check_availability(availability_request)
-        expected_tool_answers: list[dict[str, object]] = [{"refused": True, "reason": raised.value.message}]
+        expected_tool_answers: list[AgentToolRefusalAnswer] = [AgentToolRefusalAnswer(refused=True, reason=raised.value.message)]
 
         async with (
             RealtimeVoiceServiceScripted(
@@ -488,15 +506,13 @@ class TestAgentTools:
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
-            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_audio())) as conversation,
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
                 conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1)
             )
 
-        actual_tool_answers: list[dict[str, object]] = [
-            json.loads(actual_tool_output.output) for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted)
-        ]
+        actual_tool_answers: list[AgentToolRefusalAnswer] = read_refusal_answers(realtime_voice_service_scripted)
         AsserterConversation.assert_conversation_events_are_as_expected(
             expected_conversation_events=EXPECTED_CONVERSATION_EVENTS, actual_conversation_events=actual_conversation_events
         )
@@ -527,7 +543,7 @@ class TestAgentTools:
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
-            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_audio())) as conversation,
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
                 conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1)
@@ -565,7 +581,7 @@ class TestAgentTools:
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
-            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_audio())) as conversation,
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             with pytest.raises(AgentToolCallRepairsExhaustedException) as raised:
                 await guest_microphone.take_part(
@@ -602,7 +618,7 @@ class TestAgentTools:
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
-            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_audio())) as conversation,
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
                 conversation,
@@ -636,7 +652,7 @@ class TestAgentTools:
         assert expected_reason_phrase in policy_refusal, (
             f"The restaurant's refusal no longer gives the reason this scenario needs: {policy_refusal!r}"
         )
-        expected_tool_answers: list[dict[str, object]] = [{"refused": True, "reason": policy_refusal}]
+        expected_tool_answers: list[AgentToolRefusalAnswer] = [AgentToolRefusalAnswer(refused=True, reason=policy_refusal)]
 
         async with (
             RealtimeVoiceServiceScripted(
@@ -644,15 +660,13 @@ class TestAgentTools:
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
-            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_audio())) as conversation,
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
                 conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=count_events_after_answers(1)
             )
 
-        actual_tool_answers: list[dict[str, object]] = [
-            json.loads(actual_tool_output.output) for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted)
-        ]
+        actual_tool_answers: list[AgentToolRefusalAnswer] = read_refusal_answers(realtime_voice_service_scripted)
         AsserterConversation.assert_conversation_events_are_as_expected(
             expected_conversation_events=EXPECTED_CONVERSATION_EVENTS, actual_conversation_events=actual_conversation_events
         )
@@ -668,7 +682,7 @@ class TestAgentTools:
         availability_request: AvailabilityRequest = await create_tomorrows_availability_request(restaurant_database_path, "19:00", 10)
         policy_refusal: str = await read_policy_refusal(restaurant_database_path, availability_request)
         expected_conversation_events: list[ConversationEvent] = GREETING_EVENTS + ANSWER_EVENTS * refusal_count
-        expected_tool_answers: list[dict[str, object]] = [{"refused": True, "reason": policy_refusal}] * refusal_count
+        expected_tool_answers: list[AgentToolRefusalAnswer] = [AgentToolRefusalAnswer(refused=True, reason=policy_refusal)] * refusal_count
 
         async with (
             RealtimeVoiceServiceScripted(
@@ -676,15 +690,13 @@ class TestAgentTools:
             ) as realtime_voice_service_scripted,
             create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
             asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
-            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_audio())) as conversation,
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
         ):
             actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
                 conversation, [GUEST_QUESTION_AUDIO] * refusal_count, hang_up_after_event_count=count_events_after_answers(refusal_count)
             )
 
-        actual_tool_answers: list[dict[str, object]] = [
-            json.loads(actual_tool_output.output) for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted)
-        ]
+        actual_tool_answers: list[AgentToolRefusalAnswer] = read_refusal_answers(realtime_voice_service_scripted)
         AsserterConversation.assert_conversation_events_are_as_expected(
             expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
         )

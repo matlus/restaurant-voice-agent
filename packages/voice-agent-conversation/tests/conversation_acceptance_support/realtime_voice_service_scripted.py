@@ -15,6 +15,7 @@ from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request, Response
 
 SCRIPTED_GREETING_AUDIO: Final[bytes] = b"scripted greeting audio"
+SCRIPTED_GREETING_RESPONSE_ID: Final[str] = "response_greeting"
 SERVICE_HOST: Final[str] = "127.0.0.1"
 SERVICE_START_TIMEOUT_SECONDS: Final[float] = 10.0
 SERVICE_STOP_TIMEOUT_SECONDS: Final[float] = 10.0
@@ -89,8 +90,10 @@ class SessionEventMessage(TypedDict):
     session: dict[str, object]
 
 
-type ScriptedServerEventMessage = SpeechStartedEventMessage | ErrorEventMessage | ResponseDoneEventMessage | FunctionCallArgumentsDoneEventMessage
-type ServerEventMessage = ScriptedServerEventMessage | OutputAudioDeltaEventMessage | SessionEventMessage
+type ScriptedServerEventMessage = (
+    SpeechStartedEventMessage | ErrorEventMessage | ResponseDoneEventMessage | FunctionCallArgumentsDoneEventMessage | OutputAudioDeltaEventMessage
+)
+type ServerEventMessage = ScriptedServerEventMessage | SessionEventMessage
 
 
 # The parts of the client events this service reads.
@@ -138,8 +141,35 @@ class ConversationItemCreateEventMessage(TypedDict):
     item: FunctionCallOutputItemMessage
 
 
+class ConversationItemTruncateEventMessage(TypedDict):
+    type: Literal["conversation.item.truncate"]
+    item_id: str
+    content_index: int
+    audio_end_ms: int
+
+
 def create_speech_started_event() -> SpeechStartedEventMessage:
     return {"type": "input_audio_buffer.speech_started", "event_id": "event_speech_started", "audio_start_ms": 0, "item_id": "item_guest"}
+
+
+def create_agent_speech_event(item_id: str, pcm_audio: bytes) -> OutputAudioDeltaEventMessage:
+    """One piece of the agent's speech in the reply item given, as OpenAI streams it."""
+    return {
+        "type": "response.output_audio.delta",
+        "event_id": f"event_{item_id}_audio",
+        "response_id": f"response_{item_id}",
+        "item_id": item_id,
+        "output_index": 0,
+        "content_index": 0,
+        "delta": base64.b64encode(pcm_audio).decode("ascii"),
+    }
+
+
+def create_malformed_agent_speech_event() -> OutputAudioDeltaEventMessage:
+    """A piece of agent speech whose audio is not valid base64, as a corrupted provider frame would carry."""
+    malformed_agent_speech_event: OutputAudioDeltaEventMessage = create_agent_speech_event("item_malformed", b"")
+    malformed_agent_speech_event["delta"] = "not base64 audio!"
+    return malformed_agent_speech_event
 
 
 def create_error_event(error_type: str, error_code: str | None, error_message: str) -> ErrorEventMessage:
@@ -197,6 +227,15 @@ class CapturedToolOutput:
     output: str
 
 
+@dataclass(frozen=True)
+class CapturedAgentSpeechTruncation:
+    """One conversation.item.truncate the client sent: where the guest stopped hearing the agent's speech."""
+
+    item_id: str
+    content_index: int
+    audio_end_ms: int
+
+
 @dataclass
 class CapturedRealtimeSession:
     """What one client connection did, as the service saw it on the wire. State only."""
@@ -205,6 +244,7 @@ class CapturedRealtimeSession:
     session_settings: list[CapturedSessionSettings] = field(default_factory=list[CapturedSessionSettings])
     guest_audio: list[bytes] = field(default_factory=list[bytes])
     tool_outputs: list[CapturedToolOutput] = field(default_factory=list[CapturedToolOutput])
+    agent_speech_truncations: list[CapturedAgentSpeechTruncation] = field(default_factory=list[CapturedAgentSpeechTruncation])
     agent_response_request_count: int = 0
     # The instructions each response.create carried for that reply alone, or None when it carried none.
     agent_response_instructions: list[str | None] = field(default_factory=list[str | None])
@@ -217,7 +257,7 @@ class RealtimeVoiceServiceScripted:
     The production gateway connects to it through its configured WebSocket base URL, so every line of the
     gateway, the session and its exception translator runs exactly as it does against OpenAI; only the far
     end of the wire is scripted. It confirms session settings, greets when asked for a response, answers
-    each piece of guest audio with the scripted events, and captures every tool answer the client sends.
+    each piece of guest audio with the scripted events, and captures every tool answer and speech truncation the client sends.
     It can also refuse the WebSocket handshake with an HTTP status, refuse an accepted connection by closing
     it the way OpenAI does for an invalid API key, or reject the session settings with a provider error event.
 
@@ -277,6 +317,9 @@ class RealtimeVoiceServiceScripted:
             self._service_loop.call_soon_threadsafe(self._stop_requested.set)
         if self._service_thread is not None:
             self._service_thread.join(SERVICE_STOP_TIMEOUT_SECONDS)
+            # What it captured is read only after it stops, so a thread still running would hand a test half the story.
+            if self._service_thread.is_alive():
+                raise RuntimeError("The scripted Realtime service did not stop in time.")
 
     async def _serve(self) -> None:
         self._service_loop = asyncio.get_running_loop()
@@ -347,6 +390,17 @@ class RealtimeVoiceServiceScripted:
                 captured_realtime_session.tool_outputs.append(
                     CapturedToolOutput(call_id=function_call_output_item_message["call_id"], output=function_call_output_item_message["output"])
                 )
+            case "conversation.item.truncate":
+                conversation_item_truncate_event_message: ConversationItemTruncateEventMessage = cast(
+                    ConversationItemTruncateEventMessage, client_event
+                )
+                captured_realtime_session.agent_speech_truncations.append(
+                    CapturedAgentSpeechTruncation(
+                        item_id=conversation_item_truncate_event_message["item_id"],
+                        content_index=conversation_item_truncate_event_message["content_index"],
+                        audio_end_ms=conversation_item_truncate_event_message["audio_end_ms"],
+                    )
+                )
             case _:
                 pass
 
@@ -379,7 +433,7 @@ class RealtimeVoiceServiceScripted:
             {
                 "type": "response.output_audio.delta",
                 "event_id": "event_greeting_audio",
-                "response_id": "response_greeting",
+                "response_id": SCRIPTED_GREETING_RESPONSE_ID,
                 "item_id": "item_greeting",
                 "output_index": 0,
                 "content_index": 0,
@@ -391,7 +445,7 @@ class RealtimeVoiceServiceScripted:
             {
                 "type": "response.done",
                 "event_id": "event_greeting_done",
-                "response": {"id": "response_greeting", "object": "realtime.response", "status": "completed", "status_details": None},
+                "response": {"id": SCRIPTED_GREETING_RESPONSE_ID, "object": "realtime.response", "status": "completed", "status_details": None},
             },
         )
 
