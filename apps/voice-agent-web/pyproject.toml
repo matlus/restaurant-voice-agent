@@ -46,4 +46,6 @@ python_functions = ["test_*"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra --strict-config --strict-markers --import-mode=importlib"
+# Matches the root setting, so a hung test fails here too when this package is tested on its own.
+timeout = 60
 pythonpath = ["src", "tests", "../../packages/voice-agent-conversation/src", "../../packages/voice-agent-conversation/tests", "../../packages/voice-agent-restaurant/src"]
