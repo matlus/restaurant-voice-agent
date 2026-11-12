@@ -97,10 +97,17 @@ class TestHostSettingsProvider:
 
 
 class TestEntryPoint:
-    def test_Main_WhenThePortIsNotANumber_ThenTheProcessStopsAndTheLogNamesTheSettingWithoutATraceback(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    @pytest.mark.parametrize(
+        ("port_text", "expected_message_phrase"),
+        [
+            pytest.param("eighty", f"{PORT_VARIABLE_NAME}' must be a whole number", id="not a number"),
+            pytest.param("0", "must be between 1 and 65535", id="outside the range"),
+        ],
+    )
+    def test_Main_WhenThePortCannotBeUsed_ThenTheProcessStopsAndTheLogNamesTheProblemWithoutATraceback(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, port_text: str, expected_message_phrase: str
     ) -> None:
-        monkeypatch.setenv(PORT_VARIABLE_NAME, "eighty")
+        monkeypatch.setenv(PORT_VARIABLE_NAME, port_text)
         expected_outcome: tuple[int, bool, list[bool]] = (STARTUP_FAILURE_EXIT_CODE, True, [False])
 
         with caplog.at_level(logging.ERROR, logger=ENTRY_POINT_LOGGER_NAME), pytest.raises(SystemExit) as raised:
@@ -109,7 +116,7 @@ class TestEntryPoint:
         actual_entry_point_errors: list[str] = read_entry_point_errors(caplog)
         actual_outcome: tuple[int, bool, list[bool]] = (
             raised.value.code,
-            len(actual_entry_point_errors) == 1 and PORT_VARIABLE_NAME in actual_entry_point_errors[0],
+            len(actual_entry_point_errors) == 1 and expected_message_phrase in actual_entry_point_errors[0],
             read_entry_point_tracebacks(caplog),
         )
         assert actual_outcome == expected_outcome
