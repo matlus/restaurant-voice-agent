@@ -953,6 +953,8 @@ class TestAgentTools:
         sent_party_size: str = create_generated_note()
         arguments_json: str = json.dumps({"party_size": sent_party_size})
         expected_problem_fields: list[str] = ["'reservation_date'", "'reservation_time'", "'party_size'"]
+        # The validation library links its own documentation in each error; the agent must not be sent there.
+        documentation_link_host: str = "pydantic.dev"
         expected_outcome: tuple[list[bool], bool, bool] = ([True, True, True], False, False)
 
         async with (
@@ -969,7 +971,7 @@ class TestAgentTools:
         actual_outcome: tuple[list[bool], bool, bool] = (
             [expected_problem_field in actual_problem for expected_problem_field in expected_problem_fields],
             sent_party_size in actual_problem,
-            "pydantic.dev" in actual_problem,
+            documentation_link_host in actual_problem,
         )
         assert actual_outcome == expected_outcome, actual_problem
 
