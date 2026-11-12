@@ -49,6 +49,10 @@ class ValidatorReservationRequests:
     RESERVATION_TIME_FIELD_NAME: Final[str] = "reservation_time"
     BOOKED_DATE_FIELD_NAME: Final[str] = "booked_date"
     BOOKED_TIME_FIELD_NAME: Final[str] = "booked_time"
+    PARTY_SIZE_FIELD_NAME: Final[str] = "party_size"
+    GUEST_NAME_FIELD_NAME: Final[str] = "guest_name"
+    PHONE_NUMBER_FIELD_NAME: Final[str] = "phone_number"
+    CONFIRMATION_CODE_FIELD_NAME: Final[str] = "confirmation_code"
     REQUIRED_FIELD_PROBLEM_TEMPLATE: Final[str] = "'{field_name}' is required but was not provided"
 
     @classmethod
@@ -297,17 +301,18 @@ class ValidatorReservationRequests:
     @classmethod
     def _collect_required_party_size_problems(cls, party_size: int | None) -> list[str]:
         if party_size is None:
-            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name="party_size")]
+            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name=cls.PARTY_SIZE_FIELD_NAME)]
         return []
 
-    @staticmethod
-    def _collect_party_size_problems(party_size: int, reservation_policy: ReservationPolicy) -> list[str]:
+    @classmethod
+    def _collect_party_size_problems(cls, party_size: int, reservation_policy: ReservationPolicy) -> list[str]:
         if party_size < reservation_policy.minimum_party_size:
-            return [f"'party_size' must be at least {reservation_policy.minimum_party_size} but was {party_size}"]
+            return [f"'{cls.PARTY_SIZE_FIELD_NAME}' must be at least {reservation_policy.minimum_party_size} but was {party_size}"]
         if party_size > reservation_policy.maximum_party_size:
             return [
                 (
-                    f"'party_size' of {party_size} is larger than the {reservation_policy.maximum_party_size} guests that can be booked by phone. "
+                    f"'{cls.PARTY_SIZE_FIELD_NAME}' of {party_size} is larger than the {reservation_policy.maximum_party_size} guests "
+                    "that can be booked by phone. "
                     f"{reservation_policy.large_party_guidance}"
                 )
             ]
@@ -340,9 +345,9 @@ class ValidatorReservationRequests:
     @classmethod
     def _collect_guest_name_problems(cls, guest_name: str | None) -> list[str]:
         if guest_name is None:
-            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name="guest_name")]
+            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name=cls.GUEST_NAME_FIELD_NAME)]
         if len(guest_name) > cls.MAXIMUM_GUEST_NAME_LENGTH:
-            return [f"'guest_name' must contain at most {cls.MAXIMUM_GUEST_NAME_LENGTH} characters"]
+            return [f"'{cls.GUEST_NAME_FIELD_NAME}' must contain at most {cls.MAXIMUM_GUEST_NAME_LENGTH} characters"]
         return []
 
     @classmethod
@@ -352,17 +357,19 @@ class ValidatorReservationRequests:
     @classmethod
     def _collect_phone_number_problems(cls, phone_number: str | None) -> list[str]:
         if phone_number is None:
-            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name="phone_number")]
+            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name=cls.PHONE_NUMBER_FIELD_NAME)]
         if not ReservationValueParsing.is_phone_number(phone_number):
-            return [f"'phone_number' value '{phone_number}' must be a 10-digit phone number"]
+            return [f"'{cls.PHONE_NUMBER_FIELD_NAME}' value '{phone_number}' must be a 10-digit phone number"]
         return []
 
     @classmethod
     def _collect_confirmation_code_problems(cls, confirmation_code: str | None) -> list[str]:
         if confirmation_code is None:
-            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name="confirmation_code")]
+            return [cls.REQUIRED_FIELD_PROBLEM_TEMPLATE.format(field_name=cls.CONFIRMATION_CODE_FIELD_NAME)]
         if not ReservationValueParsing.is_confirmation_code(confirmation_code):
-            return [f"'confirmation_code' value '{confirmation_code}' is not a {CONFIRMATION_CODE_LENGTH}-character confirmation code"]
+            return [
+                f"'{cls.CONFIRMATION_CODE_FIELD_NAME}' value '{confirmation_code}' is not a {CONFIRMATION_CODE_LENGTH}-character confirmation code"
+            ]
         return []
 
     @classmethod

@@ -29,7 +29,7 @@ from acceptance_support.bundled_seed import (
     read_seeded_tables,
 )
 from acceptance_support.generated_guests import GeneratedGuest, create_generated_guest, create_generated_note
-from acceptance_support.seeded_bookings import derive_next_weekday_date, retrieve_seeded_booking
+from acceptance_support.seeded_bookings import DAYS_PER_WEEK, derive_next_weekday_date, retrieve_seeded_booking
 from acceptance_support.service_locator_testing import (
     FRIDAY_EVENING_UTC,
     THURSDAY_EARLY_EVENING_UTC,
@@ -222,12 +222,21 @@ def derive_booking_window_breach(
             requested_start=datetime.combine(restaurant_local_now.date() - timedelta(days=1), time(19, 0), tzinfo=restaurant_local_now.tzinfo),
             expected_problem_phrase="has already passed",
         )
+    # The first day past the window on which the restaurant opens, so the window is all that refuses it.
+    first_date_past_window: date = restaurant_local_now.date() + timedelta(days=reservation_policy.booking_window_days + 1)
+    seeded_open_weekday_names: set[str] = {
+        seeded_weekday_hours.weekday
+        for seeded_weekday_hours in read_seeded_restaurant().weekly_hours
+        if isinstance(seeded_weekday_hours, SeededOpenWeekday)
+    }
+    open_dates_past_window: list[date] = [
+        candidate_date
+        for candidate_date in (first_date_past_window + timedelta(days=day_offset) for day_offset in range(DAYS_PER_WEEK))
+        if list(Weekday)[candidate_date.weekday()].value in seeded_open_weekday_names
+    ]
+    assert open_dates_past_window, "The restaurant must open on some weekday for this scenario; the seeded data no longer supports it"
     return BookingWindowBreach(
-        requested_start=datetime.combine(
-            restaurant_local_now.date() + timedelta(days=reservation_policy.booking_window_days + 1),
-            time(19, 0),
-            tzinfo=restaurant_local_now.tzinfo,
-        ),
+        requested_start=datetime.combine(open_dates_past_window[0], time(19, 0), tzinfo=restaurant_local_now.tzinfo),
         expected_problem_phrase=f"more than {reservation_policy.booking_window_days} days ahead",
     )
 
@@ -378,6 +387,42 @@ class TestCheckAvailability:
 
         assert actual_availability_result == expected_availability_result
 
+    async def test_CheckAvailability_WhenTheMovedBookingsOwnTimeIsTheOnlyOpenOne_ThenNoOtherTimeIsOffered(
+        self, restaurant_database_path: Path
+    ) -> None:
+        scenario: str = "The availability check for a move whose only open time is the booking's own"
+        moved_minutes: int = 15
+
+        async with create_domain_facade(restaurant_database_path) as domain_facade:
+            current_reservation: Reservation = await retrieve_unstarted_seeded_booking(domain_facade, SEEDED_YARA_PHONE, scenario)
+            requested_time: time = (
+                datetime.combine(current_reservation.reservation_date, current_reservation.starts_at) + timedelta(minutes=moved_minutes)
+            ).time()
+            availability_request: AvailabilityRequest = AvailabilityRequest(
+                reservation_date=current_reservation.reservation_date.isoformat(),
+                reservation_time=f"{current_reservation.starts_at:%H:%M}",
+                party_size=current_reservation.party_size,
+                confirmation_code=current_reservation.confirmation_code,
+            )
+            kept_time_availability_result: AvailabilityResult = await domain_facade.check_availability(availability_request)
+            # The booking's own time must be open to it, and nothing else that evening, so leaving it out is what is tested.
+            assert (kept_time_availability_result.is_available, current_reservation.reservation_date.isoformat()) == (True, FULLY_BOOKED_TUESDAY), (
+                f"{scenario} needs booking {current_reservation.confirmation_code} on {FULLY_BOOKED_TUESDAY} with its own time open to it; "
+                f"the seeded data no longer supports this scenario: {current_reservation!r}"
+            )
+            expected_availability_result: AvailabilityResult = AvailabilityResult(
+                reservation_date=current_reservation.reservation_date,
+                requested_time=requested_time,
+                party_size=current_reservation.party_size,
+                is_available=False,
+                alternative_times=[],
+            )
+            actual_availability_result: AvailabilityResult = await domain_facade.check_availability(
+                replace(availability_request, reservation_time=f"{requested_time:%H:%M}")
+            )
+
+        assert actual_availability_result == expected_availability_result
+
     async def test_CheckAvailability_WhenTheGivenConfirmationCodeIsMalformed_ThenTheRequestIsRefused(self, restaurant_database_path: Path) -> None:
         expected_problem_phrases: list[str] = ["is not a 6-character confirmation code"]
         expected_exception_metadata: ExpectedExceptionMetadata = create_validation_refusal_metadata()
@@ -494,7 +539,6 @@ class TestCheckAvailability:
     async def test_CheckAvailability_WhenTheTimeLeavesTooLittleBeforeClosing_ThenTheRefusalGivesTheSeatingHours(
         self, restaurant_database_path: Path
     ) -> None:
-        # The last table is seated one full seating before closing; the request is one slot later than that.
         seeded_restaurant: SeededRestaurant = read_seeded_restaurant()
         friday_seeded_open_weekday: SeededOpenWeekday = retrieve_seeded_open_weekday(seeded_restaurant, Weekday.FRIDAY)
         first_seating_time: time = friday_seeded_open_weekday.opens_at
@@ -1174,11 +1218,14 @@ class TestChangeReservation:
                 "find the booking by the phone number, name and date it is booked under",
             ]
             expected_contextual_data_by_name: dict[str, str] = {CONFIRMATION_CODE_CONTEXT_NAME: current_reservation.confirmation_code}
+            expected_found_reservations: list[Reservation] = [current_reservation]
             with pytest.raises(ReservationNotFoundException) as raised:
                 await domain_facade.change_reservation(
                     create_change_request(current_reservation.confirmation_code, unrelated_generated_guest.phone_digits, reservation_time="20:30")
                 )
+            actual_found_reservations: list[Reservation] = await domain_facade.find_reservations(create_booking_search_request(current_reservation))
 
+        assert actual_found_reservations == expected_found_reservations
         AsserterException.assert_message_and_metadata_are_as_expected(
             expected_exception_content=ExpectedExceptionContent(
                 message_phrases=expected_message_phrases,
