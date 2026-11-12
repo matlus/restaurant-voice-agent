@@ -14,6 +14,7 @@ from voice_agent_conversation.managers.exceptions.realtime_voice_exceptions impo
     RealtimeVoiceProviderAccessDeniedException,
     RealtimeVoiceProviderErrorException,
     RealtimeVoiceProviderUnavailableException,
+    RealtimeVoiceSessionExpiredException,
 )
 from voice_agent_conversation.managers.exceptions.voice_agent_conversation_exceptions import (
     ExceptionAction,
@@ -31,11 +32,13 @@ from voice_agent_conversation.managers.models.conversation_models import (
     ConversationEvent,
     ConversationRequest,
     ConversationStarted,
+    GuestFacingConversationEvent,
     GuestSideEvent,
     GuestSpeechChunk,
     GuestStartedSpeaking,
     PresentedGender,
     SpeechProvider,
+    SpeechProviderErrorTolerated,
     VoiceOption,
 )
 
@@ -52,6 +55,7 @@ __all__ = [
     "ConversationStarted",
     "DomainFacade",
     "ExceptionAction",
+    "GuestFacingConversationEvent",
     "GuestSideEvent",
     "GuestSpeechChunk",
     "GuestStartedSpeaking",
@@ -64,8 +68,10 @@ __all__ = [
     "RealtimeVoiceProviderAccessDeniedException",
     "RealtimeVoiceProviderErrorException",
     "RealtimeVoiceProviderUnavailableException",
+    "RealtimeVoiceSessionExpiredException",
     "Severity",
     "SpeechProvider",
+    "SpeechProviderErrorTolerated",
     "VoiceAgentConversationBaseException",
     "VoiceAgentConversationBusinessBaseException",
     "VoiceAgentConversationTechnicalBaseException",

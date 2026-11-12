@@ -117,7 +117,11 @@ A call goes like this:
    and reports how much speech it dropped, so the agent forgets what the caller never heard.
 4. When the model needs a fact, it asks for a **tool call**, which means it names a tool and passes arguments as JSON.
    The toolbox checks the arguments, runs the tool against the restaurant domain, and sends the result back. The model
-   then answers out loud.
+   then answers out loud. If the caller is talking when the tool calling reply ends, the domain does not ask for that
+   answer itself: turn detection asks for it when the caller finishes, so the agent does not talk over them.
+5. The speech provider reports most errors without closing the session. A short allow-list of errors known to be
+   harmless is logged by the host and the call goes on; any other error ends the call. When a session reaches the
+   provider's time limit, the caller is told the call has ended and to call again.
 
 ### The tools
 

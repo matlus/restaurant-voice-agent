@@ -34,7 +34,8 @@ class ExpectedExceptionContent:
 
     Each message phrase must appear in the message, which may say more. Each contextual entry must be present with
     its value, and each absent name must be missing; the exception may carry other entries. Each absent phrase, such as
-    a credential the scenario supplied, must appear nowhere in the message or in any contextual value.
+    a credential the scenario supplied, must appear nowhere in the message or in any contextual value. Each withheld
+    message phrase, such as a provider's own words kept for the log, must not appear in the message the guest may read.
     """
 
     message_phrases: Sequence[str]
@@ -42,6 +43,7 @@ class ExpectedExceptionContent:
     contextual_data_by_name: Mapping[str, ContextualDataValue]
     absent_contextual_data_names: Sequence[str] = ()
     absent_phrases: Sequence[str] = ()
+    withheld_message_phrases: Sequence[str] = ()
 
 
 class AsserterException:
@@ -107,7 +109,7 @@ class AsserterException:
         )
 
     @staticmethod
-    def assert_technical_failure_is_as_expected(
+    def assert_call_failure_is_as_expected(
         *,
         expected_exception_content: ExpectedExceptionContent,
         expected_provider_session_count: int,
@@ -140,6 +142,11 @@ class AsserterException:
         ]
         mismatch_messages.extend(
             AsserterException._find_disclosed_phrase_mismatches(expected_exception_content.absent_phrases, actual_voice_agent_conversation_exception)
+        )
+        mismatch_messages.extend(
+            f"Message discloses {withheld_message_phrase!r}, which must be withheld from it."
+            for withheld_message_phrase in expected_exception_content.withheld_message_phrases
+            if withheld_message_phrase in actual_voice_agent_conversation_exception.message
         )
         mismatch_messages.extend(
             AsserterException._find_metadata_mismatches(

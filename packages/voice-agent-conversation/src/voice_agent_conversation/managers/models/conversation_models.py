@@ -60,6 +60,21 @@ class GuestStartedSpeaking:
 
 
 @dataclass(frozen=True)
+class GuestStoppedSpeaking:
+    """The guest stopped talking. The provider answers by itself once it judges the guest's turn over."""
+
+
+@dataclass(frozen=True)
+class SpeechProviderErrorTolerated:
+    """The speech provider reported an error that leaves the conversation running, such as refusing a reply request
+    because a reply is already under way. The host logs it; the guest is not told."""
+
+    error_type: str
+    error_code: str | None
+    error_message: str
+
+
+@dataclass(frozen=True)
 class AgentTurnFinished:
     """The agent finished, or abandoned, its current reply."""
 
@@ -123,11 +138,16 @@ class SentAgentSpeech:
     sent_byte_count: int
 
 
-type ConversationEvent = ConversationStarted | AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished
+# What the guest's side of a call is sent: the page plays or acts on every one of these.
+type GuestFacingConversationEvent = ConversationStarted | AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished
 
-type AgentSessionEvent = AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished
+type ConversationEvent = GuestFacingConversationEvent | SpeechProviderErrorTolerated
 
-type VoiceSessionEvent = AgentSpeechReceived | GuestStartedSpeaking | AgentTurnFinished | AgentToolCallRequested
+type AgentSessionEvent = AgentSpeechChunk | GuestStartedSpeaking | AgentTurnFinished | SpeechProviderErrorTolerated
+
+type VoiceSessionEvent = (
+    AgentSpeechReceived | GuestStartedSpeaking | GuestStoppedSpeaking | AgentTurnFinished | AgentToolCallRequested | SpeechProviderErrorTolerated
+)
 
 # A JSON Schema document, as the speech model reads a tool's parameters.
 type JsonSchema = dict[str, object]

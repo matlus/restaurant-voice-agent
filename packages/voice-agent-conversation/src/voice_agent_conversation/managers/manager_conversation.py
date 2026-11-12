@@ -23,6 +23,8 @@ from voice_agent_conversation.managers.models.conversation_models import (
     ConversationStarted,
     GuestSideEvent,
     GuestSpeechChunk,
+    GuestStartedSpeaking,
+    GuestStoppedSpeaking,
     SentAgentSpeech,
     VoiceOption,
     VoiceSessionEvent,
@@ -104,8 +106,10 @@ class ManagerConversation:
         a failure on either side escapes.
 
         A reply in which the agent calls tools ends without speech; it speaks once it has the answers. So when such a reply
-        ends, the next reply is asked for instead of reporting the turn as finished. The agent's speech is counted as it is
-        passed on, so a cut-off report from the guest's side can tell the provider where the guest stopped hearing it.
+        ends, the next reply is asked for instead of reporting the turn as finished, unless the guest is talking: the
+        provider answers the guest by itself once they finish, and a reply asked for now would talk over them. The agent's
+        speech is counted as it is passed on, so a cut-off report from the guest's side can tell the provider where the
+        guest stopped hearing it.
         """
         guest_audio_ended: asyncio.Event = asyncio.Event()
         # Rebound as speech is passed on; the guest side forwarding reads the latest count through this frame.
@@ -116,6 +120,7 @@ class ManagerConversation:
         # Wrong tool calls are counted per conversation; the toolbox ends the call when too many come in a row.
         consecutive_call_repair_count: int = 0
         has_answered_tool_calls: bool = False
+        is_guest_speaking: bool = False
         try:
             voice_session_event: VoiceSessionEvent
             async for voice_session_event in realtime_voice_session.receive_events():
@@ -130,7 +135,14 @@ class ManagerConversation:
                         yield AgentSpeechChunk(pcm_audio=pcm_audio)
                     case AgentTurnFinished() if has_answered_tool_calls:
                         has_answered_tool_calls = False
-                        await ManagerConversation._request_next_reply(realtime_voice_session, guest_audio_ended)
+                        # A guest who is talking gets the reply the provider starts by itself when they finish.
+                        if not is_guest_speaking:
+                            await ManagerConversation._request_next_reply(realtime_voice_session, guest_audio_ended)
+                    case GuestStartedSpeaking():
+                        is_guest_speaking = True
+                        yield voice_session_event
+                    case GuestStoppedSpeaking():
+                        is_guest_speaking = False
                     case _:
                         yield voice_session_event
         finally:

@@ -5,6 +5,7 @@
 # frame that cannot be sent fails onward to the middleware untouched.
 
 import json
+import logging
 from typing import Final
 
 import pytest
@@ -30,6 +31,7 @@ from voice_agent_conversation import (
     PresentedGender,
     RealtimeVoiceProviderUnavailableException,
     SpeechProvider,
+    SpeechProviderErrorTolerated,
     VoiceOption,
 )
 from voice_agent_conversation.managers.exceptions.realtime_voice_exceptions import LogEventRealtimeVoice
@@ -46,6 +48,7 @@ GOING_AWAY_CLOSE_CODE: Final[int] = 1001
 ABNORMAL_CLOSURE_CODE: Final[int] = 1006
 AGENT_SPEECH_CUT_OFF_MESSAGE_TYPE: Final[str] = "agent_speech_cut_off"
 UNPLAYED_MILLISECONDS_FIELD_NAME: Final[str] = "unplayed_milliseconds"
+HANDLER_LOGGER_NAME: Final[str] = "voice_agent_web.handlers.conversation_handler"
 
 
 def create_voices_request() -> Request:
@@ -169,6 +172,43 @@ class TestConversationHandlerHoldConversation:
         await conversation_handler_for_test.hold_conversation(scripted_browser.create_websocket())
 
         assert scripted_browser.delivered_messages == expected_delivered_messages
+
+    async def test_HoldConversation_WhenTheDomainReportsAToleratedProviderError_ThenItIsLoggedAsAWarningAndNeverSentToTheBrowser(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        speech_provider_error_tolerated: SpeechProviderErrorTolerated = SpeechProviderErrorTolerated(
+            error_type=create_generated_word(), error_code=create_generated_word(), error_message=create_generated_word()
+        )
+        scripted_browser: ScriptedBrowser = ScriptedBrowser(query_string=b"voice=openai-cedar")
+        conversation_handler_for_test: ConversationHandlerForTest = ConversationHandlerForTest(
+            scripted_conversation_events=[speech_provider_error_tolerated, AgentTurnFinished()]
+        )
+        expected_delivered_messages: list[Message] = [
+            {"type": "websocket.accept", "subprotocol": None, "headers": []},
+            {"type": "websocket.send", "text": json.dumps({"type": "agent_turn_finished"})},
+            {"type": "websocket.close", "code": NORMAL_CLOSURE_CODE},
+        ]
+        expected_logged_values: list[tuple[int, bool]] = [(logging.WARNING, True)]
+
+        with caplog.at_level(logging.WARNING, logger=HANDLER_LOGGER_NAME):
+            await conversation_handler_for_test.hold_conversation(scripted_browser.create_websocket())
+
+        actual_logged_values: list[tuple[int, bool]] = [
+            (
+                log_record.levelno,
+                all(
+                    tolerated_error_value in log_record.getMessage()
+                    for tolerated_error_value in (
+                        speech_provider_error_tolerated.error_type,
+                        speech_provider_error_tolerated.error_code,
+                        speech_provider_error_tolerated.error_message,
+                    )
+                ),
+            )
+            for log_record in caplog.records
+            if log_record.name == HANDLER_LOGGER_NAME
+        ]
+        assert (scripted_browser.delivered_messages, actual_logged_values) == (expected_delivered_messages, expected_logged_values)
 
     async def test_HoldConversation_WhenTheBrowserHangsUpBeforeTheFirstFrame_ThenNothingMoreIsSentAndTheCallEndsWithoutAFailure(self) -> None:
         scripted_conversation_events: list[ConversationEvent] = [

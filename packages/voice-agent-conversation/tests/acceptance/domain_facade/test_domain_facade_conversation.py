@@ -53,7 +53,9 @@ from voice_agent_conversation import (
     RealtimeVoiceProviderAccessDeniedException,
     RealtimeVoiceProviderErrorException,
     RealtimeVoiceProviderUnavailableException,
+    RealtimeVoiceSessionExpiredException,
     Severity,
+    SpeechProviderErrorTolerated,
     VoiceAgentConversationBaseException,
     VoiceNotOfferedException,
     VoiceOption,
@@ -79,6 +81,7 @@ PROVIDER_ACCESS_DENIED_REASON: Final[str] = "The voice service refused access"
 OPERATION_CONTEXT_NAME: Final[str] = "RealtimeVoice.Operation"
 PROVIDER_ERROR_TYPE_CONTEXT_NAME: Final[str] = "RealtimeVoice.ProviderErrorType"
 PROVIDER_ERROR_CODE_CONTEXT_NAME: Final[str] = "RealtimeVoice.ProviderErrorCode"
+PROVIDER_ERROR_MESSAGE_CONTEXT_NAME: Final[str] = "RealtimeVoice.ProviderErrorMessage"
 CONNECT_OPERATION: Final[str] = f"connecting to model '{TESTING_REALTIME_MODEL}'"
 
 
@@ -176,7 +179,7 @@ class TestConversation:
             expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
         )
 
-    async def test_Converse_WhenTheProviderRefusesAReplyRequestBecauseAReplyIsUnderWay_ThenTheCallGoesOn(
+    async def test_Converse_WhenTheProviderRefusesAReplyRequestBecauseAReplyIsUnderWay_ThenTheCallGoesOnAndTheHostIsGivenTheErrorToLog(
         self, restaurant_database_path: Path
     ) -> None:
         # A reply asked for after tool calls can meet the reply the provider began itself when the guest spoke.
@@ -189,6 +192,11 @@ class TestConversation:
             ConversationStarted(conversation_audio_format=PROVIDER_AUDIO_FORMAT, voice_option=CEDAR_VOICE_OPTION),
             AgentSpeechChunk(pcm_audio=SCRIPTED_GREETING_AUDIO),
             AgentTurnFinished(),
+            SpeechProviderErrorTolerated(
+                error_type=active_response_refusal["error"]["type"],
+                error_code=active_response_refusal["error"]["code"],
+                error_message=active_response_refusal["error"]["message"],
+            ),
             GuestStartedSpeaking(),
         ]
 
@@ -467,7 +475,7 @@ class TestConversationProviderFailures:
                 async with asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS):
                     await anext(conversation)
 
-        AsserterException.assert_technical_failure_is_as_expected(
+        AsserterException.assert_call_failure_is_as_expected(
             expected_exception_content=expected_exception_content,
             expected_provider_session_count=expected_provider_session_count,
             actual_voice_agent_conversation_exception=raised.value,
@@ -507,7 +515,7 @@ class TestConversationProviderFailures:
                 async with asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS):
                     await anext(conversation)
 
-        AsserterException.assert_technical_failure_is_as_expected(
+        AsserterException.assert_call_failure_is_as_expected(
             expected_exception_content=expected_exception_content,
             expected_provider_session_count=expected_provider_session_count,
             actual_voice_agent_conversation_exception=raised.value,
@@ -550,7 +558,53 @@ class TestConversationProviderFailures:
                 async with asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS):
                     await anext(conversation)
 
-        AsserterException.assert_technical_failure_is_as_expected(
+        AsserterException.assert_call_failure_is_as_expected(
+            expected_exception_content=expected_exception_content,
+            expected_provider_session_count=expected_provider_session_count,
+            actual_voice_agent_conversation_exception=raised.value,
+            actual_captured_realtime_sessions=realtime_voice_service_scripted.captured_realtime_sessions,
+        )
+
+    async def test_Converse_WhenTheProviderEndsTheSessionAtItsTimeLimit_ThenTheGuestIsToldToCallAgainAndTheProviderSessionIsClosed(
+        self, restaurant_database_path: Path
+    ) -> None:
+        guest_microphone: GuestMicrophone = GuestMicrophone()
+        conversation_request: ConversationRequest = ConversationRequest(voice_key=CEDAR_VOICE_OPTION.voice_key)
+        session_expiry: ErrorEventMessage = create_error_event(
+            "invalid_request_error", "session_expired", "Your session hit the maximum duration of 60 minutes."
+        )
+        guest_keeps_listening_event_count: int = 99
+        expected_provider_session_count: int = 1
+        expected_exception_content: ExpectedExceptionContent = ExpectedExceptionContent(
+            message_phrases=["reached the longest a single call can last", "Please call again"],
+            expected_exception_metadata=ExpectedExceptionMetadata(
+                http_status_code=BUSINESS_REFUSAL_HTTP_STATUS_CODE,
+                exception_action=ExceptionAction.USER_ACTION_REQUIRED,
+                reason="The call reached its time limit",
+                severity=Severity.ERROR,
+                log_event=LogEventRealtimeVoice.EVENT_RECEIPT,
+            ),
+            contextual_data_by_name={
+                OPERATION_CONTEXT_NAME: "conversing",
+                PROVIDER_ERROR_TYPE_CONTEXT_NAME: session_expiry["error"]["type"],
+                PROVIDER_ERROR_CODE_CONTEXT_NAME: "session_expired",
+                PROVIDER_ERROR_MESSAGE_CONTEXT_NAME: session_expiry["error"]["message"],
+            },
+            withheld_message_phrases=[session_expiry["error"]["message"]],
+        )
+
+        async with (
+            RealtimeVoiceServiceScripted(events_after_each_guest_audio=[session_expiry]) as realtime_voice_service_scripted,
+            create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
+            aclosing(domain_facade.converse(conversation_request, guest_microphone.stream_guest_side_events())) as conversation,
+        ):
+            with pytest.raises(RealtimeVoiceSessionExpiredException) as raised:
+                async with asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS):
+                    await guest_microphone.take_part(
+                        conversation, GUEST_AUDIO_CHUNKS[:1], hang_up_after_event_count=guest_keeps_listening_event_count
+                    )
+
+        AsserterException.assert_call_failure_is_as_expected(
             expected_exception_content=expected_exception_content,
             expected_provider_session_count=expected_provider_session_count,
             actual_voice_agent_conversation_exception=raised.value,
@@ -645,7 +699,7 @@ class TestConversationProviderFailures:
                         conversation, GUEST_AUDIO_CHUNKS[:1], hang_up_after_event_count=guest_keeps_listening_event_count
                     )
 
-        AsserterException.assert_technical_failure_is_as_expected(
+        AsserterException.assert_call_failure_is_as_expected(
             expected_exception_content=provider_failure_scenario.expected_exception_content,
             expected_provider_session_count=expected_provider_session_count,
             actual_voice_agent_conversation_exception=raised.value,
@@ -695,7 +749,7 @@ class TestClose:
                 with pytest.raises(RealtimeVoiceProviderUnavailableException) as raised:
                     await anext(conversation)
 
-        AsserterException.assert_technical_failure_is_as_expected(
+        AsserterException.assert_call_failure_is_as_expected(
             expected_exception_content=expected_exception_content,
             expected_provider_session_count=expected_provider_session_count,
             actual_voice_agent_conversation_exception=raised.value,

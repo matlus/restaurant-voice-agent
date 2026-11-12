@@ -45,6 +45,13 @@ class SpeechStartedEventMessage(TypedDict):
     item_id: str
 
 
+class SpeechStoppedEventMessage(TypedDict):
+    type: Literal["input_audio_buffer.speech_stopped"]
+    event_id: str
+    audio_end_ms: int
+    item_id: str
+
+
 class OutputAudioDeltaEventMessage(TypedDict):
     type: Literal["response.output_audio.delta"]
     event_id: str
@@ -91,7 +98,12 @@ class SessionEventMessage(TypedDict):
 
 
 type ScriptedServerEventMessage = (
-    SpeechStartedEventMessage | ErrorEventMessage | ResponseDoneEventMessage | FunctionCallArgumentsDoneEventMessage | OutputAudioDeltaEventMessage
+    SpeechStartedEventMessage
+    | SpeechStoppedEventMessage
+    | ErrorEventMessage
+    | ResponseDoneEventMessage
+    | FunctionCallArgumentsDoneEventMessage
+    | OutputAudioDeltaEventMessage
 )
 type ServerEventMessage = ScriptedServerEventMessage | SessionEventMessage
 
@@ -150,6 +162,10 @@ class ConversationItemTruncateEventMessage(TypedDict):
 
 def create_speech_started_event() -> SpeechStartedEventMessage:
     return {"type": "input_audio_buffer.speech_started", "event_id": "event_speech_started", "audio_start_ms": 0, "item_id": "item_guest"}
+
+
+def create_speech_stopped_event() -> SpeechStoppedEventMessage:
+    return {"type": "input_audio_buffer.speech_stopped", "event_id": "event_speech_stopped", "audio_end_ms": 0, "item_id": "item_guest"}
 
 
 def create_agent_speech_event(item_id: str, pcm_audio: bytes) -> OutputAudioDeltaEventMessage:

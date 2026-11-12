@@ -4,6 +4,7 @@ from voice_agent_conversation.managers.exceptions.voice_agent_conversation_excep
     ContextualDataDict,
     ExceptionAction,
     LogEventBase,
+    VoiceAgentConversationBusinessBaseException,
     VoiceAgentConversationTechnicalBaseException,
 )
 
@@ -82,3 +83,21 @@ class RealtimeVoiceProviderErrorException(VoiceAgentConversationTechnicalBaseExc
     @override
     def reason(self) -> str:
         return "The voice service reported an error"
+
+
+@final
+class RealtimeVoiceSessionExpiredException(VoiceAgentConversationBusinessBaseException):
+    """The call reached the longest a speech provider session may last, and the provider ended it. Nothing is wrong; the
+    guest can call again. The message is written for the guest, so the provider's own words stay in the context."""
+
+    def __init__(self, log_event: LogEventBase, contextual_data_by_name: ContextualDataDict | None = None) -> None:
+        super().__init__(
+            message="This call reached the longest a single call can last, so it has ended. Please call again to carry on.",
+            log_event=log_event,
+            contextual_data_by_name=contextual_data_by_name,
+        )
+
+    @property
+    @override
+    def reason(self) -> str:
+        return "The call reached its time limit"

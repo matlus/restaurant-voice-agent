@@ -22,6 +22,8 @@ from conversation_acceptance_support.realtime_voice_service_scripted import (
     CapturedRealtimeSession,
     CapturedToolOutput,
     RealtimeVoiceServiceScripted,
+    create_speech_started_event,
+    create_speech_stopped_event,
     create_tool_call_events,
 )
 from conversation_acceptance_support.service_locator_testing import create_domain_facade, create_restaurant_domain_facade
@@ -35,6 +37,7 @@ from voice_agent_conversation import (
     ConversationRequest,
     ConversationStarted,
     ExceptionAction,
+    GuestStartedSpeaking,
     LogEventAgentTool,
     Severity,
     VoiceOption,
@@ -269,6 +272,64 @@ class TestAgentTools:
             expected_tool_answer,
             expected_agent_response_request_count,
         )
+
+    async def test_Converse_WhenTheGuestIsTalkingAsTheAgentsToolCallingReplyEnds_ThenNoNextReplyIsAskedFor(
+        self, restaurant_database_path: Path
+    ) -> None:
+        # The guest speaks twice, and each time starts talking before the agent's tool calling reply ends. The guest's
+        # second start is passed on only after the first tool calling reply has been handled, so a next reply asked for
+        # then would already show. The provider answers a talking guest by itself once they finish.
+        guest_microphone: GuestMicrophone = GuestMicrophone()
+        expected_conversation_events: list[ConversationEvent] = [*GREETING_EVENTS, GuestStartedSpeaking(), GuestStartedSpeaking()]
+        expected_agent_response_request_count: int = 1
+
+        async with (
+            RealtimeVoiceServiceScripted(
+                events_after_each_guest_audio=[
+                    create_speech_started_event(),
+                    *create_tool_call_events(TOOL_CALL_ID, "search_menu", KETO_SEARCH_ARGUMENTS_JSON),
+                ]
+            ) as realtime_voice_service_scripted,
+            create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
+        ):
+            actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
+                conversation, [GUEST_QUESTION_AUDIO, GUEST_QUESTION_AUDIO], hang_up_after_event_count=len(expected_conversation_events)
+            )
+
+        AsserterConversation.assert_conversation_events_are_as_expected(
+            expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
+        )
+        assert count_agent_response_requests(realtime_voice_service_scripted) == expected_agent_response_request_count
+
+    async def test_Converse_WhenTheGuestStoppedTalkingBeforeTheAgentsToolCallingReplyEnds_ThenTheNextReplyIsAskedFor(
+        self, restaurant_database_path: Path
+    ) -> None:
+        guest_microphone: GuestMicrophone = GuestMicrophone()
+        expected_conversation_events: list[ConversationEvent] = [*GREETING_EVENTS, GuestStartedSpeaking(), *ANSWER_EVENTS]
+        expected_agent_response_request_count: int = 2
+
+        async with (
+            RealtimeVoiceServiceScripted(
+                events_after_each_guest_audio=[
+                    create_speech_started_event(),
+                    create_speech_stopped_event(),
+                    *create_tool_call_events(TOOL_CALL_ID, "search_menu", KETO_SEARCH_ARGUMENTS_JSON),
+                ]
+            ) as realtime_voice_service_scripted,
+            create_domain_facade(realtime_voice_service_scripted, restaurant_database_path) as domain_facade,
+            asyncio.timeout(CONVERSATION_TIME_LIMIT_SECONDS),
+            aclosing(domain_facade.converse(CONVERSATION_REQUEST, guest_microphone.stream_guest_side_events())) as conversation,
+        ):
+            actual_conversation_events: list[ConversationEvent] = await guest_microphone.take_part(
+                conversation, [GUEST_QUESTION_AUDIO], hang_up_after_event_count=len(expected_conversation_events)
+            )
+
+        AsserterConversation.assert_conversation_events_are_as_expected(
+            expected_conversation_events=expected_conversation_events, actual_conversation_events=actual_conversation_events
+        )
+        assert count_agent_response_requests(realtime_voice_service_scripted) == expected_agent_response_request_count
 
     @pytest.mark.parametrize(
         ("tool_name", "arguments_json"),
@@ -592,7 +653,7 @@ class TestAgentTools:
             json.loads(actual_tool_output.output)["call_rejected"] is True
             for actual_tool_output in collect_tool_outputs(realtime_voice_service_scripted)
         )
-        AsserterException.assert_technical_failure_is_as_expected(
+        AsserterException.assert_call_failure_is_as_expected(
             expected_exception_content=expected_exception_content,
             expected_provider_session_count=expected_provider_session_count,
             actual_voice_agent_conversation_exception=raised.value,
