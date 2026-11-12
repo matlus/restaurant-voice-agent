@@ -130,7 +130,7 @@ A call goes like this:
 | `search_menu` | Dishes matching diets, excluded allergens, section, calorie limit and search words. A search about an allergy also carries the restaurant's allergen notice. |
 | `describe_dish` | One dish in full, found by a loose name, with the restaurant's allergen notice. |
 | `get_opening_hours` | Weekly hours and upcoming holiday closures. |
-| `check_availability` | Whether a table fits, with nearby open times when it doesn't. |
+| `check_availability` | Whether a table fits, with nearby open times when it doesn't. Given the caller's own booking code, that booking's table counts as free. |
 | `book_table` | Books a table and returns the confirmation code. |
 | `find_bookings` | The times and party sizes of a caller's bookings on one date, found by phone number, name and date. |
 | `change_booking` | Changes date, time, party size or notes of a booking found by its confirmation code. |

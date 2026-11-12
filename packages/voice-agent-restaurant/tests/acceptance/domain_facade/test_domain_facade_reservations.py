@@ -77,6 +77,8 @@ SEEDED_PRIYA_PHONE: Final[str] = "5550101001"
 # Sunday 2026-12-20 at 15:00 in Riverton: the Friday after it is Christmas Day, and the one after that New Year's Day.
 SUNDAY_BEFORE_CHRISTMAS_UTC: Final[datetime] = datetime(2026, 12, 20, 21, 0, tzinfo=UTC)
 SEEDED_SAM_PHONE: Final[str] = "5550101010"
+# Yara's party of 2 holds a table from 17:00 on the fully booked Tuesday.
+SEEDED_YARA_PHONE: Final[str] = "5550102001"
 FULLWIDTH_DIGIT_ZERO_CODE_POINT: Final[int] = 0xFF10
 SEEDED_PRIYA_PHONE_IN_FULLWIDTH_DIGITS: Final[str] = "".join(chr(FULLWIDTH_DIGIT_ZERO_CODE_POINT + int(digit)) for digit in SEEDED_PRIYA_PHONE)
 # A refusal offers at most this many other open times, the ones nearest to the time asked for.
@@ -346,6 +348,53 @@ class TestCheckAvailability:
             )
 
         assert actual_availability_result == expected_availability_result
+
+    async def test_CheckAvailability_WhenTheCallerGivesTheBookingTheyWantToMove_ThenThatBookingsOwnTableCountsAsFree(
+        self, restaurant_database_path: Path
+    ) -> None:
+        scenario: str = "The small move of a booking on a busy evening"
+        moved_minutes: int = 15
+
+        async with create_domain_facade(restaurant_database_path) as domain_facade:
+            current_reservation: Reservation = await retrieve_unstarted_seeded_booking(domain_facade, SEEDED_PRIYA_PHONE, scenario)
+            requested_time: time = (
+                datetime.combine(current_reservation.reservation_date, current_reservation.starts_at) + timedelta(minutes=moved_minutes)
+            ).time()
+            availability_request: AvailabilityRequest = AvailabilityRequest(
+                reservation_date=current_reservation.reservation_date.isoformat(),
+                reservation_time=f"{requested_time:%H:%M}",
+                party_size=current_reservation.party_size,
+            )
+            availability_result_without_the_code: AvailabilityResult = await domain_facade.check_availability(availability_request)
+            # Only the booking's own table may be free at the new time, or the code would make no difference.
+            assert not availability_result_without_the_code.is_available, (
+                f"{scenario} needs every table for {current_reservation.party_size} taken at {requested_time:%H:%M} on "
+                f"{current_reservation.reservation_date} by others; the seeded data no longer supports this scenario"
+            )
+            expected_availability_result: AvailabilityResult = replace(availability_result_without_the_code, is_available=True, alternative_times=[])
+            actual_availability_result: AvailabilityResult = await domain_facade.check_availability(
+                replace(availability_request, confirmation_code=current_reservation.confirmation_code.lower())
+            )
+
+        assert actual_availability_result == expected_availability_result
+
+    async def test_CheckAvailability_WhenTheGivenConfirmationCodeIsMalformed_ThenTheRequestIsRefused(self, restaurant_database_path: Path) -> None:
+        expected_problem_phrases: list[str] = ["is not a 6-character confirmation code"]
+        expected_exception_metadata: ExpectedExceptionMetadata = create_validation_refusal_metadata()
+        expected_contextual_data_by_name: dict[str, int] = {RESERVATION_PROBLEM_COUNT_CONTEXT_NAME: len(expected_problem_phrases)}
+
+        async with create_domain_facade(restaurant_database_path) as domain_facade:
+            with pytest.raises(ReservationRequestValidationException) as raised:
+                await domain_facade.check_availability(
+                    AvailabilityRequest(reservation_date=QUIET_THURSDAY, reservation_time="19:00", party_size=2, confirmation_code="KX4")
+                )
+
+        AsserterException.assert_validation_problems_are_as_expected(
+            expected_problem_phrases=expected_problem_phrases,
+            expected_exception_metadata=expected_exception_metadata,
+            expected_contextual_data_by_name=expected_contextual_data_by_name,
+            actual_validation_exception=raised.value,
+        )
 
     async def test_CheckAvailability_WhenEveryTableIsTakenAllEvening_ThenNoOtherTimeIsOffered(self, restaurant_database_path: Path) -> None:
         expected_availability_result: AvailabilityResult = AvailabilityResult(
@@ -1043,6 +1092,69 @@ class TestChangeReservation:
             actual_no_table_available_exception=raised.value,
         )
         assert actual_found_reservations == expected_reservations
+
+    async def test_ChangeReservation_WhenTheOnlyOpenTimeIsTheOneTheBookingAlreadyHolds_ThenNoOtherTimeIsOffered(
+        self, restaurant_database_path: Path
+    ) -> None:
+        scenario: str = "The refused move whose only open time is the booking's own"
+        moved_minutes: int = 15
+
+        async with create_domain_facade(restaurant_database_path) as domain_facade:
+            current_reservation: Reservation = await retrieve_unstarted_seeded_booking(domain_facade, SEEDED_YARA_PHONE, scenario)
+            requested_time: time = (
+                datetime.combine(current_reservation.reservation_date, current_reservation.starts_at) + timedelta(minutes=moved_minutes)
+            ).time()
+            kept_time_availability_result: AvailabilityResult = await domain_facade.check_availability(
+                AvailabilityRequest(
+                    reservation_date=current_reservation.reservation_date.isoformat(),
+                    reservation_time=f"{current_reservation.starts_at:%H:%M}",
+                    party_size=current_reservation.party_size,
+                    confirmation_code=current_reservation.confirmation_code,
+                )
+            )
+            # The booking's own time must be open to it, and nothing else that evening, so leaving it out is what is tested.
+            assert (kept_time_availability_result.is_available, current_reservation.reservation_date.isoformat()) == (True, FULLY_BOOKED_TUESDAY), (
+                f"{scenario} needs booking {current_reservation.confirmation_code} on {FULLY_BOOKED_TUESDAY} with its own time open to it; "
+                f"the seeded data no longer supports this scenario: {current_reservation!r}"
+            )
+            expected_alternative_times: list[time] = []
+            expected_found_reservations: list[Reservation] = [current_reservation]
+            with pytest.raises(NoTableAvailableException) as raised:
+                await domain_facade.change_reservation(
+                    create_change_request(current_reservation.confirmation_code, None, reservation_time=f"{requested_time:%H:%M}")
+                )
+            actual_found_reservations: list[Reservation] = await domain_facade.find_reservations(create_booking_search_request(current_reservation))
+
+        assert (raised.value.alternative_times, actual_found_reservations) == (expected_alternative_times, expected_found_reservations)
+
+    async def test_ChangeReservation_WhenThePartySizeChangesAndOnlyTheBookingsOwnTimeIsOpen_ThenThatTimeIsOffered(
+        self, restaurant_database_path: Path
+    ) -> None:
+        scenario: str = "The refused move to a new time and party size"
+        moved_minutes: int = 15
+        smaller_party_size: int = 1
+
+        async with create_domain_facade(restaurant_database_path) as domain_facade:
+            current_reservation: Reservation = await retrieve_unstarted_seeded_booking(domain_facade, SEEDED_YARA_PHONE, scenario)
+            requested_time: time = (
+                datetime.combine(current_reservation.reservation_date, current_reservation.starts_at) + timedelta(minutes=moved_minutes)
+            ).time()
+            assert (current_reservation.party_size > smaller_party_size, current_reservation.reservation_date.isoformat()) == (
+                True,
+                FULLY_BOOKED_TUESDAY,
+            ), (
+                f"{scenario} needs booking {current_reservation.confirmation_code} for more than {smaller_party_size} on {FULLY_BOOKED_TUESDAY}; "
+                f"the seeded data no longer supports this scenario: {current_reservation!r}"
+            )
+            expected_alternative_times: list[time] = [current_reservation.starts_at]
+            with pytest.raises(NoTableAvailableException) as raised:
+                await domain_facade.change_reservation(
+                    create_change_request(
+                        current_reservation.confirmation_code, None, reservation_time=f"{requested_time:%H:%M}", party_size=smaller_party_size
+                    )
+                )
+
+        assert raised.value.alternative_times == expected_alternative_times
 
     async def test_ChangeReservation_WhenThePhoneNumberDoesNotMatch_ThenTheBookingIsNotFound(self, restaurant_database_path: Path) -> None:
         unrelated_generated_guest: GeneratedGuest = create_generated_guest()

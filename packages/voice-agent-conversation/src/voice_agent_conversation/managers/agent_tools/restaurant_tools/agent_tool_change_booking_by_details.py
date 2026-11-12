@@ -38,7 +38,8 @@ class AgentToolChangeBookingByDetails(AgentToolBase[ChangeBookingByDetailsInput,
             "Changes the date, time, party size or notes of a booking the caller has no confirmation code for. The booking is "
             "found by the phone number, name, date and time it is booked under, as find_bookings gave them. Returns its new date, "
             "time and party size. Only call it after the caller has confirmed the change you read back. "
-            "If no table is free at the new time, nothing changes and the answer lists other free times."
+            "If no table is free at the new time, nothing changes and the answer lists other free times. It checks availability "
+            "itself, counting the booking's own table as free, so there is no need to call check_availability first."
         )
 
     @property

@@ -36,7 +36,8 @@ class AgentToolChangeBooking(AgentToolBase[ChangeBookingInput, BookingSummary]):
             "Changes the date, time, party size or notes of a booking, found by its confirmation code, and returns its new date, "
             "time and party size. The booking keeps its confirmation code. If the caller does not have the code, use "
             "change_booking_by_details instead. Only call it after the caller has confirmed the change you read back. "
-            "If no table is free at the new time, nothing changes and the answer lists other free times."
+            "If no table is free at the new time, nothing changes and the answer lists other free times. It checks availability "
+            "itself, counting the booking's own table as free, so there is no need to call check_availability first."
         )
 
     @property

@@ -22,6 +22,7 @@ from voice_agent_restaurant.managers.models.reservation_models import (
     ReservationRequest,
     ReservationSearchRequest,
     SeatingChange,
+    ValidatedAvailabilityRequest,
     ValidatedReservationChange,
     ValidatedReservationRequest,
 )
@@ -51,18 +52,22 @@ class ValidatorReservationRequests:
     REQUIRED_FIELD_PROBLEM_TEMPLATE: Final[str] = "'{field_name}' is required but was not provided"
 
     @classmethod
-    def validate_availability_request(cls, availability_request: AvailabilityRequest) -> RequestedSeating:
+    def validate_availability_request(cls, availability_request: AvailabilityRequest) -> ValidatedAvailabilityRequest:
         reservation_date_text: str | None = ReservationValueParsing.as_provided(availability_request.reservation_date)
         reservation_time_text: str | None = ReservationValueParsing.as_provided(availability_request.reservation_time)
+        own_confirmation_code: str | None = cls._as_confirmation_code(availability_request.confirmation_code)
         validation_problems: list[str] = cls._collect_required_seating_problems(
             reservation_date_text, reservation_time_text, availability_request.party_size
         )
+        # The code is optional here, so only a code that is given and malformed is a problem.
+        if own_confirmation_code is not None:
+            validation_problems.extend(cls._collect_confirmation_code_problems(own_confirmation_code))
         requested_seating: RequestedSeating | None = cls._to_requested_seating(
             reservation_date_text, reservation_time_text, availability_request.party_size
         )
         if requested_seating is None or validation_problems:
             raise cls._create_validation_exception(validation_problems)
-        return requested_seating
+        return ValidatedAvailabilityRequest(requested_seating=requested_seating, own_confirmation_code=own_confirmation_code)
 
     @classmethod
     def validate_reservation_request(cls, reservation_request: ReservationRequest) -> ValidatedReservationRequest:

@@ -9,7 +9,7 @@ The restaurant domain for the voice agent. Everything goes through `DomainFacade
 | `get_opening_hours` | The weekly hours and the holiday closures inside the booking window. |
 | `search_menu` | Dishes that suit every requested diet, contain none of the excluded allergens, and match an optional category, calorie ceiling and text. Says whether the search was about allergy safety (it excluded allergens or asked for a free-from diet), which is when the allergen notice applies. |
 | `retrieve_dish` | One dish by its name or a distinctive part of it ("the salmon", "your scallops"). |
-| `check_availability` | Whether a table fits the party at a time, with up to three nearby open times when it does not. |
+| `check_availability` | Whether a table fits the party at a time, with up to three nearby open times when it does not. An optional confirmation code leaves that booking's own table out, for a caller asking about moving it. |
 | `create_reservation` | Books the smallest free table that fits and returns a six-character confirmation code. |
 | `find_reservations` | Upcoming bookings on one date that match a phone number and the name they are under (any name after the first is enough). |
 | `change_reservation` | Changes date, time, party size or notes. The booking is found by its confirmation code (a phone number given with it must match), or by the phone number, name, date and time it is booked under. |

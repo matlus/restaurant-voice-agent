@@ -35,11 +35,13 @@ class Reservation:
 
 @dataclass(frozen=True)
 class AvailabilityRequest:
-    """An availability question exactly as it arrived: date as YYYY-MM-DD, time as 24-hour HH:MM."""
+    """An availability question exactly as it arrived: date as YYYY-MM-DD, time as 24-hour HH:MM. confirmation_code names
+    the caller's own booking when they ask about moving it, so the table that booking holds is not counted as taken."""
 
     reservation_date: str | None
     reservation_time: str | None
     party_size: int | None
+    confirmation_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -126,6 +128,14 @@ class RequestedSeating:
     reservation_date: date
     starts_at: time
     party_size: int
+
+
+@dataclass(frozen=True)
+class ValidatedAvailabilityRequest:
+    """A validated availability question. own_confirmation_code is the caller's booking whose table is not counted as taken."""
+
+    requested_seating: RequestedSeating
+    own_confirmation_code: str | None
 
 
 @dataclass(frozen=True)

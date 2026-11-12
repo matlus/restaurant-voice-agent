@@ -127,10 +127,16 @@ class SeatingRules:
 
     @classmethod
     def get_alternative_times(
-        cls, seating_day: SeatingDay, requested_time: time, seating_rhythm: SeatingRhythm, restaurant_now: datetime
+        cls, seating_day: SeatingDay, requested_time: time, seating_rhythm: SeatingRhythm, restaurant_now: datetime, kept_time: time | None
     ) -> list[time]:
-        """Up to MAXIMUM_ALTERNATIVE_TIMES other bookable times with a free fitting table, nearest to the requested time, in time order."""
-        open_slot_times: list[time] = cls._get_open_slot_times(seating_day, requested_time, seating_rhythm, restaurant_now)
+        """Up to MAXIMUM_ALTERNATIVE_TIMES other bookable times with a free fitting table, nearest to the requested time, in time order.
+        kept_time, the time a guest moving their booking already holds for the same party that day, is not offered: taking it
+        would be no move at all."""
+        open_slot_times: list[time] = [
+            open_slot_time
+            for open_slot_time in cls._get_open_slot_times(seating_day, requested_time, seating_rhythm, restaurant_now)
+            if open_slot_time != kept_time
+        ]
         return sorted(cls._get_nearest_slot_times(open_slot_times, requested_time))
 
     @classmethod
